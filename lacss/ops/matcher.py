@@ -1,9 +1,9 @@
-# Copied from official-vision package
-
-"""Box matcher implementation."""
-
 import tensorflow as tf
 
+# This is the boxmatcher class copied from official-vision package.
+# The implementation actually works on any data. We reuse it here for location matching
+
+"""Box matcher implementation."""
 class BoxMatcher:
   """Matcher based on highest value.
 
@@ -174,3 +174,85 @@ class BoxMatcher:
     """
     indicator = tf.cast(indicator, x.dtype)
     return tf.add(tf.multiply(x, 1 - indicator), val * indicator)
+
+def compute_similarity(pred_locations, gt_locations):
+  """
+  similarity = 1 / distance^2
+  Args:
+    pred_locations: [batch_size, N, 2] or [N,2]
+    gt_locations: [batch_size, K, 2] or [K,2]
+  Returns:
+    similarity_matrix: [batch_size, N, K] or [N,K]
+  """
+  batched_op = True
+  if len(pred_locations.shape) == 2:
+      batched_op = False
+      pred_locations = tf.expand_dims(pred_locations, 0)
+      gt_locations = tf.expand_dims(gt_locations, 0)
+
+  distances_matrix = tf.cast(pred_locations[:, :, None, :] - gt_locations[:, None, :, :], tf.float32)
+  distances_matrix = tf.reduce_sum(tf.math.square(distances_matrix), axis=-1)
+  similarity_matrix = 1.0 / (distances_matrix + 1.0e-16)
+
+  if not batched_op:
+      similarity_matrix = tf.squeeze(similarity_matrix, axis=0)
+
+  return similarity_matrix
+
+def location_matching(pred_locations, gt_locations, thresholds, indicators):
+  '''
+  Args:
+    pred_locations: [batch_size, N, 2]
+    gt_locations: [batch_size, K, 2]
+    thresholds: a list of distance thresholds sorted from largest -> smallest
+    indicator: corresponding indicators (int)
+  Returns:
+    matches: [batch_size, N] indices of the matches location in gt list
+    indicators: [batch_size, N] indicator value for each match, padded with -1
+  '''
+  row_masks = pred_locations[:, :, 0] >= 0
+  col_masks = gt_locations[:, :, 0] >= 0
+
+  similarity_matrix = compute_similarity(pred_locations, gt_locations)
+
+  # make sure the padded columns will never be matched
+  similarity_matrix = tf.where(col_masks[:, None, :], similarity_matrix, -1.0)
+
+  thresholds = [1.0/(x*x + 1.0e-16) for x in thresholds]
+  matcher = BoxMatcher(thresholds, indicators)
+  matches, indicators = matcher(similarity_matrix)
+
+  # matches = tf.where(row_masks[..., None], similarity_matrix, -1)
+  indicators = tf.where(row_masks, indicators, -1)
+
+  return matches, indicators
+
+def location_matching_ragged(pred_locations, gt_locations, thresholds, indicators):
+  '''
+  The ragged version of location_matching. Inputs and outputs are Ragged tensors
+  Args:
+    pred_locations: [batch_size, None, 2]
+    gt_locations: [batch_size, None, 2]
+    thresholds: a list of distance thresholds sorted from largest -> smallest
+    indicator: corresponding indicators (int)
+  Returns:
+    matches: [batch_size, None] indices of the matches location in gt list
+    indicators: [batch_size, None] indicator value for each match, padded with -1
+  '''
+
+  thresholds = [1.0/(x*x + 1.0e-16) for x in thresholds]
+  matcher = BoxMatcher(thresholds, indicators)
+
+  def match_one(ele):
+    pred, gt = ele
+    similarity_matrix = compute_similarity(pred, gt)
+    return matcher(similarity_matrix)
+
+  matches, indicators = tf.map_fn(
+    match_one, (pred_locations, gt_locations),
+    fn_output_signature = (
+        tf.RaggedTensorSpec((None,), tf.int32, 0),
+        tf.RaggedTensorSpec((None,), tf.int32, 0)),
+  )
+
+  return matches, indicators
