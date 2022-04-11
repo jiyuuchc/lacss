@@ -19,7 +19,9 @@ def proposal_locations(pred, max_output_size=500, distance_threshold=3.0, topk=2
     if score_threshold is None:
         score_threshold = float('-inf')
 
-    batch_size, height, width, _ = tf.shape(pred)
+    batch_size = tf.shape(pred)[0]
+    height = tf.shape(pred)[1]
+    width = tf.shape(pred)[2]
     pred = tf.reshape(pred, [batch_size, -1])
 
     if topk > 0:
@@ -29,7 +31,8 @@ def proposal_locations(pred, max_output_size=500, distance_threshold=3.0, topk=2
         scores = tf.gather(pred, indices, batch_dims=1)
 
     indices = tf.unravel_index(tf.reshape(indices, [-1]), [height, width])
-    indices = tf.transpose(tf.reshape(indices, [batch_size, 2, -1]), [1,2,0])
+    indices = tf.transpose(indices)
+    indices = tf.reshape(indices, [batch_size, -1, 2])
 
     sqdist = tf.reduce_sum(tf.math.square(indices[:,None,:,:] - indices[:,:,None,:]), axis=-1)
     sqdist = tf.cast(sqdist, tf.float32)
@@ -41,18 +44,18 @@ def proposal_locations(pred, max_output_size=500, distance_threshold=3.0, topk=2
     def nms_one(element):
         score, dist, ind = element
         sel = tf.image.non_max_suppression_overlaps(dist, score, max_output_size, score_threshold=score_threshold)
-        score_out = tf.gather_nd(score, sel[...,None])
-        ind_out = tf.gather_nd(ind, sel[..., None])
+        score_out = tf.gather(score, sel)
+        ind_out = tf.gather(ind, sel)
 
         return score_out, ind_out
 
-    scores, indices =  tf.map_fn(
+    nms_scores, nms_indices =  tf.map_fn(
         nms_one, (scores, dist_matrix, indices),
         fn_output_signature = (tf.RaggedTensorSpec([None], scores.dtype, 0), tf.RaggedTensorSpec([None, 2], indices.dtype, 0)),
     )
 
     if padded:
-        scores = scores.to_tensor(-1)
-        indices = indices.to_tensor(-1)
+        nms_scores = nms_scores.to_tensor(-1)
+        nms_indices = nms_indices.to_tensor(-1)
 
-    return scores, indices
+    return nms_scores, nms_indices
