@@ -66,7 +66,7 @@ class IISImageLoss(tf.keras.losses.Loss):
     def __init__(self, neighbours = 1, **kwargs):
         super(IISImageLoss, tf.keras.losses.Loss).__init__(kwargs)
         self._config_dict = kwargs
-        self._config_dict.update({'neighbours': neighbours}})
+        self._config_dict.update({'neighbours': neighbours})
 
     def get_config(self):
         return self._config_dict
