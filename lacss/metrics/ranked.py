@@ -41,7 +41,7 @@ def np_compute_ap(similarity_matrix, thresholds):
     for th in thresholds:
         _, indicators = np_unique_location_matching(similarity_matrix, th)
         p_k = np.cumsum(indicators) / (np.arange(len(indicators))+1)
-        apmks.append(np.sum(p_k * indicators))
+        apmks.append(np.sum(p_k * indicators) / k)
     return np.array(apmks, np.float32)
 
 class BinaryMeanAP(tf.keras.metrics.Metric):
@@ -76,7 +76,7 @@ class BinaryMeanAP(tf.keras.metrics.Metric):
             )
 
             self.ap_m_k.assign_add(apmks)
-            self.total_k.assign_add(tf.shape(gt)[0])
+            self.total_k.assign_add(1)
 
     def result(self):
         return tf.reduce_mean(self.ap_m_k / tf.cast(self.total_k, tf.float32))
