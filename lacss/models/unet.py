@@ -127,15 +127,18 @@ class UNetEncoder(tf.keras.layers.Layer):
         self._config_dict.update({
             'net_spec': net_spec,
         })
-        self.net_config = encoder_configs[net_spec]
+        if isinstance(net_spec, str):
+            self.net_config = decoder_configs[net_spec]
+        else:
+            self.net_config = net_spec
 
     def get_config(self):
         return self._config_dict
 
     def build(self, input_shape):
         n_layers = self.net_config[0]
-        n_stem_filters = self.net_config[1]
-        ch_list = self.net_config[2]
+        # n_stem_filters = self.net_config[1]
+        ch_list = self.net_config[1]
         # self._stem = [
         #       tf.keras.layers.Conv2D(n_stem_filters, 3, name='stem', padding='same', activation='relu', kernel_initializer='he_normal'),
         #       tf.keras.layers.BatchNormalization(name='norm'),
@@ -148,8 +151,8 @@ class UNetEncoder(tf.keras.layers.Layer):
 
     def call(self, data, **kwargs):
         x = data
-        for layer in self._stem:
-            x=layer(data, **kwargs)
+        # for layer in self._stem:
+        #     x=layer(data, **kwargs)
         outputs = [x]
         for k, layer in enumerate(self._down_stack, start=1):
             x = layer(x, **kwargs)
