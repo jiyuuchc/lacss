@@ -19,13 +19,12 @@ def topk_proposals(scores, regressions=None, topk=2000, scale_factor=8):
     if regression is not None:
         proposed_locations += tf.gather_nd(regressions, indices, batch_dims=1)
 
-def proposal_locations(model_out, max_output_size=500, distance_threshold=1.01, topk=2000, score_threshold=None, padded=False):
+def proposal_locations(score_out, regression_out, max_output_size=500, distance_threshold=1.01, topk=2000, score_threshold=None, padded=False):
     '''
     Produce a list of proposal locations based on predication map, remove redundency with non_max_suppression
     Args:
-      model_out: (score_out, regression_out)
-          score_out: [batch_size, height, width, 1] score prediction for cell gt_locations
-          regression_out: [batch_size, height, width, 2] regression prediction
+      score_out: [batch_size, height, width, 1] score prediction for cell gt_locations
+      regression_out: [batch_size, height, width, 2] regression prediction
       max_output_size: int
       distance_threshold: non_max_suppression threshold
       topk: if not 0, only the topk pixels are analyzed
@@ -33,23 +32,23 @@ def proposal_locations(model_out, max_output_size=500, distance_threshold=1.01, 
       padded: whether output non_ragged tensor (padded with -1), default to False
     Returns:
       scores: [batch_size, None], Ragged or padded tensor sorted scores
-      locations: [batch_size, None, 2], Ragged or padded tensor, candidate locations
+      locations: [batch_size, None, 2], Ragged or padded tensor, candidate locations, scaled 0..1
     '''
 
     if score_threshold is None:
         score_threshold = float('-inf')
 
-    score_out, regression_out = model_out
+    # score_out, regression_out = model_out
     batch_size = tf.shape(score_out)[0]
-    height = tf.shape(score_out)[1]
-    width = tf.shape(score_out)[2]
-    score_out = tf.reshape(score_out, [batch_size, -1])
+    # height = tf.shape(score_out)[1]
+    # width = tf.shape(score_out)[2]
+    score_out_flatten = tf.reshape(score_out, [batch_size, -1])
 
-    if topk < 0 or topk > height*width:
-        topk = height*width
-    scores, indices = tf.math.top_k(score_out, topk)
+    if topk < 0 or topk > tf.shape(score_out_flatten)[1]:
+        topk = tf.shape(score_out_flatten)[1]
+    scores, indices = tf.math.top_k(score_out_flatten, topk)
 
-    indices = tf.unravel_index(tf.reshape(indices, [-1]), [height, width])
+    indices = tf.unravel_index(tf.reshape(indices, [-1]), tf.shape(score_out)[1:3])
     indices = tf.transpose(indices)
     indices = tf.reshape(indices, [batch_size, -1, 2])
     locations = tf.cast(indices, tf.float32) + 0.5
@@ -74,6 +73,10 @@ def proposal_locations(model_out, max_output_size=500, distance_threshold=1.01, 
         nms_one, (scores, dist_matrix, locations),
         fn_output_signature = (tf.RaggedTensorSpec([None], scores.dtype, 0), tf.RaggedTensorSpec([None, 2], locations.dtype, 0)),
     )
+
+    # scale to 0-1
+    scaling = tf.cast(tf.shape(score_out)[1:3], nms_locations.dtype)
+    nms_locations = nms_locations / scaling
 
     if padded:
         nms_scores = nms_scores.to_tensor(-1)
