@@ -1,19 +1,24 @@
 import tensorflow as tf
 
-def locations_to_labels(locations, target_shape, scale_factor, threshold):
+def locations_to_labels(locations, target_shape, threshold):
     ''' Generate labels as score regression targets
     Args:
-        locations: [batch_size, None, 2] float32 RaggedTensor
-        target_shape: (h, w) label size
-        scale_factor: down_scale of the label size relative to original input
+        locations: [batch_size, N, 2] float32 true location values. scaled 0..1
+        target_shape: [2,]  a int tensor indicating the expected output size
         threshold: distance threshold for postive label
     Returns:
         score_target: [batch_size, h, w, 1] int32 tensor
         regression_target: [batch_size, h, w, 2] float tensor
     '''
-    height, width = target_shape
+    height = target_shape[0]
+    width = target_shape[1]
+    scaling = tf.cast(target_shape, locations.dtype)
 
-    flat_locations = locations.to_tensor(-1.0) / scale_factor
+    if type(locations) is tf.RaggedTensor:
+        flat_locations = locations.to_tensor(-1.0) * scaling
+    else:
+        flat_locations = locations * scaling
+
     mask = flat_locations[...,0] > 0
     xc, yc = tf.meshgrid(tf.range(width, dtype=tf.float32)+0.5, tf.range(height, dtype=tf.float32)+0.5)
     mesh = tf.stack([yc, xc], axis=-1)
@@ -34,13 +39,23 @@ def locations_to_labels(locations, target_shape, scale_factor, threshold):
 
     return score_target, regression_target
 
-def detection_losses(gt, pred, scale_factor=8, threshold=1.5, **kwargs):
-    pred_scores, pred_regressions = pred
-    img_height = tf.shape(pred_scores)[-3]
-    img_width = tf.shape(pred_scores)[-2]
+def detection_losses(gt_locations, pred_scores, pred_regressions, threshold=1.5, **kwargs):
+    '''
+    Args:
+        gt_locations: [batch_size, N, 2] float32 true location values. scaled 0..1
+        pred_scores: [batch_size, h, w, 1] detector score output
+        pred_regressions: [batch_size, h, w, 2] detector regression output
+        threshold: float number, the size of detection ROI
+    Returns:
+        score_loss: float
+        regression_loss: float
+    '''
+    # pred_scores, pred_regressions = pred
+
+    target_shape = tf.shape(pred_scores)[1:3]
     batch_size = tf.shape(pred_scores)[0]
 
-    score_target, regression_target = locations_to_labels(gt, (img_height, img_width), scale_factor, threshold)
+    score_target, regression_target = locations_to_labels(gt_locations, target_shape, threshold)
 
     score_loss = tf.keras.losses.binary_focal_crossentropy(score_target, pred_scores, **kwargs)
     score_loss = tf.reduce_sum(tf.reduce_mean(tf.reshape(score_loss, [batch_size, -1]), axis=1))
