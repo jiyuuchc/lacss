@@ -179,36 +179,41 @@ def _parse_train_data_func(data, feature_level_scale, flip, scale_jitter, target
     scale = 1.0 / tf.gather(scale_values, data['cell_type'])
     if scale_jitter is not None:
         scale = scale * tf.random.uniform((), minval=scale_jitter[0], maxval=scale_jitter[1])
-    scaled_size = tf.cast(tf.math.round([height*scale, width*scale]), tf.int32)
-    img = tf.image.resize(img, scaled_size)
+    scaled_height = int(height * scale + .5)
+    scaled_width = int(width * scale + .5)
+    img = tf.image.resize(img, (scaled_height, scaled_width))
 
-    # compute cell locations
+    # compute cell location labels
     bboxes = tf.cast(data['bboxes'], tf.float32)
     y0 = (bboxes[:, 0] + bboxes[:, 2])/2*scale
     x0 = (bboxes[:, 1] + bboxes[:, 3])/2*scale
-
-    # label
     mask_label = _make_mask_label(data['masks'], bboxes[:,0:2])
     binary_mask = tf.cast(mask_label>0, tf.int32)
-    binray_mask = tf.image.resize(binary_mask[...,None], scaled_size)
+    binray_mask = tf.image.resize(binary_mask[...,None], (scaled_height,scaled_width))
     img_and_label = tf.concat([img, binray_mask], -1)
 
-    # random_crop_or_pad to target sizes
-    d_h = scaled_size[0]  - target_height
-    d_w = scaled_size[1] - target_width
-    if d_h >= 0:
-        h0 = tf.random.uniform((), 0, d_h+1, tf.int32)
-        img_and_label = tf.image.crop_to_bounding_box(img_and_label, h0, 0, target_height, scaled_size[1])
-        y0 = y0 - tf.cast(h0, tf.float32)
+    if target_height is not None and target_width is not None:
+        # random_crop_or_pad to target sizes
+        d_h = scaled_height  - target_height
+        d_w = scaled_width - target_width
+        if d_h >= 0:
+            h0 = tf.random.uniform((), 0, d_h+1, tf.int32)
+            img_and_label = tf.image.crop_to_bounding_box(img_and_label, h0, 0, target_height, scaled_width)
+            y0 = y0 - tf.cast(h0, tf.float32)
+        else:
+            h0 = 0
+            img_and_label = tf.image.pad_to_bounding_box(img_and_label, 0, 0, target_height, scaled_width)
+        if d_w >=0:
+            w0 = tf.random.uniform((), 0, d_w+1, tf.int32)
+            img_and_label = tf.image.crop_to_bounding_box(img_and_label, 0, w0, target_height, target_width)
+            x0 = x0 - tf.cast(w0, tf.float32)
+        else:
+            w0 = 0
+            img_and_label = tf.image.pad_to_bounding_box(img_and_label, 0, 0, target_height, target_width)
     else:
-        h0 = 0
-        img_and_label = tf.image.pad_to_bounding_box(img_and_label, 0, 0, target_height, scaled_size[1])
-    if d_w >=0:
-        w0 = tf.random.uniform((), 0, d_w+1, tf.int32)
-        img_and_label = tf.image.crop_to_bounding_box(img_and_label, 0, w0, target_height, target_width)
-        x0 = x0 - tf.cast(w0, tf.float32)
-    else:
-        w0 = 0
+        #pad to size of 64 x multiple
+        target_height = (scaled_height - 1) // 64 * 64 + 64
+        target_width = (scaled_width - 1) // 64 * 64 + 64
         img_and_label = tf.image.pad_to_bounding_box(img_and_label, 0, 0, target_height, target_width)
 
     if flip:
@@ -221,8 +226,8 @@ def _parse_train_data_func(data, feature_level_scale, flip, scale_jitter, target
 
     # remove out-of-bound locations
     locations = tf.stack([y0, x0], axis=-1)
-    y_sel = tf.logical_and(y0>=0, y0<target_height)
-    x_sel = tf.logical_and(x0>=0, x0<target_width)
+    y_sel = tf.logical_and(y0>=0, y0<tf.cast(target_height, tf.float32))
+    x_sel = tf.logical_and(x0>=0, x0<tf.cast(target_width, tf.float32))
     selections = tf.where(tf.logical_and(x_sel, y_sel))
     locations = tf.gather_nd(locations, selections)
 
@@ -239,8 +244,9 @@ def _parse_val_data_func(data, feature_level_scale):
 
     # scale image so all cells are of similar pixel size
     scale = 1.0 / tf.gather(scale_values, data['cell_type'])
-    scaled_size = tf.cast(tf.math.round([height*scale, width*scale]), tf.int32)
-    img = tf.image.resize(img, scaled_size)
+    scaled_height = int(height * scale + .5)
+    scaled_width = int(width * scale + .5)
+    img = tf.image.resize(img, (scaled_height, scaled_width))
 
     # compute cell locations
     bboxes = tf.cast(data['bboxes'], tf.float32)
@@ -249,8 +255,8 @@ def _parse_val_data_func(data, feature_level_scale):
     locations = tf.stack([y0, x0], axis=-1)
 
     #pad to size of 64 x multiple
-    new_height = (scaled_size[0] - 1) // 64 * 64 + 64
-    new_width = (scaled_size[1] - 1) // 64 * 64 + 64
+    new_height = (scaled_height - 1) // 64 * 64 + 64
+    new_width = (scaled_width - 1) // 64 * 64 + 64
     img = tf.image.pad_to_bounding_box(img, 0, 0, new_height, new_width)
 
     # label
@@ -263,7 +269,7 @@ def _parse_val_data_func(data, feature_level_scale):
         'mask_label': tf.cast(mask_label, tf.int32),
     }
 
-def parse_train_data(dataset, feature_level_scale=8, flip=True, scale_jitter=None, target_height=512, target_width=704):
+def parse_train_data(dataset, feature_level_scale=8, flip=True, scale_jitter=None, target_height=None, target_width=None):
     return dataset.map(lambda x: _parse_train_data_func(x, feature_level_scale, flip, scale_jitter, target_height, target_width))
 
 def parse_val_data(dataset, feature_level_scale=8):
