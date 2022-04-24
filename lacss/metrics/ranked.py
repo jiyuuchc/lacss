@@ -64,6 +64,8 @@ class BinaryMeanAP(tf.keras.metrics.Metric):
         for k in range(pred_locations.nrows()):
             pred = pred_locations[k]
             gt = gt_locations[k]
+            mask = tf.where(gt[:,0]>=0)
+            gt = tf.gather_nd(gt, mask)
             if self.image_format:
                 if len(gt.shape) == 3:
                     gt = tf.squeeze(gt, -1)
