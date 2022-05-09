@@ -2,7 +2,8 @@ import tensorflow as tf
 
 def make_meshgrids(i_locations:int, patch_size:int):
     rr = tf.range(patch_size, dtype=tf.int32) - patch_size // 2
-    mesh = tf.stack(tf.meshgrid(rr, rr) , axis=-1)
+    xx,yy = tf.meshgrid(rr, rr)
+    mesh = tf.stack([yy,xx], axis=-1)
     mesh_co = i_locations[..., None, None, :] + mesh
     return mesh_co
 
