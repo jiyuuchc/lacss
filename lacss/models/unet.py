@@ -116,8 +116,8 @@ class UNetUpSampler(tf.keras.layers.Layer):
 
 #  [n_convs_per_level, (list of channel_nums)]
 encoder_configs = {
-    'a': [2, (32, 64, 128, 256)],
-    'b': [2, (48, 96, 192, 384)],
+    's': [2, (64, 128, 256, 512)],
+    'n': [2, (128, 256, 512, 1024)]
 }
 
 class UNetEncoder(tf.keras.layers.Layer):
@@ -161,8 +161,8 @@ class UNetEncoder(tf.keras.layers.Layer):
 
 # (n_convs_per_level, (list of channel_nums in reverse order))
 decoder_configs = {
-    'a': (2, (128, 64, 32, 16)),
-    'b': (2, (192, 96, 48, 24)),
+    's': (2, (256, 128, 64, 32)),
+    'n': (2, (512, 256, 128, 64)),
 }
 
 class UNetDecoder(tf.keras.layers.Layer):
