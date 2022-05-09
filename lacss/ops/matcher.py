@@ -199,7 +199,7 @@ def compute_similarity(pred_locations, gt_locations):
 
   return similarity_matrix
 
-def location_matching(pred_locations, gt_locations, thresholds, indicators):
+def location_matching_padded(pred_locations, gt_locations, thresholds, indicators):
   '''
   Args:
     pred_locations: [batch_size, N, 2]
@@ -220,39 +220,49 @@ def location_matching(pred_locations, gt_locations, thresholds, indicators):
 
   thresholds = [1.0/(x*x + 1.0e-16) for x in thresholds]
   matcher = BoxMatcher(thresholds, indicators)
-  matches, indicators = matcher(similarity_matrix)
+  matches, matched_indicators = matcher(similarity_matrix)
 
   # matches = tf.where(row_masks[..., None], similarity_matrix, -1)
-  indicators = tf.where(row_masks, indicators, -1)
+  matched_indicators = tf.where(row_masks, indicators, -1)
 
-  return matches, indicators
+  return matches, matched_indicators
 
-def location_matching_ragged(pred_locations, gt_locations, thresholds, indicators):
+def location_matching_unpadded(pred_locations, gt_locations, thresholds, indicators):
   '''
   The ragged version of location_matching. Inputs and outputs are Ragged tensors
   Args:
-    pred_locations: [batch_size, None, 2]
-    gt_locations: [batch_size, None, 2]
+    pred_locations: [batch_size, None, 2], or [N, 2]
+    gt_locations: [batch_size, None, 2] or [K, 2]
     thresholds: a list of distance thresholds sorted from largest -> smallest
     indicator: corresponding indicators (int)
   Returns:
-    matches: [batch_size, None] indices of the matches location in gt list
-    indicators: [batch_size, None] indicator value for each match, padded with -1
+    matches: [batch_size, None] or [N], indices of the matches location in gt list
+    indicators: [batch_size, None] or [N], indicator value for each match, padded with -1
   '''
 
   thresholds = [1.0/(x*x + 1.0e-16) for x in thresholds]
   matcher = BoxMatcher(thresholds, indicators)
+
+  batched_inputs = True
+  if len(pred_locations.shape)==2:
+      pred_locations = pred_locations[None,...]
+      gt_locations = gt_locations[None, ...]
+      batched_inputs = False
 
   def match_one(ele):
     pred, gt = ele
     similarity_matrix = compute_similarity(pred, gt)
     return matcher(similarity_matrix)
 
-  matches, indicators = tf.map_fn(
+  matches, matched_indicators = tf.map_fn(
     match_one, (pred_locations, gt_locations),
     fn_output_signature = (
         tf.RaggedTensorSpec((None,), tf.int32, 0),
         tf.RaggedTensorSpec((None,), tf.int32, 0)),
   )
 
-  return matches, indicators
+  if not batched_inputs:
+      matches = matches.merge_dims(0,1)
+      matched_indicators = matched_indicators.merge_dims(0,1)
+
+  return matches, matched_indicators
