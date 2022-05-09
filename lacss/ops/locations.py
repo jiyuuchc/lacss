@@ -38,11 +38,14 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     if score_threshold is None:
         score_threshold = float('-inf')
 
-    # score_out, regression_out = model_out
+    batched = True
+    if len(score_out.shape) == 3 and len(regression_out.shape) == 3:
+        score_out = tf.expand_dims(score_out, 0)
+        regression_out = tf.expand_dims(regression_out, 0)
+        batched = False
+
     batch_size = tf.shape(score_out)[0]
-    # height = tf.shape(score_out)[1]
-    # width = tf.shape(score_out)[2]
-    score_out_flatten = tf.reshape(score_out, [batch_size, -1])
+    score_out_flatten = tf.reshape(tf.stop_gradient(score_out), [batch_size, -1])
 
     if topk < 0 or topk > tf.shape(score_out_flatten)[1]:
         topk = tf.shape(score_out_flatten)[1]
@@ -52,7 +55,7 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     indices = tf.transpose(indices)
     indices = tf.reshape(indices, [batch_size, -1, 2])
     locations = tf.cast(indices, tf.float32) + 0.5
-    regressions = tf.gather_nd(regression_out, indices, batch_dims=1)
+    regressions = tf.gather_nd(tf.stop_gradient(regression_out), indices, batch_dims=1)
     locations = locations + regressions
 
     sqdist = tf.reduce_sum(tf.math.square(locations[:,None,:,:] - locations[:,:,None,:]), axis=-1)
@@ -78,8 +81,11 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     scaling = tf.cast(tf.shape(score_out)[1:3], nms_locations.dtype)
     nms_locations = nms_locations / scaling
 
-    if padded:
+    if not batched:
+        nms_scores = nms_scores.merge_dims(0,1)
+        nms_locations = nms_locations.merge_dims(0,1)
+    elif padded:
         nms_scores = nms_scores.to_tensor(-1)
-        nms_indices = nms_locations.to_tensor(-1)
+        nms_locations = nms_locations.to_tensor(-1)
 
     return nms_scores, nms_locations
