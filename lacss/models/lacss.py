@@ -1,44 +1,68 @@
 import tensorflow as tf
 import tensorflow.keras.layers as layers
 from .detection_head import DetectionHead
+from .unet import UNetDecoder, UNetEncoder
+from .instance_head import InstanceHead
 from ..metrics import *
 from ..losses import *
 from ..ops import *
 
 class LacssModel(tf.keras.Model):
     def __init__(self,
-            backbone, detection_head, instance_head,
+            backbone = 'unet_s',
+            detection_head_conv_filers=(1024,),
+            detection_head_fc_filers=(1024,),
             detection_roi_size=1.5,
             detection_pre_nms_topk=2000,
             detection_nms_threshold=1.1,
             detection_max_output=500,
-            max_proposal_offset=16,):
+            instance_jitter=0.,
+            max_proposal_offset=16,
+            instance_crop_size=96,
+            train_supervied=False,
+            ):
         super().__init__()
         self._config_dict = {
             'backbone': backbone,
-            'detection_head': detection_head,
-            'instance_head': instance_head,
+            'detection_head_conv_filers':detection_head_conv_filers,
+            'detection_head_fc_filers':detection_head_fc_filers,
             'detection_roi_size': detection_roi_size,
             'detection_pre_nms_topk': detection_pre_nms_topk,
             'detection_nms_threshold': detection_nms_threshold,
             'detection_max_output': detection_max_output,
+            'instance_jitter':instance_jitter,
             'max_proposal_offset': max_proposal_offset,
+            'instance_crop_size': instance_crop_size,
+            'train_supervied': train_supervied,
         }
 
         self._metrics = [
             tf.keras.metrics.Mean('loss', dtype=tf.float32),
             tf.keras.metrics.Mean('score_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('localization_loss', dtype=tf.float32),
-            tf.keras.metrics.Mean('binary_mask_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('instance_loss', dtype=tf.float32),
-            BinaryMeanAP([12.0], False, name='mAP'),
-            tf.keras.metrics.BinaryAccuracy(name='mask_acc')
+            BinaryMeanAP([10.0], name='mAP'),
+            BoxMeanAP(name='box_mAP'),
         ]
 
-        self._mask_layer = layers.Conv2D(1, 1, activation='sigmoid', padding='same', kernel_initializer='he_normal', name='mask')
+        # self._mask_layer = layers.Conv2D(1, 1, activation='sigmoid', padding='same', kernel_initializer='he_normal', name='mask')
 
     def get_config(self):
         return self._config_dict
+
+    def build(self, input_shape):
+        self._encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
+        self._decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
+        self._stem = [
+            layers.Conv2D(24,3,activation='relu', padding='same', name='stem_conv1'),
+            layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv2'),
+            # layers.BatchNormalization(name='stem_bn'),
+        ]
+        self._detection_head = DetectionHead(
+            conv_filters=self._config_dict['detection_head_conv_filers'],
+            fc_filters=self._config_dict['detection_head_fc_filers'],
+        )
+        self._instance_head = InstanceHead(instance_crop_size=self._config_dict['instance_crop_size']//2)
 
     def _update_metrics(self, new_metrics):
         logs={}
@@ -58,133 +82,147 @@ class LacssModel(tf.keras.Model):
 
     def _gen_train_locations(self, gt_locations, pred_locations):
         threshold = self._config_dict['max_proposal_offset']
-        matched_id, indicators = location_matching(gt_locations, pred_locations, [threshold,], [0, 1])
+        instance_jitter = self._config_dict['instance_jitter']
+        if  instance_jitter > 0:
+            jitter = tf.random.uniform(tf.shape(inputs['locations']), maxval=instance_jitter) - instance_jitter/2
+        else:
+            jitter = 0
 
-        matched_locations = tf.gather_nd(pred_locations, matched_id[...,None], batch_dims=1)
+        n_gt_locs = tf.shape(gt_locations)[0]
+        n_pred_locs = tf.shape(pred_locations)[0]
+        matched_id, indicators = location_matching_unpadded(pred_locations, gt_locations, [threshold], [0,1])
+        matched_id = tf.where(tf.cast(indicators, tf.bool), matched_id, -1)
+        matching_matrix = matched_id == tf.range(n_gt_locs)[:,None]
+        matching_matrix = tf.concat([matching_matrix, tf.ones([n_gt_locs,1], tf.bool)], axis=-1)
+        all_locs = tf.where(matching_matrix)
+        matched_loc_ids = tf.math.segment_min(all_locs[:,1], all_locs[:,0])
+        matched_loc_ids=tf.cast(matched_loc_ids, n_pred_locs.dtype)
 
-        training_locations = tf.where(indicators[...,None] > 0, matched_locations, gt_locations)
+        matched_locs = tf.gather(pred_locations, matched_loc_ids)
+        matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
+
+        training_locations = tf.where(
+            matched_loc_ids[:,None]==n_pred_locs,
+            gt_locations + jitter,
+            matched_locs,
+            )
 
         return training_locations
 
     def call(self, inputs, training=False):
         model_output = {}
 
-        backbone = self._config_dict['backbone']
-        detection_head = self._config_dict['detection_head']
-        instance_head = self._config_dict['instance_head']
+        img = inputs['image']
+        height, width, _ = img.shape
+        height = height if height else tf.shape(img)[0]
+        width = width if width else tf.shape(img)[1]
 
-        backbone_out = backbone(inputs['image'], training=training)
-        detection_features = backbone_out['detection_features']
-        segmentation_features = backbone_out['segmentation_features']
+        y = tf.expand_dims(img, 0)
+        for layer in self._stem:
+            y = layer(y, training=training)
+        y = self._encoder(y, training=training)
+        y = self._decoder(y, training=training)
+        detection_features = y[2][0] #layer 3
+        segmentation_features = y[0][0] # layer 1
 
-        scores_out, regression_out = detection_head(detection_features, training=training)
+        scores_out, regression_out = self._detection_head(detection_features, training=training)
+
         if training:
+            scaled_gt_locations = inputs['locations'] / [height, width]
             model_output.update({
                 'detection_scores': scores_out,
                 'detection_regression': regression_out,
+                'scaled_gt_locations': scaled_gt_locations,
             })
 
-        pred_scores, pred_locations = proposal_locations(
+        proposed_scores, proposed_locations = proposal_locations(
                 scores_out, regression_out,
                 max_output_size=self._config_dict['detection_max_output'],
                 distance_threshold=self._config_dict['detection_nms_threshold'],
                 topk=self._config_dict['detection_pre_nms_topk'],
                 )
-        scale = tf.cast(tf.shape(inputs['image'])[1:3], pred_locations.dtype)
-        pred_locations = pred_locations * scale
+        decoded_locations = proposed_locations * [height, width]
         model_output.update({
-            'location_scores': pred_scores,
-            'locations': pred_locations,
-        })
-
-        if training:
-            mask = self._mask_layer(segmentation_features, training=training)
-            model_output.update({
-                'mask': mask,
+            'pred_location_scores': proposed_scores,
+            'pred_locations': decoded_locations,
             })
 
         if training:
-            training_locations = self._gen_train_locations(inputs['locations'], pred_locations.to_tensor(-1))
+            training_locations = self._gen_train_locations(
+                inputs['locations'],
+                decoded_locations,
+                )
+            training_locations = training_locations / [height, width]
+
         else:
-            training_locations = pred_locations.to_tensor(-1)
+            training_locations = proposed_locations
 
-        training_locations = training_locations / tf.cast(tf.shape(inputs['image'])[1:3], training_locations.dtype)
         instance_inputs = (segmentation_features, detection_features, training_locations)
-        instance_output, instance_coords = instance_head(instance_inputs, training=training)
+        instance_output, instance_coords = self._instance_head(instance_inputs, training=training)
 
-        if training:
-            model_output.update({
-                'instance_output': instance_output,
-                'instance_coords': instance_coords,
-            })
+        model_output.update({
+            # 'training_locations': training_locations,
+            'instance_output': instance_output,
+            'instance_coords': instance_coords,
+        })
 
         return model_output
 
     def train_step(self, data):
-        detection_roi_size = self._config_dict['detection_roi_size']
-
-        gt_locations = data['locations']
-        gt_mask = data['binary_label']
-
         with tf.GradientTape() as tape:
             model_output = self(data, training=True)
-            scaled_gt_locations = gt_locations / tf.cast(tf.shape(data['image'])[1:3], gt_locations.dtype)
+
             score_loss, loc_loss = detection_losses(
-                scaled_gt_locations,
-                model_output['detection_scores'],
-                model_output['detection_regression'],
-                threshold = detection_roi_size,
+                model_output['scaled_gt_locations'][None, ...],
+                model_output['detection_scores'][None, ...],
+                model_output['detection_regression'][None, ...],
+                roi_size = self._config_dict['detection_roi_size'],
             )
 
-            # pred_mask = model_output['mask']
-            # mask_loss = tf.keras.losses.binary_crossentropy(gt_mask, pred_mask)
+            if self._config_dict['train_supervied']:
+                instance_loss = supervised_segmentation_losses(
+                    model_output['instance_output'],
+                    model_output['instance_coords'],
+                    data['mask_indices'],
+                )
+                instance_loss /= 500.0
+            else:
+                instance_loss = self_supervised_segmentation_losses(
+                    model_output['instance_output'],
+                    model_output['instance_coords'],
+                    data['binary_mask'],
+                    )
 
-            instance_output = model_output['instance_output']
-            instance_coords = model_output['instance_coords']
-            # instance_loss = tf.map_fn(
-            #     lambda x: self_supervised_segmentation_losses(x[0], x[1], x[2]),
-            #     (instance_output, gt_mask, instance_coords),
-            #     fn_output_signature=tf.float32,
-            # )
-            # instance_loss = tf.reduce_sum(instance_loss)
-            instance_loss = self_supervised_segmentation_losses(instance_output[0], gt_mask[0], instance_coords[0])
-            #loss = score_loss + loc_loss + mask_loss + instance_loss
             loss = score_loss + loc_loss + instance_loss
 
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients((g, v) for (g, v) in zip(grads, self.trainable_variables) if g is not None)
 
-        pred_locations = model_output['locations']
+        gt_locations = data['locations']
+        pred_locations = model_output['pred_locations']
         logs = self._update_metrics({
             'loss': loss,
             'score_loss': score_loss,
             'localization_loss': loc_loss,
-            # 'binary_mask_loss': mask_loss,
             'instance_loss': instance_loss,
             'mAP': (gt_locations, pred_locations),
-            # 'mask_acc': (gt_mask, pred_mask),
         })
 
         return logs
 
     def test_step(self, data):
-        gt_locations = data['locations']
-        #gt_mask = data['mask_label']
-        #gt_mask = tf.cast(gt_mask > 0, tf.int32)
-        #_, mask_height, mask_width =  gt_mask.shape.as_list()
-        # gt_mask = tf.expand_dims(gt_mask, -1)
+        model_output = self(data, training=False)
 
-        model_output = self(data, training=True)
-        pred_locations = model_output['locations']
-        #pred_mask = model_output['mask'] #scaled
-
-        #target_size = tf.cast(tf.cast(tf.shape(pred_mask)[1:3], tf.float32) / data['scaling_factor'], tf.int32)
-        #pred_mask = tf.image.resize(pred_mask, target_size)
-        #pred_mask = tf.image.crop_to_bounding_box(pred_mask, 0, 0, mask_height, mask_width)
-
+        gt_bboxes = data['bboxes']
+        pred_bboxes = bboxes_of_patches(
+            model_output['instance_output'],
+            model_output['instance_coords'],
+            )
+        # gt_locations = tf.reduce_mean(tf.reshape(gt_bboxes, [-1,2,2]), axis=-2)
+        # pred_locations = model_output['pred_locations']
         logs = self._update_metrics({
-            'mAP': (gt_locations, pred_locations),
-            # 'mask_acc': (gt_mask, pred_mask),
+            # 'mAP': (gt_locations, pred_locations),
+            'box_mAP': (gt_bboxes, pred_bboxes),
         })
 
         return logs
