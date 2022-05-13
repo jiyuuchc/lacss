@@ -29,6 +29,8 @@ class DetectionHead(tf.keras.layers.Layer):
             conv_layers.append(layers.BatchNormalization(name=f'fc_bn_{k}'))
         self._conv_layers = conv_layers
 
+        #self._att_filter = layers.Conv2D(1, 7, name=f'att_conv', padding='same', activation='sigmoid', kernel_initializer='he_normal')
+
         self._score_layer = layers.Dense(1, name='score', activation='sigmoid', kernel_initializer='he_normal')
         self._regression_layer = layers.Dense(2, name='regression', kernel_initializer='he_normal')
 
@@ -40,16 +42,30 @@ class DetectionHead(tf.keras.layers.Layer):
             inputs: [batch_size, H, W, ch]
         Returns:
             scores: [batch_size, H, W, 1]
+            regression: [batch_size, H, W, 2]
         '''
 
         input_shape = tf.shape(inputs)
 
         y = inputs
 
-        for layer in self._conv_layers:
-            y = layer(y)
+        batched_input = True
+        if len(input_shape) == 3:
+            y = tf.expand_dims(y, 0)
+            batched_input = False
 
-        scores_out = self._score_layer(y)
-        regression_out = self._regression_layer(y)
+        for layer in self._conv_layers:
+            y = layer(y, training=training)
+
+        #attension
+        #compression = tf.stack([tf.reduce_mean(y, axis=-1), tf.reduce_max(y, axis=-1)], axis=-1)
+        #att = self._att_filter(compression, training=training)
+        #scores_out = self._score_layer(y * att, training=training)
+        scores_out = self._score_layer(y, training=training)
+        regression_out = self._regression_layer(y, training=training)
+
+        if not batched_input:
+            scores_out = scores_out[0]
+            regression_out = regression_out[0]
 
         return scores_out, regression_out
