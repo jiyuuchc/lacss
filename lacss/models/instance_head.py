@@ -3,11 +3,11 @@ import tensorflow.keras.layers as layers
 from ..ops import *
 
 class InstanceHead(tf.keras.layers.Layer):
-    def __init__(self, n_conv_layers=1, n_conv_channels=32, n_att_channels=4, instance_crop_size=96, **kwargs):
+    def __init__(self, n_conv_layers=2, n_conv_channels=64, n_position_encoding_channels=8, instance_crop_size=96, **kwargs):
         self._config_dict = {
             'n_conv_layers': n_conv_layers,
             'n_conv_channels': n_conv_channels,
-            'n_att_channels': 4,
+            'n_position_encoding_channels': n_position_encoding_channels,
             'instance_crop_size': instance_crop_size,
         }
         super(InstanceHead, self).__init__(**kwargs)
@@ -16,30 +16,37 @@ class InstanceHead(tf.keras.layers.Layer):
         return self._config_dict
 
     def build(self, input_shape):
-        conv_kwargs = {
-            'padding': 'same',
-            'kernel_initializer': 'he_normal',
-        }
-
         patch_size = self._config_dict['instance_crop_size']
-        delta = 2.0 / (patch_size - 1)
-        s = tf.range(-1., 1 + delta/2, delta)
-        xc, yc = tf.meshgrid(s, s)
-        encodings = tf.stack([yc, xc, yc**2, xc**2, yc**3, xc**3], axis=-1)
-        self._pos_encoding = tf.expand_dims(encodings, 0)
+        n_ch = self._config_dict['n_conv_channels']
+        n_position_encoding_channels = self._config_dict['n_position_encoding_channels']
+
+        # self.position_encodings = tf.Variable(
+        #       tf.random.normal([patch_size, patch_size, n_position_encoding_channels], dtype=tf.float32),
+        #       name='position_encodings'
+        #       )
+
+        # hard code position
+        cs = self._config_dict['instance_crop_size']
+        rr = tf.range(cs, dtype=tf.float32) - cs/2
+        xx,yy = tf.meshgrid(rr,rr)
+        self.position_encodings = tf.stack([yy,xx,tf.math.abs(yy), tf.math.abs(xx)], axis=-1)
+
+        self.hr_feature_filter = layers.Conv2D(n_ch, 3, name='hr_feature_conv', padding='same', kernel_initializer='he_normal')
+        self.lr_feature_filter = layers.Conv2D(n_ch, 3, name='lr_feature_filter', padding='same', kernel_initializer='he_normal', use_bias=False)
+        self.pos_filter = layers.Dense(n_ch, name='pos_conv', kernel_initializer='he_normal', use_bias=False)
+        self.filter_bn = layers.BatchNormalization(name='filter_bn')
 
         conv_layers = []
-        n_ch = self._config_dict['n_conv_channels']
         for k in range(self._config_dict['n_conv_layers']):
-            conv_layers.append(layers.Conv2D(n_ch, 3, name=f'conv_{k}', activation='relu', **conv_kwargs))
+            conv_layers.append(layers.ReLU())
+            conv_layers.append(layers.Conv2D(n_ch, 3, name=f'conv_{k}', padding='same', kernel_initializer='he_normal'))
             conv_layers.append(layers.BatchNormalization(name=f'bn_{k}'))
-        conv_layers.append(layers.Conv2D(self._config_dict['n_att_channels'], 1, name=f'conv_last', activation='relu', **conv_kwargs))
-        conv_layers.append(layers.BatchNormalization(name=f'bn_last'))
         self._conv_layers = conv_layers
 
-        self._att_layer_a = layers.Dense(self._config_dict['n_att_channels'], name='att_a')
-        self._att_layer_b = layers.Conv2D(self._config_dict['n_att_channels'], 1, name='att_b', **conv_kwargs)
-        self._output = layers.Conv2D(1, 1, name=f'conv_last', activation='sigmoid', **conv_kwargs)
+        self._output = layers.Conv2DTranspose(1, 3, strides=2, padding='same', activation='sigmoid', name=f'instance_output')
+
+
+        self._att_conv = layers.Conv2D(1, 7, activation='sigmoid', padding='same', dilation_rate=2)
 
         super(InstanceHead, self).build(input_shape)
 
@@ -51,39 +58,56 @@ class InstanceHead(tf.keras.layers.Layer):
                 lr_features: [batch_size, h1, w1, n_ch1]
                 locations: [batch_size, N, 2] -1 padded
             outputs:
-                instance_output: [batch_size, None, patch_size, patch_size, 1] ragged tensor
+                instance_output: [batch_size, None, patch_size, patch_size, 1] ragged tensor 0..1
                 instance_coords: [batch_size, None, patch_size, patch_size, 2] ragged tensor
         '''
         hr_features, lr_features, locations = inputs
         patch_size = self._config_dict['instance_crop_size']
 
-        x = hr_features
+        if len(locations.shape) == 2:
+            batched_inputs = False
+            if len(hr_features.shape) != 3 or len(lr_features.shape) != 3:
+                raise ValueError
+            y0 = self.hr_feature_filter(hr_features[None,...], training=training)[0]
+            y1 = self.lr_feature_filter(lr_features[None,...], training=training)[0]
+        else:
+            batched_inputs = True
+            if len(hr_features.shape) != 4 or len(lr_features.shape) != 4 or len(locations.shape) != 3:
+                raise ValueError
+            y0 = self.hr_feature_filter(hr_features, training=training)
+            y1 = self.lr_feature_filter(lr_features, training=taining)
+
+        y0, _ = gather_patches(y0, locations, patch_size)
+        y1, _ = gather_patches(y1, locations, 1)
+        y2 = self.pos_filter(self.position_encodings, training=training)
+        patches = y0 + y1
+
+        #att
+        # y_max = tf.reduce_max(y, axis=-1)
+        # y_avg = tf.reduce_mean(y, axis=-1)
+        # att = self._att_conv(tf.stack([y_max, y_avg], axis=-1), training=training)
+        # y = y * att
+
+        # patches = tf.nn.relu(y, name='filter_activation')
+        # patches = self.filter_bn(y, training=training)
+
+        if batched_inputs:
+            mask = tf.where(locations[:,:,0] >= 0)
+            patches = tf.gather_nd(patches, mask)
+
         for layer in self._conv_layers:
-            x = layer(x, training=training)
-
-        mask = tf.where(locations[:,:,0] >= 0)
-        locations = tf.clip_by_value(locations, 0, 1)
-
-        patches, coords = gather_patches(x, locations, self._config_dict['instance_crop_size'])
-        patches = tf.gather_nd(patches, mask)
-        coords = tf.gather_nd(coords, mask)
-
-        lr_locations = locations * tf.cast(tf.shape(lr_features)[1:3], locations.dtype)
-        lr_locations = tf.cast(lr_locations + .5, tf.int32)
-        center_features = tf.gather_nd(lr_features, lr_locations, batch_dims=1)
-        center_features = tf.gather_nd(center_features, mask)
-
-        att_a = self._att_layer_a(center_features)
-        att_a = att_a[:, None, None, :]
-
-        att_b = self._att_layer_b(self._pos_encoding)
-
-        att = tf.sigmoid(att_a + att_b) #broadcast
-        patches = patches * att
+            patches = layer(patches, training=training)
+        patches = patches + y2
+        patches = tf.nn.relu(patches)
 
         instance_output = self._output(patches, training=training)
-        instance_output = tf.RaggedTensor.from_value_rowids(instance_output, mask[:,0])
 
-        instance_coords = tf.RaggedTensor.from_value_rowids(coords, mask[:,0])
+        i_locations = locations * tf.cast(tf.shape(hr_features)[:2], locations.dtype)
+        i_locations = tf.cast(i_locations, tf.int32)
+        instance_coords = make_meshgrids(i_locations * 2, patch_size * 2)
+
+        if batched_inputs:
+            instance_output = tf.RaggedTensor.from_value_rowids(instance_output, mask[:,0])
+            instance_coords = tf.RaggedTensor.from_value_rowids(instance_coords, mask[:,0])
 
         return instance_output, instance_coords
