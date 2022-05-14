@@ -218,35 +218,25 @@ class UNetDecoder(tf.keras.layers.Layer):
 def build_unet_s_backbone(input_shape=(None,None,1)):
     encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
     decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-    stem = [
-        layers.Conv2D(24,3,activation='relu', padding='same', name='stem_conv1'),
-        layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv2'),
-        # layers.BatchNormalization(name='stem_bn'),
-    ]
-    input = Layers.Input(shape=input_shape)
-    y = input
-    for layer in stem:
-        y = layer(y)
-    y = encoder(y)
-    y = decoder(y)
-    output = (y[0], y[2])
+    input = layers.Input(shape=input_shape)
+    x = input
+    x = layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv1')(x)
+    x = layers.Conv2D(64,3,activation='relu', padding='same', name='stem_conv2')(x)
+    x = encoder(x)
+    x = decoder(x)
+    output = (x[0], x[2])
     model = tf.keras.Model(inputs=input, outputs=output)
     return model
 
-def build_unet_l_backbone(input_shape=(None,None,1)):
+def build_unet_backbone(input_shape=(None,None,1)):
     encoder = UNetEncoder((2,[128,256,512,1024]), use_bn=False, name='encoder')
     decoder = UNetDecoder((1,[512,256,128]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-    stem = [
-        layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv1'),
-        layers.Conv2D(64,3,activation='relu', padding='same', name='stem_conv2'),
-        # layers.BatchNormalization(name='stem_bn'),
-    ]
-    input = Layers.Input(shape=input_shape)
-    y = input
-    for layer in stem:
-        y = layer(y)
-    y = encoder(y)
-    y = decoder(y)
-    output = (y[0], y[2])
+    input = layers.Input(shape=input_shape)
+    x = input
+    x = layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv1')(x)
+    x = layers.Conv2D(64,3,activation='relu', padding='same', name='stem_conv2')(x)
+    x = encoder(x)
+    x = decoder(x)
+    output = (x[0], x[2])
     model = tf.keras.Model(inputs=input, outputs=output)
     return model

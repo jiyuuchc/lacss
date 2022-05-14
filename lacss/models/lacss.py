@@ -6,6 +6,7 @@ from .instance_head import InstanceHead
 from ..metrics import *
 from ..losses import *
 from ..ops import *
+from .unet import *
 
 class LacssModel(tf.keras.Model):
     def __init__(self,
@@ -51,13 +52,21 @@ class LacssModel(tf.keras.Model):
         return self._config_dict
 
     def build(self, input_shape):
-        self._encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
-        self._decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-        self._stem = [
-            layers.Conv2D(24,3,activation='relu', padding='same', name='stem_conv1'),
-            layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv2'),
-            # layers.BatchNormalization(name='stem_bn'),
-        ]
+        # self._encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
+        # self._decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
+        # self._stem = [
+        #     layers.Conv2D(24,3,activation='relu', padding='same', name='stem_conv1'),
+        #     layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv2'),
+        #     # layers.BatchNormalization(name='stem_bn'),
+        # ]
+        backbone = self._config_dict['backbone']
+        if backbone == 'unet_s':
+            self._backbone = build_unet_s_backbone()
+        elif backbone == 'unet':
+            self._backbone = build_unet_backbone()
+        else:
+            raise ValueError(f'unknown backbone type: {backbone}')
+
         self._detection_head = DetectionHead(
             conv_filters=self._config_dict['detection_head_conv_filers'],
             fc_filters=self._config_dict['detection_head_fc_filers'],
@@ -118,12 +127,15 @@ class LacssModel(tf.keras.Model):
         width = width if width else tf.shape(img)[1]
 
         y = tf.expand_dims(img, 0)
-        for layer in self._stem:
-            y = layer(y, training=training)
-        y = self._encoder(y, training=training)
-        y = self._decoder(y, training=training)
-        detection_features = y[2][0] #layer 3
-        segmentation_features = y[0][0] # layer 1
+        segmentation_features, detection_features = self._backbone(y, training=training)
+        detection_features = tf.squeeze(detection_features, 0)
+        segmentation_features = tf.squeeze(segmentation_features, 0)
+        # for layer in self._stem:
+        #     y = layer(y, training=training)
+        # y = self._encoder(y, training=training)
+        # y = self._decoder(y, training=training)
+        # detection_features = y[2][0] #layer 3
+        # segmentation_features = y[0][0] # layer 1
 
         scores_out, regression_out = self._detection_head(detection_features, training=training)
 
