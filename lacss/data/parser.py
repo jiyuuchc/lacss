@@ -24,13 +24,19 @@ def scale_or_pad_to_target_size(image, target_height, target_width):
     image = tf.ensure_shape(image, [target_height, target_width, None])
     return image, h0, w0
 
-def parse_train_data_func(data, augment=True, target_height=512, target_width=512):
+def parse_train_data_func(data, augment=True, size_jitter=None, target_height=512, target_width=512):
     image = data['image']
     binary_mask = tf.expand_dims(data['binary_mask'], -1)
     locations = data['locations']
 
-    # scale image so all cells are of similar pixel size
     img_and_label = tf.concat([image, tf.cast(binary_mask, tf.float32)], -1)
+    if size_jitter is not None:
+        h = tf.cast(tf.shape(img_and_label)[-3], tf.float32)
+        w = tf.cast(tf.shape(img_and_label)[-2], tf.float32)
+        scaling = tf.random.uniform([], size_jitter[0], size_jitter[1])
+        img_and_label = tf.image.resize(img_and_label, [int(h*scaling), int(w*scaling)], antialias=True)
+        locations = locations * scaling
+
     img_and_label, h0, w0 = scale_or_pad_to_target_size(img_and_label, target_height, target_width)
     locations = locations - tf.cast([h0, w0], tf.float32)
 
@@ -43,7 +49,10 @@ def parse_train_data_func(data, augment=True, target_height=512, target_width=51
             locations = locations * [-1.0, 1.0] + [target_height, 0]
 
     image = img_and_label[..., 0:1]
-    binary_mask = img_and_label[..., 1:]
+    if size_jitter is not None:
+        binary_mask = tf.cast(img_and_label[..., 1:] > 0.5, tf.float32)
+    else:
+        binary_mask = img_and_label[..., 1:]
 
     #remove out-of-bound locations
     mask = tf.logical_and(
@@ -75,7 +84,7 @@ def parse_test_data_func(data, dim_multiple=64):
     target_width =  (width - 1) // dim_multiple * dim_multiple + dim_multiple
 
     image = tf.image.pad_to_bounding_box(image, 0, 0, target_height, target_width)
-    binary_mask = tf.image.pad_to_bounding_box(binary_mask, 0, 0, target_height, target_width)
+    binary_mask = tf.cast(tf.image.pad_to_bounding_box(binary_mask, 0, 0, target_height, target_width), tf.float32)
 
     return {
         'image': image,
