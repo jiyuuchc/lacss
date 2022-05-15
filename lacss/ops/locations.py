@@ -36,7 +36,7 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     '''
 
     if score_threshold is None:
-        score_threshold = float('-inf')
+        score_threshold = 0
 
     batched = True
     if len(score_out.shape) == 3 and len(regression_out.shape) == 3:
@@ -46,9 +46,12 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
 
     batch_size = tf.shape(score_out)[0]
     score_out_flatten = tf.reshape(tf.stop_gradient(score_out), [batch_size, -1])
-
-    if topk <= 0 or topk > tf.shape(score_out_flatten)[1]:
-        topk = tf.shape(score_out_flatten)[1]
+    if score_threshold > 0:
+        n_candidates = tf.math.count_nonzero(score_out_flatten > score_threshold)
+    else:
+        n_candidates = tf.shape(score_out_flatten)[1]
+    if topk <= 0 or topk > n_candidates:
+        topk = n_candidates
     scores, indices = tf.math.top_k(score_out_flatten, topk)
 
     indices = tf.unravel_index(tf.reshape(indices, [-1]), tf.shape(score_out)[1:3])
