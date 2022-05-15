@@ -14,9 +14,14 @@ class LacssModel(tf.keras.Model):
             detection_head_conv_filers=(1024,),
             detection_head_fc_filers=(1024,),
             detection_roi_size=1.5,
-            detection_pre_nms_topk=2000,
-            detection_nms_threshold=1.1,
-            detection_max_output=500,
+            train_pre_nms_topk=2000,
+            train_nms_threshold=1.1,
+            train_max_output=500,
+            train_min_score=0,
+            test_pre_nms_topk=2000,
+            test_nms_threshold=1.1,
+            test_max_output=500,
+            test_min_score=0,
             instance_jitter=0.,
             max_proposal_offset=16,
             instance_crop_size=96,
@@ -28,9 +33,14 @@ class LacssModel(tf.keras.Model):
             'detection_head_conv_filers':detection_head_conv_filers,
             'detection_head_fc_filers':detection_head_fc_filers,
             'detection_roi_size': detection_roi_size,
-            'detection_pre_nms_topk': detection_pre_nms_topk,
-            'detection_nms_threshold': detection_nms_threshold,
-            'detection_max_output': detection_max_output,
+            'train_pre_nms_topk': train_pre_nms_topk,
+            'train_nms_threshold': train_nms_threshold,
+            'train_max_output': train_max_output,
+            'train_min_score': train_min_score,
+            'test_pre_nms_topk': test_pre_nms_topk,
+            'test_nms_threshold': test_nms_threshold,
+            'test_max_output': test_max_output,
+            'test_min_score': test_min_score,
             'instance_jitter':instance_jitter,
             'max_proposal_offset': max_proposal_offset,
             'instance_crop_size': instance_crop_size,
@@ -130,12 +140,6 @@ class LacssModel(tf.keras.Model):
         segmentation_features, detection_features = self._backbone(y, training=training)
         detection_features = tf.squeeze(detection_features, 0)
         segmentation_features = tf.squeeze(segmentation_features, 0)
-        # for layer in self._stem:
-        #     y = layer(y, training=training)
-        # y = self._encoder(y, training=training)
-        # y = self._decoder(y, training=training)
-        # detection_features = y[2][0] #layer 3
-        # segmentation_features = y[0][0] # layer 1
 
         scores_out, regression_out = self._detection_head(detection_features, training=training)
 
@@ -146,12 +150,22 @@ class LacssModel(tf.keras.Model):
                 'detection_regression': regression_out,
                 'scaled_gt_locations': scaled_gt_locations,
             })
+            max_output = self._config_dict['train_max_output']
+            nms_threshold = self._config_dict['train_nms_threshold']
+            topk = self._config_dict['train_pre_nms_topk']
+            min_score = self._config_dict['train_min_score']
+        else:
+            max_output = self._config_dict['test_max_output']
+            nms_threshold = self._config_dict['test_nms_threshold']
+            topk = self._config_dict['test_pre_nms_topk']
+            min_score = self._config_dict['test_min_score']
 
         proposed_scores, proposed_locations = proposal_locations(
                 scores_out, regression_out,
-                max_output_size=self._config_dict['detection_max_output'],
-                distance_threshold=self._config_dict['detection_nms_threshold'],
-                topk=self._config_dict['detection_pre_nms_topk'],
+                max_output_size=max_output,
+                distance_threshold=nms_threshold,
+                topk=topk,
+                score_threshold=min_score,
                 )
         decoded_locations = proposed_locations * [height, width]
         model_output.update({
@@ -169,7 +183,7 @@ class LacssModel(tf.keras.Model):
         else:
             training_locations = proposed_locations
 
-        instance_inputs = (segmentation_features, detection_features, training_locations)
+        instance_inputs = (segmentation_features, training_locations)
         instance_output, instance_coords = self._instance_head(instance_inputs, training=training)
 
         model_output.update({
