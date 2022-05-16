@@ -7,6 +7,7 @@ from ..metrics import *
 from ..losses import *
 from ..ops import *
 from .unet import *
+from .resnet import *
 
 class LacssModel(tf.keras.Model):
     def __init__(self,
@@ -67,6 +68,8 @@ class LacssModel(tf.keras.Model):
             self._backbone = build_unet_s_backbone()
         elif backbone == 'unet':
             self._backbone = build_unet_backbone()
+        elif backbone == 'resnet':
+            self._backbone = build_resnet_backbone()
         else:
             raise ValueError(f'unknown backbone type: {backbone}')
 
