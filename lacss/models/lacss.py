@@ -14,17 +14,18 @@ class LacssModel(tf.keras.Model):
             detection_head_conv_filers=(1024,),
             detection_head_fc_filers=(1024,),
             detection_roi_size=1.5,
+            detection_nms_threshold=1.0,
             train_pre_nms_topk=2000,
-            train_nms_threshold=1.1,
             train_max_output=500,
             train_min_score=0,
-            test_pre_nms_topk=2000,
-            test_nms_threshold=1.1,
+            test_pre_nms_topk=0,
             test_max_output=500,
             test_min_score=0,
-            instance_jitter=0.,
+            # instance_jitter=0.,
             max_proposal_offset=16,
             instance_crop_size=96,
+            instance_n_convs=1,
+            instance_conv_channels=64,
             train_supervied=False,
             ):
         super().__init__()
@@ -33,17 +34,18 @@ class LacssModel(tf.keras.Model):
             'detection_head_conv_filers':detection_head_conv_filers,
             'detection_head_fc_filers':detection_head_fc_filers,
             'detection_roi_size': detection_roi_size,
+            'detection_nms_threshold': detection_nms_threshold,
             'train_pre_nms_topk': train_pre_nms_topk,
-            'train_nms_threshold': train_nms_threshold,
             'train_max_output': train_max_output,
             'train_min_score': train_min_score,
             'test_pre_nms_topk': test_pre_nms_topk,
-            'test_nms_threshold': test_nms_threshold,
             'test_max_output': test_max_output,
             'test_min_score': test_min_score,
-            'instance_jitter':instance_jitter,
+            # 'instance_jitter':instance_jitter,
             'max_proposal_offset': max_proposal_offset,
             'instance_crop_size': instance_crop_size,
+            'instance_n_convs': instance_n_convs,
+            'instance_conv_channels': instance_conv_channels,
             'train_supervied': train_supervied,
         }
 
@@ -56,19 +58,10 @@ class LacssModel(tf.keras.Model):
             BoxMeanAP(name='box_mAP'),
         ]
 
-        # self._mask_layer = layers.Conv2D(1, 1, activation='sigmoid', padding='same', kernel_initializer='he_normal', name='mask')
-
     def get_config(self):
         return self._config_dict
 
     def build(self, input_shape):
-        # self._encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
-        # self._decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-        # self._stem = [
-        #     layers.Conv2D(24,3,activation='relu', padding='same', name='stem_conv1'),
-        #     layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv2'),
-        #     # layers.BatchNormalization(name='stem_bn'),
-        # ]
         backbone = self._config_dict['backbone']
         if backbone == 'unet_s':
             self._backbone = build_unet_s_backbone()
@@ -81,7 +74,11 @@ class LacssModel(tf.keras.Model):
             conv_filters=self._config_dict['detection_head_conv_filers'],
             fc_filters=self._config_dict['detection_head_fc_filers'],
         )
-        self._instance_head = InstanceHead(instance_crop_size=self._config_dict['instance_crop_size']//2)
+        self._instance_head = InstanceHead(
+              n_patch_conv_layers=self._config_dict['instance_n_convs'],
+              n_conv_channels=self._config_dict['instance_conv_channels'],
+              instance_crop_size=self._config_dict['instance_crop_size']//2,
+              )
 
     def _update_metrics(self, new_metrics):
         logs={}
@@ -101,11 +98,11 @@ class LacssModel(tf.keras.Model):
 
     def _gen_train_locations(self, gt_locations, pred_locations):
         threshold = self._config_dict['max_proposal_offset']
-        instance_jitter = self._config_dict['instance_jitter']
-        if  instance_jitter > 0:
-            jitter = tf.random.uniform(tf.shape(inputs['locations']), maxval=instance_jitter) - instance_jitter/2
-        else:
-            jitter = 0
+        # instance_jitter = self._config_dict['instance_jitter']
+        # if  instance_jitter > 0:
+        #     jitter = tf.random.uniform(tf.shape(inputs['locations']), maxval=instance_jitter) - instance_jitter/2
+        # else:
+        #     jitter = 0
 
         n_gt_locs = tf.shape(gt_locations)[0]
         n_pred_locs = tf.shape(pred_locations)[0]
@@ -122,7 +119,8 @@ class LacssModel(tf.keras.Model):
 
         training_locations = tf.where(
             matched_loc_ids[:,None]==n_pred_locs,
-            gt_locations + jitter,
+            # gt_locations + jitter,
+            gt_locations,
             matched_locs,
             )
 
@@ -151,19 +149,17 @@ class LacssModel(tf.keras.Model):
                 'scaled_gt_locations': scaled_gt_locations,
             })
             max_output = self._config_dict['train_max_output']
-            nms_threshold = self._config_dict['train_nms_threshold']
             topk = self._config_dict['train_pre_nms_topk']
             min_score = self._config_dict['train_min_score']
         else:
             max_output = self._config_dict['test_max_output']
-            nms_threshold = self._config_dict['test_nms_threshold']
             topk = self._config_dict['test_pre_nms_topk']
             min_score = self._config_dict['test_min_score']
 
         proposed_scores, proposed_locations = proposal_locations(
                 scores_out, regression_out,
                 max_output_size=max_output,
-                distance_threshold=nms_threshold,
+                distance_threshold=self._config_dict['detection_nms_threshold'],
                 topk=topk,
                 score_threshold=min_score,
                 )
@@ -178,16 +174,13 @@ class LacssModel(tf.keras.Model):
                 inputs['locations'],
                 decoded_locations,
                 )
-            training_locations = training_locations / [height, width]
-
+            instance_inputs = (segmentation_features, training_locations / [height, width])
         else:
-            training_locations = proposed_locations
+            instance_inputs = (segmentation_features, proposed_locations)
 
-        instance_inputs = (segmentation_features, training_locations)
         instance_output, instance_coords = self._instance_head(instance_inputs, training=training)
 
         model_output.update({
-            # 'training_locations': training_locations,
             'instance_output': instance_output,
             'instance_coords': instance_coords,
         })
