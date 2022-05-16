@@ -51,7 +51,7 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     else:
         n_candidates = tf.shape(score_out_flatten)[1]
     if topk <= 0 or topk > n_candidates:
-        topk = n_candidates
+        topk = tf.cast(n_candidates, tf.int32)
     scores, indices = tf.math.top_k(score_out_flatten, topk)
 
     indices = tf.unravel_index(tf.reshape(indices, [-1]), tf.shape(score_out)[1:3])
@@ -69,7 +69,7 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     # out case (2d data)
     def nms_one(element):
         score, dist, loc = element
-        sel = tf.image.non_max_suppression_overlaps(dist, score, max_output_size, score_threshold=score_threshold)
+        sel = tf.image.non_max_suppression_overlaps(dist, score, max_output_size)
         score_out = tf.gather(score, sel)
         ind_out = tf.gather(loc, sel)
 
