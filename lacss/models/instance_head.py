@@ -3,12 +3,11 @@ import tensorflow.keras.layers as layers
 from ..ops import *
 
 class InstanceHead(tf.keras.layers.Layer):
-    def __init__(self, n_conv_layers=1, n_conv_channels=64, n_patch_conv_layers=0, n_patch_conv_channels=64, instance_crop_size=96, **kwargs):
+    def __init__(self, n_conv_layers=1, n_conv_channels=64, n_patch_conv_layers=1, instance_crop_size=96, **kwargs):
         self._config_dict = {
             'n_conv_layers': n_conv_layers,
             'n_conv_channels': n_conv_channels,
             'n_patch_conv_layers': n_patch_conv_layers,
-            'n_patch_conv_channels': n_patch_conv_channels,
             'instance_crop_size': instance_crop_size,
         }
         super(InstanceHead, self).__init__(**kwargs)
@@ -21,22 +20,23 @@ class InstanceHead(tf.keras.layers.Layer):
 
         # hard code position
         cs = self._config_dict['instance_crop_size']
-        rr = tf.range(cs, dtype=tf.float32) - cs/2
+        rr = (tf.range(cs, dtype=tf.float32) - cs/2)/cs
         xx,yy = tf.meshgrid(rr,rr)
         self._position_encodings = tf.stack([yy,xx,tf.math.abs(yy), tf.math.abs(xx)], axis=-1)
+        self._position_encodings = tf.expand_dims(self._position_encodings, 0)
 
         conv_layers = []
         for k in range(self._config_dict['n_conv_layers']):
-            conv_layers.append(layers.Conv2D(self._config_dict['n_conv_channels'], 3, name=f'conv_{k}', padding='same', kernel_initializer='he_normal'))
+            conv_layers.append(layers.Conv2D(n_ch, 3, name=f'conv_{k}', padding='same', kernel_initializer='he_normal'))
             conv_layers.append(layers.BatchNormalization(name=f'bn_{k}'))
             conv_layers.append(layers.ReLU())
         self._conv_layers = conv_layers
 
         patch_conv_layers = []
         for k in range(self._config_dict['n_patch_conv_layers']):
-            conv_layers.append(layers.Conv2D(self._config_dict['n_patch_conv_channels'], 3, name=f'patchconv_{k}', padding='same', kernel_initializer='he_normal'))
-            conv_layers.append(layers.BatchNormalization(name=f'patch_bn_{k}'))
-            conv_layers.append(layers.ReLU())
+            patch_conv_layers.append(layers.Conv2D(n_ch, 3, name=f'patchconv_{k}', padding='same', kernel_initializer='he_normal'))
+            patch_conv_layers.append(layers.BatchNormalization(name=f'patch_bn_{k}'))
+            patch_conv_layers.append(layers.ReLU())
         self._patch_conv_layers = patch_conv_layers
 
         self._output = layers.Conv2DTranspose(1, 3, strides=2, padding='same', activation='sigmoid', name=f'instance_output')
@@ -78,11 +78,14 @@ class InstanceHead(tf.keras.layers.Layer):
             patches, _ = gather_patches(x[0], locations, patch_size)
 
         n_patches = tf.shape(patches)[0]
-        encodings = tf.tile(self._position_encodings[None, ...], [n_patches, 1, 1, 1])
+        encodings = tf.tile(self._position_encodings, [n_patches, 1, 1, 1])
         patches = tf.concat([patches, encodings], axis=-1)
+        for layer in self._patch_conv_layers:
+            patches = layer(patches, training=training)
+
         instance_output = self._output(patches, training=training)
 
-        i_locations = locations * tf.cast(tf.shape(hr_features)[:2], locations.dtype)
+        i_locations = locations * tf.cast(tf.shape(hr_features)[-3:-1], locations.dtype)
         i_locations = tf.cast(i_locations, tf.int32)
         instance_coords = make_meshgrids(i_locations * 2, patch_size * 2)
 
