@@ -3,7 +3,7 @@ from os.path import join
 import random
 import zipfile
 import imageio
-import skimage.transform
+# import skimage.transform
 
 import numpy as np
 import tensorflow as tf
@@ -33,9 +33,9 @@ cell_size_scales = {
     'A172': 1.0,
     'BT474': 0.65,
     'BV2': 0.50,
-    'Huh7': 1.0,
+    'Huh7': 1.5,
     'MCF7': 0.50,
-    'SHSY5Y': 0.65,
+    'SHSY5Y': 1.0,
     'SKOV3': 1.30,
     'SkBr3': 0.75,
     }
@@ -55,32 +55,40 @@ def parse_coco_record(coco, imgid, data_dir):
     mis = []
     rls = []
     locs = []
-    for ann_id in coco.getAnnIds(imgIds=imgid):
-        ann = coco.anns[ann_id]
-        bbox = ann['bbox']
-        bbox = np.array([bbox[1], bbox[0], bbox[1]+bbox[3], bbox[0]+bbox[2]])
-        bboxes.append(bbox)
-        mask = coco.annToMask(ann)
-        mi = np.stack(np.where(mask>0), axis=-1)
-        mis.append(mi)
-        rls.append(mi.shape[0])
-        locs.append(mi.mean(axis=0))
-
     scaling = 1.0 / cell_size_scales[cell_type]
     target_height = round(height * scaling)
     target_width = round(width * scaling)
 
-    bboxes = np.array(bboxes, dtype='float32') * scaling
-    locs = np.array(locs, dtype='float32') * scaling
+    img = tf.image.resize(img[...,None], (target_height, target_width), antialias=scaling<1.0).numpy()
 
+    ann_ids = coco.getAnnIds(imgIds=imgid)
+    for ann_id in ann_ids:
+        ann = coco.anns[ann_id]
+        bbox = ann['bbox']
+        bbox = np.array([bbox[1], bbox[0], bbox[1]+bbox[3], bbox[0]+bbox[2]])
+        bboxes.append(bbox)
+    n_boxes = len(bboxes)
+    bboxes = np.array(bboxes, dtype='float32') * scaling
+    selected = tf.image.non_max_suppression(bboxes, np.ones([n_boxes], 'float32'), n_boxes).numpy()
+    bboxes = bboxes[(selected,)]
+    ann_ids = np.array(ann_ids)[(selected,)]
+
+    for ann_id in ann_ids:
+        ann = coco.anns[ann_id]
+        mask = coco.annToMask(ann)
+        if scaling != 1.0:
+            mask = tf.image.resize(mask[...,None], (target_height, target_width), antialias=scaling<1.0).numpy()
+        mi = np.stack(np.where(mask>=0.5), axis=-1)
+        mis.append(mi)
+        rls.append(mi.shape[0])
+        locs.append(mi.mean(axis=0))
+    bboxes = np.array(bboxes, dtype='float32') * scaling
+    locs = np.array(locs, dtype='float32')
     mis = np.concatenate(mis, dtype='int64')
     rls = np.array(rls, dtype='int64')
-
-    binary_mask = np.zeros_like(img)
+    # binary_mask = (skimage.transform.resize(binary_mask, (target_height, target_width)) >= 0.5).astype('uint8')
+    binary_mask = np.zeros_like(img, dtype='uint8')
     binary_mask[tuple(mis.transpose())] = 1
-
-    img = skimage.transform.resize(img, (target_height, target_width))
-    binary_mask = (skimage.transform.resize(binary_mask, (target_height, target_width)) >= 0.5).astype('uint8')
 
     data = tf.train.Features(feature = {
         'img_id': _int64_feature(imgid),
@@ -169,24 +177,24 @@ def tfr_parse_record(record):
         },
     )
 
-    img = tf.ensure_shape(tf.io.parse_tensor(data['image'], tf.float32), (None, None))
-    img = tf.expand_dims(img, -1)
+    img = tf.ensure_shape(tf.io.parse_tensor(data['image'], tf.float32), (None, None, 1))
+    # img = tf.expand_dims(img, -1)
 
-    locations = tf.ensure_shape(tf.io.parse_tensor(data['locations'], tf.float32), (None, 2))
-    binary_mask = tf.ensure_shape(tf.io.parse_tensor(data['binary_mask'], tf.uint8), (None, None))
+    locations = tf.ensure_shape(tf.io.parse_tensor(data['locations'], tf.float32), (None, 3))
+    binary_mask = tf.ensure_shape(tf.io.parse_tensor(data['binary_mask'], tf.uint8), (None, None, 1))
 
     bboxes = tf.ensure_shape(tf.io.parse_tensor(data['bboxes'], tf.float32), (None, 4))
-    mask_indice_values = tf.ensure_shape(tf.io.parse_tensor(data['mask_indices'], tf.int64), (None, 2))
+    mask_indice_values = tf.ensure_shape(tf.io.parse_tensor(data['mask_indices'], tf.int64), (None, 3))
     mask_indice_row_lengths = tf.ensure_shape(tf.io.parse_tensor(data['mask_indice_row_lengths'], tf.int64), (None,))
-    mask_indices = tf.RaggedTensor.from_row_lengths(mask_indice_values, mask_indice_row_lengths)
+    mask_indices = tf.RaggedTensor.from_row_lengths(mask_indice_values[:, :2], mask_indice_row_lengths)
 
     return {
         'img_id': data['img_id'],
         'cell_type': data['cell_type'],
         'scaling': data['scaling'],
         'image': img,
-        'locations': locations,
-        'binary_mask': binary_mask,
+        'locations': locations[:, :2],
+        'binary_mask': binary_mask[:,:,0],
         'bboxes': bboxes,
         'mask_indices': mask_indices,
         }
