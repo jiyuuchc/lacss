@@ -25,6 +25,7 @@ def build_resnet_backbone(input_shape=(None,None,1), is_v2=True):
     x = input
     x = tf.keras.layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1')(x)
     x = tf.keras.layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
+    x = tf.keras.layers.BatchNormalization(name='stem_bn')(x)
     x = encoder(x)
 
     x = [tf.keras.layers.Conv2D(256,1,activation='relu',name=f'fpn_conv{k}_1')(d) for k,d in enumerate(x)]
