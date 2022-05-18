@@ -138,7 +138,7 @@ class LacssModel(tf.keras.Model):
         width = width if width else tf.shape(img)[1]
 
         y = tf.expand_dims(img, 0)
-        segmentation_features, detection_features = self._backbone(y, training=training)
+        segmentation_features, detection_features = self._backbone(y, training=True)
         detection_features = tf.squeeze(detection_features, 0)
         segmentation_features = tf.squeeze(segmentation_features, 0)
 
