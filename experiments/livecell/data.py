@@ -33,7 +33,7 @@ cell_size_scales = {
     'A172': 1.0,
     'BT474': 0.65,
     'BV2': 0.50,
-    'Huh7': 1.5,
+    'Huh7': 1.30,
     'MCF7': 0.50,
     'SHSY5Y': 1.0,
     'SKOV3': 1.30,
@@ -69,7 +69,7 @@ def parse_coco_record(coco, imgid, data_dir):
         bboxes.append(bbox)
     n_boxes = len(bboxes)
     bboxes = np.array(bboxes, dtype='float32') * scaling
-    selected = tf.image.non_max_suppression(bboxes, np.ones([n_boxes], 'float32'), n_boxes).numpy()
+    selected = tf.image.non_max_suppression(bboxes, np.ones([n_boxes], 'float32'), n_boxes, iou_threshold=0.75).numpy()
     bboxes = bboxes[(selected,)]
     ann_ids = np.array(ann_ids)[(selected,)]
 
@@ -78,11 +78,12 @@ def parse_coco_record(coco, imgid, data_dir):
         mask = coco.annToMask(ann)
         if scaling != 1.0:
             mask = tf.image.resize(mask[...,None], (target_height, target_width), antialias=scaling<1.0).numpy()
+            mask = mask.squeeze(axis=-1)
         mi = np.stack(np.where(mask>=0.5), axis=-1)
         mis.append(mi)
         rls.append(mi.shape[0])
         locs.append(mi.mean(axis=0))
-    bboxes = np.array(bboxes, dtype='float32') * scaling
+    # bboxes = np.array(bboxes, dtype='float32') * scaling
     locs = np.array(locs, dtype='float32')
     mis = np.concatenate(mis, dtype='int64')
     rls = np.array(rls, dtype='int64')
@@ -180,20 +181,25 @@ def tfr_parse_record(record):
     img = tf.ensure_shape(tf.io.parse_tensor(data['image'], tf.float32), (None, None, 1))
     # img = tf.expand_dims(img, -1)
 
-    locations = tf.ensure_shape(tf.io.parse_tensor(data['locations'], tf.float32), (None, 3))
+    locations = tf.io.parse_tensor(data['locations'], tf.float32)
+    # locations = locations[:, :2]
+    locations = tf.ensure_shape(locations, [None,2])
     binary_mask = tf.ensure_shape(tf.io.parse_tensor(data['binary_mask'], tf.uint8), (None, None, 1))
 
     bboxes = tf.ensure_shape(tf.io.parse_tensor(data['bboxes'], tf.float32), (None, 4))
-    mask_indice_values = tf.ensure_shape(tf.io.parse_tensor(data['mask_indices'], tf.int64), (None, 3))
+
+    mask_indice_values = tf.io.parse_tensor(data['mask_indices'], tf.int64)
+    # mask_indice_values = mask_indice_values[:, :2]
+    mask_indice_values = tf.ensure_shape(mask_indice_values, [None,2])
     mask_indice_row_lengths = tf.ensure_shape(tf.io.parse_tensor(data['mask_indice_row_lengths'], tf.int64), (None,))
-    mask_indices = tf.RaggedTensor.from_row_lengths(mask_indice_values[:, :2], mask_indice_row_lengths)
+    mask_indices = tf.RaggedTensor.from_row_lengths(mask_indice_values, mask_indice_row_lengths)
 
     return {
         'img_id': data['img_id'],
         'cell_type': data['cell_type'],
         'scaling': data['scaling'],
         'image': img,
-        'locations': locations[:, :2],
+        'locations': locations,
         'binary_mask': binary_mask[:,:,0],
         'bboxes': bboxes,
         'mask_indices': mask_indices,
