@@ -38,10 +38,10 @@ def parse_train_data_func_full_annotation(data, augment=True, min_mask_area=16, 
     if augment:
         if tf.random.uniform(()) >= 0.5:
             image = tf.image.flip_left_right(image)
-            mask_values = mask_values * [1, -1] + [0, target_width]
+            mask_values = mask_values * [1, -1] + [0, target_width-1]
         if tf.random.uniform(()) >= 0.5:
             image = tf.image.flip_up_down(image)
-            mask_values = mask_values * [-1, 1] + [target_height, 0]
+            mask_values = mask_values * [-1, 1] + [target_height-1, 0]
 
     valid_rows = tf.logical_and(
       tf.logical_and(mask_values[:,0]>=0, mask_values[:,0]<target_height),
