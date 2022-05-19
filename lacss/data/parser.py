@@ -24,6 +24,44 @@ def scale_or_pad_to_target_size(image, target_height, target_width):
     image = tf.ensure_shape(image, [target_height, target_width, None])
     return image, h0, w0
 
+def parse_train_data_func_full_annotation(data, augment=True, min_mask_area=16, target_height=512, target_width=512):
+    image = data['image']
+    masks = data['mask_indices']
+    mask_row_ids = masks.value_rowids()
+    mask_values = masks.values
+
+    target_width = int(target_width)
+    target_height = int(target_height)
+
+    image, h0, w0 = scale_or_pad_to_target_size(image, target_height, target_width)
+    mask_values = mask_values - tf.cast([h0, w0], mask_values.dtype)
+    if augment:
+        if tf.random.uniform(()) >= 0.5:
+            image = tf.image.flip_left_right(image)
+            mask_values = mask_values * [1, -1] + [0, target_width]
+        if tf.random.uniform(()) >= 0.5:
+            image = tf.image.flip_up_down(image)
+            mask_values = mask_values * [-1, 1] + [target_height, 0]
+
+    valid_rows = tf.logical_and(
+      tf.logical_and(mask_values[:,0]>=0, mask_values[:,0]<target_height),
+      tf.logical_and(mask_values[:,1]>=0, mask_values[:,1]<target_width),
+    )
+    mask_values = tf.boolean_mask(mask_values, valid_rows)
+    mask_row_ids = tf.boolean_mask(mask_row_ids, valid_rows)
+    masks = tf.RaggedTensor.from_value_rowids(mask_values, mask_row_ids)
+    mask_row_lengths = masks.row_lengths()
+    valid_masks = mask_row_lengths >= min_mask_area
+    masks = tf.ragged.boolean_mask(masks, valid_masks)
+
+    locations = tf.cast(tf.reduce_mean(masks, axis=1), tf.float32)
+
+    return {
+        'image': image,
+        'locations': locations,
+        'mask_indices': masks,
+    }
+
 def parse_train_data_func(data, augment=True, size_jitter=None, target_height=512, target_width=512):
     image = data['image']
     binary_mask = tf.expand_dims(data['binary_mask'], -1)
@@ -72,7 +110,6 @@ def parse_train_data_func(data, augment=True, size_jitter=None, target_height=51
     }
 
 def parse_test_data_func(data, dim_multiple=64):
-    # return data
     image = data['image']
     binary_mask = tf.expand_dims(data['binary_mask'], -1)
     bboxes = data['bboxes']
