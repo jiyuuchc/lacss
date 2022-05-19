@@ -27,7 +27,7 @@ class LacssModel(tf.keras.Model):
             instance_crop_size=96,
             instance_n_convs=1,
             instance_conv_channels=64,
-            train_supervied=False,
+            train_supervised=False,
             ):
         super().__init__()
         self._config_dict = {
@@ -47,7 +47,7 @@ class LacssModel(tf.keras.Model):
             'instance_crop_size': instance_crop_size,
             'instance_n_convs': instance_n_convs,
             'instance_conv_channels': instance_conv_channels,
-            'train_supervied': train_supervied,
+            'train_supervised': train_supervised,
         }
 
         self._metrics = [
@@ -201,7 +201,7 @@ class LacssModel(tf.keras.Model):
                 roi_size = self._config_dict['detection_roi_size'],
             )
 
-            if self._config_dict['train_supervied']:
+            if self._config_dict['train_supervised']:
                 instance_loss = supervised_segmentation_losses(
                     model_output['instance_output'],
                     model_output['instance_coords'],
