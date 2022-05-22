@@ -20,6 +20,11 @@ def mask_iou_similarity(gt, pred, patch_size=96):
     n_pairs = gt_masks.nrows()
 
     pred_masks = tf.concat([pred_masks.value_rowids()[:,None], pred_masks.values], axis=-1)
+    valid_rows = tf.logical_and(
+        tf.logical_and(pred_masks[:,1]>=0, pred_masks[:,1]<96),
+        tf.logical_and(pred_masks[:,2]>=0, pred_masks[:,2]<96),
+        )
+    pred_masks = tf.boolean_mask(pred_masks, valid_rows)
     n_pred_pixels = tf.shape(pred_masks)[0]
     pred_masks = tf.scatter_nd(pred_masks, tf.ones([n_pred_pixels], tf.uint8), (n_pairs, patch_size, patch_size))
 
