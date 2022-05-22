@@ -1,11 +1,13 @@
 import tensorflow as tf
 import tensorflow.keras.layers as layers
+from .channel_attention import ChannelAttention
 
 class DetectionHead(tf.keras.layers.Layer):
-    def __init__(self, conv_filters=(1024,), fc_filters=(1024,), **kwargs):
+    def __init__(self, conv_filters=(1024,), fc_filters=(1024,), with_channel_attention=False, **kwargs):
         self._config_dict = {
             'conv_filters': conv_filters,
             'fc_filters': fc_filters,
+            'with_channel_attention': with_channel_attention,
         }
         super(DetectionHead, self).__init__(**kwargs)
 
@@ -27,7 +29,11 @@ class DetectionHead(tf.keras.layers.Layer):
         for k in range(len(fc_filters)):
             conv_layers.append(layers.Conv2D(fc_filters[k], 1, name=f'fc_{k}', **conv_kwargs))
             conv_layers.append(layers.BatchNormalization(name=f'fc_bn_{k}'))
+            if self._config_dict['with_channel_attention']:
+                conv_layers.append(ChannelAttention(name=f'att_{k}'))
+
         self._conv_layers = conv_layers
+
 
         #self._att_filter = layers.Conv2D(1, 7, name=f'att_conv', padding='same', activation='sigmoid', kernel_initializer='he_normal')
 
