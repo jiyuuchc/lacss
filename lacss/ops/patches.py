@@ -115,10 +115,10 @@ def indices_of_patches(patches, patch_coords, image_shape=None, threshold=0.5):
         rowids = tf.boolean_mask(rowids, valid_coords)
 
     mask_coords = tf.RaggedTensor.from_value_rowids(mask_coords, rowids)
-
+    mask_coords = tf.cast(mask_coords, tf.int64)
     # remove empty ones
-    rowlengths = mask_coords.row_lengths()
-    rowlengths = tf.boolean_mask(rowlengths, rowlengths>0)
-    mask_coords = tf.RaggedTensor.from_row_lengths(mask_coords.values, rowlengths)
+    # rowlengths = mask_coords.row_lengths()
+    # rowlengths = tf.boolean_mask(rowlengths, rowlengths>0)
+    # mask_coords = tf.RaggedTensor.from_row_lengths(mask_coords.values, rowlengths)
 
     return mask_coords

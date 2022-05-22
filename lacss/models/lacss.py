@@ -1,7 +1,6 @@
 import tensorflow as tf
 import tensorflow.keras.layers as layers
 from .detection_head import DetectionHead
-from .unet import UNetDecoder, UNetEncoder
 from .instance_head import InstanceHead
 from ..metrics import *
 from ..losses import *
@@ -55,7 +54,7 @@ class LacssModel(tf.keras.Model):
             tf.keras.metrics.Mean('score_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('localization_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('instance_loss', dtype=tf.float32),
-            BinaryMeanAP([10.0], name='mAP'),
+            LOIMeanAP([10.0], name='loi_mAP'),
             BoxMeanAP(name='box_mAP'),
         ]
 
@@ -222,12 +221,13 @@ class LacssModel(tf.keras.Model):
 
         gt_locations = data['locations']
         pred_locations = model_output['pred_locations']
+        scores = model_output['pred_location_scores']
         logs = self._update_metrics({
             'loss': loss,
             'score_loss': score_loss,
             'localization_loss': loc_loss,
             'instance_loss': instance_loss,
-            'mAP': (gt_locations, pred_locations),
+            'loi_mAP': (gt_locations, pred_locations, scores),
         })
 
         return logs
@@ -240,11 +240,12 @@ class LacssModel(tf.keras.Model):
             model_output['instance_output'],
             model_output['instance_coords'],
             )
-        # gt_locations = tf.reduce_mean(tf.reshape(gt_bboxes, [-1,2,2]), axis=-2)
-        # pred_locations = model_output['pred_locations']
+        scores = model_output['pred_location_scores']
+        gt_locations = data['locations']
+        pred_locations = model_output['pred_locations']
         logs = self._update_metrics({
-            # 'mAP': (gt_locations, pred_locations),
-            'box_mAP': (gt_bboxes, pred_bboxes),
+            'loi_mAP': (gt_locations, pred_locations, scores),
+            'box_mAP': (gt_bboxes, pred_bboxes, scores),
         })
 
         return logs
