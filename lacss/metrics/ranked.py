@@ -44,32 +44,6 @@ def np_compute_ap(similarity_matrix, thresholds):
         apmks.append(np.sum(p_k * indicators) / k)
     return np.array(apmks, np.float32)
 
-# def similarity_matrix_from_mask_indices(pred_indices, gt_indices):
-#     gt_indices = tf.cast(gt_indices, tf.int64)
-#     pred_indices = tf.cast(pred_indices, tf.int64)
-#
-#     pred_hw = tf.reduce_max(pred_indices.values, axis=0) + 1
-#     gt_hw = tf.reduce_max(gt_indices.values, axis=0) + 1
-#     hw = tf.reduce_max(tf.stack([pred_hw, gt_hw]), axis=0)
-#
-#     mask_shape = (gt_indices.nrows(), hw[0], hw[1])
-#     idx = tf.concat([gt_indices.value_rowids()[...,None], gt_indices.values], axis=-1)
-#     all_gt_masks = tf.scatter_nd(idx, tf.ones([tf.shape(idx)[0]], tf.int32), shape=mask_shape)
-#
-#     def cp_sim_one_row(cur_ind):
-#         cur_ind = tf.expand_dims(cur_ind, 0)
-#         cur_ind = tf.tile(cur_ind, [gt_indices.nrows(),1,1])
-#         gathered = tf.gather_nd(all_gt_masks, cur_ind, batch_dims=1)
-#         return tf.reduce_sum(gathered, axis=-1)
-#
-#     intersects = tf.map_fn(
-#         cp_sim_one_row, pred_indices, fn_output_signature = tf.int32
-#     )
-#     intersects = tf.cast(intersects, tf.int64)
-#     union = gt_indices.row_lengths() + pred_indices.row_lengths()[:,None] - intersects
-#     iou = intersects / union
-#     return iou
-
 class MeanAP():
     ''' compute mAP based on similarity_matrix and score.
       These are numpy functions
@@ -92,6 +66,7 @@ class MeanAP():
         for th, indicators in zip(self.thresholds, self.indicator_list):
             _, ind = np_unique_location_matching(sm, th)
             indicators.append(ind)
+        return self.cell_counts
 
     def result(self):
         scores = np.concatenate(self.scores)
@@ -103,7 +78,7 @@ class MeanAP():
             p_k = np.cumsum(indicators) / (np.arange(len(indicators))+1)
             aps.append(np.sum(p_k[indicators==1]) / self.cell_counts)
 
-        return np.array(aps)
+        return np.array(aps, dtype=np.float32)
 
 class BoxMeanAP(tf.keras.metrics.Metric):
     def __init__(self,thresholds=[0.5], **kwargs):
@@ -121,7 +96,7 @@ class BoxMeanAP(tf.keras.metrics.Metric):
         tf.numpy_function(
             self._np_mean_aps.update_state,
             [sm, scores],
-            None,
+            tf.int64,
         )
 
     def result(self):
@@ -137,6 +112,7 @@ class LOIMeanAP(BoxMeanAP):
         super(LOIMeanAP, self).__init__(**kwargs)
         self.thresholds = [1.0/(x*x + 1.0e-16) for x in thresholds]
         self.similarity = compute_similarity
+        self.reset_state()
 
 class MaskMeanAP(BoxMeanAP):
     def __init__(self, thresholds, **kwargs):
@@ -150,6 +126,7 @@ class MaskMeanAP(BoxMeanAP):
 
     def update_state(self, gt, pred, scores):
         pred_instances, pred_coords, pred_bboxes = pred
+        patch_size = pred_instances.shape[1]
         if pred_bboxes is None:
             pred_bboxes = bboxes_of_patches(pred_instances, pred_coords)
         pred_mask_indices = indices_of_patches(pred_instances, pred_coords)
@@ -158,12 +135,16 @@ class MaskMeanAP(BoxMeanAP):
         if gt_bboxes is None:
           gt_bboxes = self._get_bboxes(gt_mask_indices)
 
-        sm = mask_iou_similarity((gt_mask_indices, gt_bboxes), (pred_mask_indices, pred_bboxes))
+        sm = mask_iou_similarity(
+            (gt_mask_indices, gt_bboxes),
+            (pred_mask_indices, pred_bboxes),
+            patch_size=patch_size,
+            )
 
         tf.numpy_function(
             self._np_mean_aps.update_state,
             [sm, scores],
-            None,
+            tf.int64,
         )
 
 # class MaskMeanAP(tf.keras.metrics.Metric):
