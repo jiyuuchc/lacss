@@ -1,42 +1,153 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
+from .channel_attention import ChannelAttention
 
-def build_resnet_backbone(input_shape=(None,None,1), is_v2=True):
-    if is_v2:
-        resnet = tf.keras.applications.ResNet50V2(include_top=False)
-        rn_input = resnet.get_layer('pool1_pad').input
-        rn_output = (
-            resnet.get_layer('conv2_block3_preact_relu').output,
-            resnet.get_layer('conv3_block4_preact_relu').output,
-            resnet.get_layer('conv4_block6_preact_relu').output,
-            resnet.get_layer('post_relu').output,
-        )
-    else:
-        resnet = tf.keras.applications.ResNet50(include_top=False)
-        rn_input = resnet.get_layer('pool1_pad').input
-        rn_output = (
-            resnet.get_layer('conv2_block3_out').output,
-            resnet.get_layer('conv3_block4_out').output,
-            resnet.get_layer('conv4_block6_out').output,
-            resnet.get_layer('conv5_block3_out').output,
-        )
-    encoder = tf.keras.Model(inputs=rn_input, outputs=rn_output)
+layers = tf.keras.layers
+
+class Bottleneck(layers.Layer):
+    def __init__(self,
+                 filters,
+                 strides=1,
+                 dilation_rate=1,
+                 use_attention=True,
+                 **kwargs):
+      super(Bottleneck, self).__init__(**kwargs)
+      self._config_dict = {
+                 'filters': filters,
+                 'strides': strides,
+                 'dilation_rate': dilation_rate,
+                 'use_attention': use_attention,
+      }
+
+    def build(self, input_shape):
+        n_filters = self._config_dict['filters']
+        strides = self._config_dict['strides']
+        dilation_rate= self._config_dict['dilation_rate']
+        if strides > 1:
+            self._shortcut_layers = [
+                layers.Conv2D(n_filters * 4, 1, strides=strides, use_bias=False, kernel_initializer='he_normal'),
+                layers.BatchNormalization(),
+                ]
+        else:
+            self._shortcut_layers = []
+
+        self._conv_layers = [
+            layers.Conv2D(n_filters, 1, use_bias=False, kernel_initializer='he_normal'),
+            layers.BatchNormalization(),
+            layers.ReLU(),
+            layers.Conv2D(
+                n_filters, 3,
+                strides=strides,
+                dilation_rate=dilation_rate,
+                padding='same',
+                use_bias=False,
+                kernel_initializer='he_normal'),
+            layers.BatchNormalization(),
+            layers.ReLU(),
+            layers.Conv2D(n_filters * 4, 1, use_bias=False, kernel_initializer='he_normal'),
+            layers.BatchNormalization(),
+            layers.ReLU(),
+            ]
+
+        if self._config_dict['use_attention']:
+            self._conv_layers.append(ChannelAttention())
+
+        super(Bottleneck, self).build(input_shape)
+
+    def get_config(self):
+        return self._config_dict
+
+    def call(self, inputs, training=None):
+        shortcut = inputs
+        for layer in self._shortcut_layers:
+            shortcut = layer(shortcut)
+
+        x = inputs
+        for layer in self._conv_layers:
+            x = layer(x)
+
+        x = x + shortcut
+        return tf.nn.relu(x)
+
+class ResNet(layers.Layer):
+    def __init__(self, model_config, use_attention=True, **kwargs):
+        super(ResNet, self).__init__(**kwargs)
+        self._config_dict = {
+            'model_config': model_config,
+            'use_attention': use_attention,
+        }
+
+    def build(self, input_shape):
+        spec = self._config_dict['model_config']
+        use_attention = self._config_dict['use_attention']
+
+        layers = []
+        for n_channels, n_repeats in spec:
+            block = []
+            block.append(Bottleneck(n_channels, 2, use_attention=use_attention))
+            for k in range(1, n_repeats):
+                block.append(Bottleneck(n_channels, use_attention=use_attention))
+            layers.append(block)
+
+        self._layers = layers
+        super(ResNet, self).build(input_shape)
+
+    def call(self, inputs, training=None):
+        x = inputs
+        outputs = []
+        for block in self._layers:
+            for op in block:
+                x = op(x)
+            outputs.append(x)
+
+        return outputs
+
+    def get_config(self):
+        return self._config_dict
+
+def build_resnet_backbone(input_shape=(None,None,1), is_v2=True, with_attention=True):
+    # if is_v2:
+    #     resnet = tf.keras.applications.ResNet50V2(include_top=False)
+    #     rn_input = resnet.get_layer('pool1_pad').input
+    #     rn_output = (
+    #         resnet.get_layer('conv2_block3_preact_relu').output,
+    #         resnet.get_layer('conv3_block4_preact_relu').output,
+    #         resnet.get_layer('conv4_block6_preact_relu').output,
+    #         resnet.get_layer('post_relu').output,
+    #     )
+    # else:
+    #     resnet = tf.keras.applications.ResNet50(include_top=False)
+    #     rn_input = resnet.get_layer('pool1_pad').input
+    #     rn_output = (
+    #         resnet.get_layer('conv2_block3_out').output,
+    #         resnet.get_layer('conv3_block4_out').output,
+    #         resnet.get_layer('conv4_block6_out').output,
+    #         resnet.get_layer('conv5_block3_out').output,
+    #     )
+    # encoder = tf.keras.Model(inputs=rn_input, outputs=rn_output)
+
+    encoder = ResNet([(64,3),(128,4),(256,6),(512,3)], use_attention=with_attention, name='resnet')
     input = tf.keras.layers.Input(shape=input_shape)
     x = input
-    x = tf.keras.layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1')(x)
-    x = tf.keras.layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
-    x = tf.keras.layers.BatchNormalization(name='stem_bn')(x)
+    x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1')(x)
+    x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
+    x = layers.BatchNormalization(name='stem_bn')(x)
+
+    stem = x
     x = encoder(x)
+    encoder_out = (stem,) + tuple(x)
 
-    x = [tf.keras.layers.Conv2D(256,1,activation='relu',name=f'fpn_conv{k}_1')(d) for k,d in enumerate(x)]
+    x = [layers.Conv2D(256,1,activation='relu',name=f'fpn_conv{k}_1')(d) for k,d in enumerate(x)]
+    out5 = x[-1]
 
-    m4 = tf.keras.layers.UpSampling2D(name='upsample_4')(x[-1]) + x[-2]
-    out4 = tf.keras.layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv4_2')(m4)
+    m4 = layers.UpSampling2D(name='upsample_4')(out5) + x[-2]
+    out4 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv4_2')(m4)
 
-    m3 = tf.keras.layers.UpSampling2D(name='upsample_3')(out4) + x[-3]
-    out3 = tf.keras.layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv3_2')(m3)
+    m3 = layers.UpSampling2D(name='upsample_3')(out4) + x[-3]
+    out3 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv3_2')(m3)
 
-    m2 = tf.keras.layers.UpSampling2D(name='upsample_2')(out3) + x[-4]
-    out2 = tf.keras.layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv2_2')(m2)
+    m2 = layers.UpSampling2D(name='upsample_2')(out3) + x[-4]
+    out2 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv2_2')(m2)
 
-    return tf.keras.Model(inputs=input, outputs=(out2, out4))
+    decoder_out = (out2, out3, out4, out5)
+
+    return tf.keras.Model(inputs=input, outputs=(encoder_out, decoder_out))
