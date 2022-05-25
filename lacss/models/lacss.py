@@ -41,7 +41,6 @@ class LacssModel(tf.keras.Model):
             'test_pre_nms_topk': test_pre_nms_topk,
             'test_max_output': test_max_output,
             'test_min_score': test_min_score,
-            # 'instance_jitter':instance_jitter,
             'max_proposal_offset': max_proposal_offset,
             'instance_crop_size': instance_crop_size,
             'instance_n_convs': instance_n_convs,
@@ -54,6 +53,7 @@ class LacssModel(tf.keras.Model):
             tf.keras.metrics.Mean('score_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('localization_loss', dtype=tf.float32),
             tf.keras.metrics.Mean('instance_loss', dtype=tf.float32),
+            tf.keras.metrics.Mean('edge_loss', dtype=tf.float32),
             LOIMeanAP([10.0], name='loi_mAP'),
             BoxMeanAP(name='box_mAP'),
         ]
@@ -63,12 +63,15 @@ class LacssModel(tf.keras.Model):
 
     def build(self, input_shape):
         backbone = self._config_dict['backbone']
+        img_shape = (None, None, input_shape['image'][-1])
         if backbone == 'unet_s':
             self._backbone = build_unet_s_backbone()
         elif backbone == 'unet':
             self._backbone = build_unet_backbone()
         elif backbone == 'resnet':
-            self._backbone = build_resnet_backbone()
+            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False)
+        elif backbone == 'resnet_att':
+            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=True)
         else:
             raise ValueError(f'unknown backbone type: {backbone}')
 
@@ -81,6 +84,12 @@ class LacssModel(tf.keras.Model):
               n_conv_channels=self._config_dict['instance_conv_channels'],
               instance_crop_size=self._config_dict['instance_crop_size']//2,
               )
+
+        if not self._config_dict['train_supervised']:
+            self._edge_predictor = [
+                layers.Conv2D(64, 3, padding='same', activation='relu'),
+                layers.Conv2D(64, 3, padding='same', activation='sigmoid'),
+            ]
 
     def _update_metrics(self, new_metrics):
         logs={}
@@ -137,9 +146,11 @@ class LacssModel(tf.keras.Model):
         width = width if width else tf.shape(img)[1]
 
         y = tf.expand_dims(img, 0)
-        segmentation_features, detection_features = self._backbone(y, training=True)
-        detection_features = tf.squeeze(detection_features, 0)
-        segmentation_features = tf.squeeze(segmentation_features, 0)
+        # segmentation_features, detection_features, stem_features = self._backbone(y, training=True)
+        encoder_out, decoder_out = self._backbone(y, training=True)
+        detection_features = tf.squeeze(decoder_out[-2], 0)
+        segmentation_features = tf.squeeze(decoder_out[-4], 0)
+        stem_features = encoder_out[0]
 
         scores_out, regression_out = self._detection_head(detection_features, training=training)
 
@@ -149,6 +160,7 @@ class LacssModel(tf.keras.Model):
                 'detection_scores': scores_out,
                 'detection_regression': regression_out,
                 'scaled_gt_locations': scaled_gt_locations,
+                'stem_features': stem_features,
             })
             max_output = self._config_dict['train_max_output']
             topk = self._config_dict['train_pre_nms_topk']
@@ -207,14 +219,26 @@ class LacssModel(tf.keras.Model):
                     data['mask_indices'],
                 )
                 instance_loss /= 500.0
+                edge_loss = 0.
             else:
                 instance_loss = self_supervised_segmentation_losses(
                     model_output['instance_output'],
                     model_output['instance_coords'],
                     data['binary_mask'],
                     )
+                # instance_loss /= 200.0
+                x = model_output['stem_features']
+                for layer in self._edge_predictor:
+                    x = layer(x)
+                edge_pred = x[0,:,:,0]
+                edge_loss = self_supervised_edge_losses(
+                    model_output['instance_output'],
+                    model_output['instance_coords'],
+                    edge_pred,
+                )
+                # edge_loss /= 10.0
 
-            loss = score_loss + loc_loss + instance_loss
+            loss = score_loss + loc_loss + instance_loss + edge_loss
 
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients((g, v) for (g, v) in zip(grads, self.trainable_variables) if g is not None)
@@ -227,25 +251,26 @@ class LacssModel(tf.keras.Model):
             'score_loss': score_loss,
             'localization_loss': loc_loss,
             'instance_loss': instance_loss,
-            'loi_mAP': (gt_locations, pred_locations, scores),
+            'edge_loss': edge_loss,
+            # 'loi_mAP': (gt_locations, pred_locations, scores),
         })
 
         return logs
 
-    def test_step(self, data):
-        model_output = self(data, training=False)
-
-        gt_bboxes = data['bboxes']
-        pred_bboxes = bboxes_of_patches(
-            model_output['instance_output'],
-            model_output['instance_coords'],
-            )
-        scores = model_output['pred_location_scores']
-        gt_locations = data['locations']
-        pred_locations = model_output['pred_locations']
-        logs = self._update_metrics({
-            'loi_mAP': (gt_locations, pred_locations, scores),
-            'box_mAP': (gt_bboxes, pred_bboxes, scores),
-        })
-
-        return logs
+    # def test_step(self, data):
+    #     model_output = self(data, training=False)
+    #
+    #     gt_bboxes = data['bboxes']
+    #     pred_bboxes = bboxes_of_patches(
+    #         model_output['instance_output'],
+    #         model_output['instance_coords'],
+    #         )
+    #     scores = model_output['pred_location_scores']
+    #     gt_locations = data['locations']
+    #     pred_locations = model_output['pred_locations']
+    #     logs = self._update_metrics({
+    #         'loi_mAP': (gt_locations, pred_locations, scores),
+    #         'box_mAP': (gt_bboxes, pred_bboxes, scores),
+    #     })
+    #
+    #     return logs
