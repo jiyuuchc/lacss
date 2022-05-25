@@ -86,11 +86,11 @@ def parse_train_data_func(data, augment=True, size_jitter=None, target_height=51
             img_and_label = tf.image.flip_up_down(img_and_label)
             locations = locations * [-1.0, 1.0] + [target_height, 0]
 
-    image = img_and_label[..., 0:1]
+    image = img_and_label[..., :-1]
     if size_jitter is not None:
-        binary_mask = tf.cast(img_and_label[..., 1:] > 0.5, tf.float32)
+        binary_mask = tf.cast(img_and_label[..., -1:] > 0.5, tf.float32)
     else:
-        binary_mask = img_and_label[..., 1:]
+        binary_mask = img_and_label[..., -1:]
 
     #remove out-of-bound locations
     mask = tf.logical_and(
@@ -123,12 +123,14 @@ def parse_test_data_func(data, dim_multiple=64):
     image = tf.image.pad_to_bounding_box(image, 0, 0, target_height, target_width)
     binary_mask = tf.cast(tf.image.pad_to_bounding_box(binary_mask, 0, 0, target_height, target_width), tf.float32)
 
+    scaling = data['scaling'] if 'scaling' in data else tf.constant(1.0, tf.float32)
+
     return {
         'image': image,
         'bboxes': bboxes,
         'locations': locations,
         'img_id': data['img_id'],
-        'scaling': data['scaling'],
+        'scaling': scaling,
         'binary_mask': binary_mask,
         'mask_indices': data['mask_indices'],
     }
