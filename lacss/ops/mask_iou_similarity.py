@@ -21,8 +21,8 @@ def mask_iou_similarity(gt, pred, patch_size=96):
 
     pred_masks = tf.concat([pred_masks.value_rowids()[:,None], pred_masks.values], axis=-1)
     valid_rows = tf.logical_and(
-        tf.logical_and(pred_masks[:,1]>=0, pred_masks[:,1]<96),
-        tf.logical_and(pred_masks[:,2]>=0, pred_masks[:,2]<96),
+        tf.logical_and(pred_masks[:,1]>=0, pred_masks[:,1]<patch_size),
+        tf.logical_and(pred_masks[:,2]>=0, pred_masks[:,2]<patch_size),
         )
     pred_masks = tf.boolean_mask(pred_masks, valid_rows)
     n_pred_pixels = tf.shape(pred_masks)[0]
@@ -30,8 +30,8 @@ def mask_iou_similarity(gt, pred, patch_size=96):
 
     gt_masks =  tf.concat([gt_masks.value_rowids()[:,None], gt_masks.values], axis=-1)
     valid_rows = tf.logical_and(
-        tf.logical_and(gt_masks[:,1]>=0, gt_masks[:,1]<96),
-        tf.logical_and(gt_masks[:,2]>=0, gt_masks[:,2]<96),
+        tf.logical_and(gt_masks[:,1]>=0, gt_masks[:,1]<patch_size),
+        tf.logical_and(gt_masks[:,2]>=0, gt_masks[:,2]<patch_size),
         )
     gt_masks = tf.boolean_mask(gt_masks, valid_rows)
     n_gt_pixels = tf.shape(gt_masks)[0]
