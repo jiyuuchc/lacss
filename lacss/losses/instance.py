@@ -12,6 +12,7 @@ def self_supervised_segmentation_losses(y_pred, coords, binary_mask, lam=1.0, be
     if len(binary_mask.shape) == 3:
         binary_mask = tf.squeeze(binary_mask, -1)
 
+    patch_shape = tf.shape(y_pred, out_type=tf.int64)
     patch_size = tf.shape(y_pred)[1]
 
     padding_size = patch_size//2 + 2
@@ -28,7 +29,8 @@ def self_supervised_segmentation_losses(y_pred, coords, binary_mask, lam=1.0, be
 
     log_yi = tf.gather_nd(log_yi_sum, coords) - log_yi
 
-    loss = 1.0 - tf.reduce_mean(y_pred) - tf.reduce_mean(y_pred * log_yi) * lam
+    loss = - tf.reduce_mean(y_pred) - tf.reduce_mean(y_pred * log_yi) * lam
+    # loss = loss * tf.cast(patch_shape[0], loss.dtype)
 
     return loss
 
@@ -44,6 +46,7 @@ def self_supervised_segmentation_losses_2(y_pred, coords, binary_mask, lam=1.0, 
     if len(binary_mask.shape) == 3:
         binary_mask = tf.squeeze(binary_mask, -1)
 
+    patch_shape = tf.shape(y_pred, out_type=tf.int64)
     patch_size = tf.shape(y_pred)[1]
 
     padding_size = patch_size//2 + 2
@@ -64,7 +67,7 @@ def self_supervised_segmentation_losses_2(y_pred, coords, binary_mask, lam=1.0, 
 
     overlap_loss =  - tf.reduce_mean(y_pred * log_yi)
 
-    loss = binary_loss + lam * overlap_loss
+    loss = (binary_loss + lam * overlap_loss) * tf.cast(patch_shape[0], loss.dtype)
 
     return loss
 
@@ -99,3 +102,22 @@ def supervised_segmentation_losses(y_pred, coordinates, mask_indices):
     loss = tf.reduce_mean(loss) * tf.cast(patch_shape[0], loss.dtype)
 
     return loss
+
+def self_supervised_edge_losses(patch_pred, coords, edge_pred):
+
+    patch_shape = tf.shape(patch_pred, out_type=tf.int64)
+
+    # patch_edges = tf.math.sqrt(tf.reduce_mean(tf.image.sobel_edges(patch_pred) ** 2 / 4, axis=-1))
+    patch_edges = tf.math.square(tf.image.sobel_edges(patch_pred))
+    patch_edges = (patch_edges[..., 0] + patch_edges[..., 1]) / 8.0
+
+    # quite strange this is needed.. GPU error
+    patch_edges = tf.clip_by_value(patch_edges, 1e-9, 1.0)
+    patch_edges = tf.math.sqrt(patch_edges)
+    combined_edges = tf.scatter_nd(coords, patch_edges[...,0], tf.shape(edge_pred))
+    combined_edges = tf.math.tanh(combined_edges)
+
+    loss = tf.keras.losses.huber(edge_pred, combined_edges, delta=.5)
+
+    # return tf.reduce_mean(loss) * tf.cast(patch_shape[0], loss.dtype)
+    return tf.reduce_mean(loss)
