@@ -22,6 +22,7 @@ class DetectionHead(tf.keras.layers.Layer):
         }
         conv_filters = self._config_dict['conv_filters']
         fc_filters = self._config_dict['fc_filters']
+
         conv_layers = []
         for k in range(len(conv_filters)):
             conv_layers.append(layers.Conv2D(conv_filters[k], 3, name=f'conv_{k}', **conv_kwargs))
@@ -31,11 +32,7 @@ class DetectionHead(tf.keras.layers.Layer):
             conv_layers.append(layers.BatchNormalization(name=f'fc_bn_{k}'))
             if self._config_dict['with_channel_attention']:
                 conv_layers.append(ChannelAttention(name=f'att_{k}'))
-
         self._conv_layers = conv_layers
-
-
-        #self._att_filter = layers.Conv2D(1, 7, name=f'att_conv', padding='same', activation='sigmoid', kernel_initializer='he_normal')
 
         self._score_layer = layers.Dense(1, name='score', activation='sigmoid', kernel_initializer='he_normal')
         self._regression_layer = layers.Dense(2, name='regression', kernel_initializer='he_normal')
@@ -63,10 +60,6 @@ class DetectionHead(tf.keras.layers.Layer):
         for layer in self._conv_layers:
             y = layer(y, training=training)
 
-        #attension
-        #compression = tf.stack([tf.reduce_mean(y, axis=-1), tf.reduce_max(y, axis=-1)], axis=-1)
-        #att = self._att_filter(compression, training=training)
-        #scores_out = self._score_layer(y * att, training=training)
         scores_out = self._score_layer(y, training=training)
         regression_out = self._regression_layer(y, training=training)
 
