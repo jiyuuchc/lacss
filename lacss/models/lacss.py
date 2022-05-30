@@ -21,12 +21,12 @@ class LacssModel(tf.keras.Model):
             test_pre_nms_topk=0,
             test_max_output=500,
             test_min_score=0,
-            # instance_jitter=0.,
             max_proposal_offset=16,
             instance_crop_size=96,
             instance_n_convs=1,
             instance_conv_channels=64,
             train_supervised=False,
+            loss_weights = (1.0, 1.0, 1.0, 1.0)
             ):
         super().__init__()
         self._config_dict = {
@@ -46,6 +46,7 @@ class LacssModel(tf.keras.Model):
             'instance_n_convs': instance_n_convs,
             'instance_conv_channels': instance_conv_channels,
             'train_supervised': train_supervised,
+            'loss_weights': loss_weights,
         }
 
         self._metrics = [
@@ -109,11 +110,6 @@ class LacssModel(tf.keras.Model):
 
     def _gen_train_locations(self, gt_locations, pred_locations):
         threshold = self._config_dict['max_proposal_offset']
-        # instance_jitter = self._config_dict['instance_jitter']
-        # if  instance_jitter > 0:
-        #     jitter = tf.random.uniform(tf.shape(inputs['locations']), maxval=instance_jitter) - instance_jitter/2
-        # else:
-        #     jitter = 0
 
         n_gt_locs = tf.shape(gt_locations)[0]
         n_pred_locs = tf.shape(pred_locations)[0]
@@ -130,7 +126,6 @@ class LacssModel(tf.keras.Model):
 
         training_locations = tf.where(
             matched_loc_ids[:,None]==n_pred_locs,
-            # gt_locations + jitter,
             gt_locations,
             matched_locs,
             )
@@ -226,7 +221,6 @@ class LacssModel(tf.keras.Model):
                     model_output['instance_coords'],
                     data['binary_mask'],
                     )
-                # instance_loss /= 200.0
                 x = model_output['stem_features']
                 for layer in self._edge_predictor:
                     x = layer(x)
@@ -236,23 +230,22 @@ class LacssModel(tf.keras.Model):
                     model_output['instance_coords'],
                     edge_pred,
                 )
-                # edge_loss /= 10.0
 
-            loss = score_loss + loc_loss + instance_loss + edge_loss
+            weights = self._config_dict['loss_weights']
+            loss = score_loss * weights[0] + loc_loss * weights[1] + instance_loss * weights[2] + edge_loss * weights[3]
 
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients((g, v) for (g, v) in zip(grads, self.trainable_variables) if g is not None)
 
-        gt_locations = data['locations']
-        pred_locations = model_output['pred_locations']
-        scores = model_output['pred_location_scores']
+        # gt_locations = data['locations']
+        # pred_locations = model_output['pred_locations']
+        # scores = model_output['pred_location_scores']
         logs = self._update_metrics({
             'loss': loss,
             'score_loss': score_loss,
             'localization_loss': loc_loss,
             'instance_loss': instance_loss,
             'edge_loss': edge_loss,
-            # 'loi_mAP': (gt_locations, pred_locations, scores),
         })
 
         return logs
