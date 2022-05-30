@@ -78,11 +78,13 @@ class InstanceHead(tf.keras.layers.Layer):
 
         x = self._feature_conv(x)
         if batched_inputs:
-            patches, _ = gather_patches(x, locations, patch_size)
+            patches, coords = gather_patches(x, locations, patch_size)
             mask = tf.where(locations[:,:,0] >= 0)
             patches = tf.gather_nd(patches, mask)
+            coords_y0_x0 = tf.gather_nd(coords[:, :, :1, :1, :], mask)
         else:
-            patches, _ = gather_patches(x[0], locations, patch_size)
+            patches, coords = gather_patches(x[0], locations, patch_size)
+            coords_y0_x0 = coords[:, :1, :1, :]
 
         n_ch = self._config_dict['n_conv_channels']
         x1 = self._code_conv(self._position_encodings)
@@ -94,15 +96,18 @@ class InstanceHead(tf.keras.layers.Layer):
         # n_patches = tf.shape(patches)[0]
         # encodings = tf.tile(self._position_encodings, [n_patches, 1, 1, 1])
         # patches = tf.concat([patches, encodings], axis=-1)
-
         for layer in self._patch_conv_layers:
             patches = layer(patches, training=training)
 
         instance_output = self._output(patches, training=training)
 
-        i_locations = locations * tf.cast(tf.shape(hr_features)[-3:-1], locations.dtype)
-        i_locations = tf.cast(i_locations, tf.int32)
-        instance_coords = make_meshgrids(i_locations * 2, patch_size * 2)
+        # i_locations = locations * tf.cast(tf.shape(hr_features)[-3:-1], locations.dtype)
+        # i_locations = tf.cast(i_locations, tf.int32)
+        # instance_coords = make_meshgrids(i_locations * 2, patch_size * 2)
+        rr = tf.range(patch_size * 2, dtype=tf.int32)
+        xx,yy = tf.meshgrid(rr, rr)
+        mesh = tf.stack([yy,xx], axis=-1)
+        instance_coords = coords_y0_x0 * 2 + mesh
 
         if batched_inputs:
             instance_output = tf.RaggedTensor.from_value_rowids(instance_output, mask[:,0])

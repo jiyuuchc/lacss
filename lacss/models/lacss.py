@@ -26,7 +26,8 @@ class LacssModel(tf.keras.Model):
             instance_n_convs=1,
             instance_conv_channels=64,
             train_supervised=False,
-            loss_weights = (1.0, 1.0, 1.0, 1.0)
+            loss_weights=(1.0, 1.0, 1.0, 1.0),
+            train_batch_size=1,
             ):
         super().__init__()
         self._config_dict = {
@@ -47,6 +48,7 @@ class LacssModel(tf.keras.Model):
             'instance_conv_channels': instance_conv_channels,
             'train_supervised': train_supervised,
             'loss_weights': loss_weights,
+            'train_batch_size': train_batch_size,
         }
 
         self._metrics = [
@@ -108,55 +110,64 @@ class LacssModel(tf.keras.Model):
     def metrics(self):
         return self._metrics
 
-    def _gen_train_locations(self, gt_locations, pred_locations):
+    def _gen_train_locations(self, batched_gt_locations, batched_pred_locations):
         threshold = self._config_dict['max_proposal_offset']
 
-        n_gt_locs = tf.shape(gt_locations)[0]
-        n_pred_locs = tf.shape(pred_locations)[0]
-        matched_id, indicators = location_matching_unpadded(pred_locations, gt_locations, [threshold], [0,1])
-        matched_id = tf.where(tf.cast(indicators, tf.bool), matched_id, -1)
-        matching_matrix = matched_id == tf.range(n_gt_locs)[:,None]
-        matching_matrix = tf.concat([matching_matrix, tf.ones([n_gt_locs,1], tf.bool)], axis=-1)
-        all_locs = tf.where(matching_matrix)
-        matched_loc_ids = tf.math.segment_min(all_locs[:,1], all_locs[:,0])
-        matched_loc_ids=tf.cast(matched_loc_ids, n_pred_locs.dtype)
+        def _training_locations_for_one_image(gt_locations, pred_locations):
+            n_gt_locs = tf.shape(gt_locations)[0]
+            n_pred_locs = tf.shape(pred_locations)[0]
+            matched_id, indicators = location_matching_unpadded(pred_locations, gt_locations, [threshold], [0,1])
+            matched_id = tf.where(tf.cast(indicators, tf.bool), matched_id, -1)
+            matching_matrix = matched_id == tf.range(n_gt_locs)[:,None]
+            matching_matrix = tf.concat([matching_matrix, tf.ones([n_gt_locs,1], tf.bool)], axis=-1)
+            all_locs = tf.where(matching_matrix)
+            matched_loc_ids = tf.math.segment_min(all_locs[:,1], all_locs[:,0])
+            matched_loc_ids=tf.cast(matched_loc_ids, n_pred_locs.dtype)
 
-        matched_locs = tf.gather(pred_locations, matched_loc_ids)
-        matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
+            matched_locs = tf.gather(pred_locations, matched_loc_ids)
+            matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
 
-        training_locations = tf.where(
-            matched_loc_ids[:,None]==n_pred_locs,
-            gt_locations,
-            matched_locs,
-            )
+            training_locations = tf.where(
+                matched_loc_ids[:,None]==n_pred_locs,
+                gt_locations,
+                matched_locs,
+                )
 
-        return training_locations
+            return training_locations
+
+        return tf.map_fn(
+            lambda x: _training_locations_for_one_image(*x),
+            (batched_gt_locations, batched_pred_locations),
+            fn_output_signature=tf.RaggedTensorSpec([None,2], batched_gt_locations.dtype, 0),
+        )
 
     def call(self, inputs, training=False):
         model_output = {}
 
         img = inputs['image']
-        height, width, _ = img.shape
-        height = height if height else tf.shape(img)[0]
-        width = width if width else tf.shape(img)[1]
+        if len(tf.shape(img)) == 3:
+            img = tf.expand_dims(img, 0)
+        _, height, width, _ = img.shape
+        height = height if height else tf.shape(img)[1]
+        width = width if width else tf.shape(img)[2]
 
-        y = tf.expand_dims(img, 0)
-        # segmentation_features, detection_features, stem_features = self._backbone(y, training=True)
+        y = img
         encoder_out, decoder_out = self._backbone(y, training=True)
-        detection_features = tf.squeeze(decoder_out[-2], 0)
-        segmentation_features = tf.squeeze(decoder_out[-4], 0)
+        # detection_features = tf.squeeze(decoder_out[-2], 0)
+        # segmentation_features = tf.squeeze(decoder_out[-4], 0)
+        detection_features = decoder_out[-2]
+        segmentation_features = decoder_out[-4]
         stem_features = encoder_out[0]
 
         scores_out, regression_out = self._detection_head(detection_features, training=training)
 
+        model_output.update({
+            'detection_scores': scores_out,
+            'detection_regression': regression_out,
+            'stem_features': stem_features,
+        })
+
         if training:
-            scaled_gt_locations = inputs['locations'] / [height, width]
-            model_output.update({
-                'detection_scores': scores_out,
-                'detection_regression': regression_out,
-                'scaled_gt_locations': scaled_gt_locations,
-                'stem_features': stem_features,
-            })
             max_output = self._config_dict['train_max_output']
             topk = self._config_dict['train_pre_nms_topk']
             min_score = self._config_dict['train_min_score']
@@ -183,9 +194,10 @@ class LacssModel(tf.keras.Model):
                 inputs['locations'],
                 decoded_locations,
                 )
-            instance_inputs = (segmentation_features, training_locations / [height, width])
+            training_locations = (training_locations/[height, width]).to_tensor(-1.0)
         else:
-            instance_inputs = (segmentation_features, proposed_locations)
+            training_locations = proposed_locations.to_tensor(-1.0)
+        instance_inputs = (segmentation_features, training_locations)
 
         instance_output, instance_coords = self._instance_head(instance_inputs, training=training)
 
@@ -197,39 +209,45 @@ class LacssModel(tf.keras.Model):
         return model_output
 
     def train_step(self, data):
+        height = data['image'].shape[-3]
+        width = data['image'].shape[-2]
+
         with tf.GradientTape() as tape:
             model_output = self(data, training=True)
 
             score_loss, loc_loss = detection_losses(
-                model_output['scaled_gt_locations'][None, ...],
-                model_output['detection_scores'][None, ...],
-                model_output['detection_regression'][None, ...],
+                data['locations'] / [height, width],
+                # model_output['scaled_gt_locations'][None, ...],
+                model_output['detection_scores'],
+                model_output['detection_regression'],
                 roi_size = self._config_dict['detection_roi_size'],
             )
 
+            instance_loss = 0.
+            edge_loss = 0.
             if self._config_dict['train_supervised']:
-                instance_loss = supervised_segmentation_losses(
-                    model_output['instance_output'],
-                    model_output['instance_coords'],
-                    data['mask_indices'],
-                )
-                instance_loss /= 500.0
-                edge_loss = 0.
-            else:
-                instance_loss = self_supervised_segmentation_losses(
-                    model_output['instance_output'],
-                    model_output['instance_coords'],
-                    data['binary_mask'],
+                for k in range(self._config_dict['train_batch_size']):
+                    instance_loss += supervised_segmentation_losses(
+                        model_output['instance_output'][k],
+                        model_output['instance_coords'][k],
+                        data['mask_indices'][k],
                     )
+            else:
                 x = model_output['stem_features']
                 for layer in self._edge_predictor:
                     x = layer(x)
-                edge_pred = x[0,:,:,0]
-                edge_loss = self_supervised_edge_losses(
-                    model_output['instance_output'],
-                    model_output['instance_coords'],
-                    edge_pred,
-                )
+                edge_pred = x[:,:,:,0]
+                for k in range(self._config_dict['train_batch_size']):
+                    instance_loss += self_supervised_segmentation_losses(
+                        model_output['instance_output'][k],
+                        model_output['instance_coords'][k],
+                        data['binary_mask'][k],
+                    ) * tf.cast(tf.shape(data['locations'][k])[0], tf.float32) * 0.002
+                    edge_loss += self_supervised_edge_losses(
+                        model_output['instance_output'][k],
+                        model_output['instance_coords'][k],
+                        edge_pred[k],
+                    )
 
             weights = self._config_dict['loss_weights']
             loss = score_loss * weights[0] + loc_loss * weights[1] + instance_loss * weights[2] + edge_loss * weights[3]
