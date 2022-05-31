@@ -64,6 +64,10 @@ class LacssModel(tf.keras.Model):
     def get_config(self):
         return self._config_dict
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
     def build(self, input_shape):
         backbone = self._config_dict['backbone']
         img_shape = (None, None, input_shape['image'][-1])
@@ -238,11 +242,16 @@ class LacssModel(tf.keras.Model):
                     x = layer(x)
                 edge_pred = x[:,:,:,0]
                 for k in range(self._config_dict['train_batch_size']):
+                    # instance_loss += self_supervised_segmentation_losses(
+                    #     model_output['instance_output'][k],
+                    #     model_output['instance_coords'][k],
+                    #     data['binary_mask'][k],
+                    # ) * tf.cast(tf.shape(data['locations'][k])[0], tf.float32) * 0.005
                     instance_loss += self_supervised_segmentation_losses(
                         model_output['instance_output'][k],
                         model_output['instance_coords'][k],
                         data['binary_mask'][k],
-                    ) * tf.cast(tf.shape(data['locations'][k])[0], tf.float32) * 0.002
+                    )
                     edge_loss += self_supervised_edge_losses(
                         model_output['instance_output'][k],
                         model_output['instance_coords'][k],
