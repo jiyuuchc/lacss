@@ -83,6 +83,10 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     # scale to 0-1
     scaling = tf.cast(tf.shape(score_out)[1:3], nms_locations.dtype)
     nms_locations = nms_locations / scaling
+    bm = (nms_locations>=0.) & (nms_locations<1.)
+    bm = tf.logical_and(bm[:,:,0], bm[:,:,1])
+    nms_locations = tf.ragged.boolean_mask(nms_locations, bm)
+    nms_scores = tf.ragged.boolean_mask(nms_scores, bm)
 
     if not batched:
         nms_scores = nms_scores.merge_dims(0,1)
