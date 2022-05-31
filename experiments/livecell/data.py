@@ -3,7 +3,7 @@ from os.path import join
 import random
 import zipfile
 import imageio
-# import skimage.transform
+import cv2
 
 import numpy as np
 import tensorflow as tf
@@ -26,9 +26,8 @@ def _serialize_array(array):
     array = tf.io.serialize_tensor(array)
     return _bytes_feature(array)
 
-split_table = {'train':0, 'val': 1, 'test':2}
+# split_table = {'train':0, 'val': 1, 'test':2}
 cell_type_table = {'A172': 0, 'BT474': 1, 'BV2': 2, 'Huh7': 3, 'MCF7': 4, 'SHSY5Y': 5, 'SKOV3': 6, 'SkBr3': 7}
-
 cell_size_scales = {
     'A172': 1.0,
     'BT474': 0.65,
@@ -39,7 +38,87 @@ cell_size_scales = {
     'SKOV3': 1.30,
     'SkBr3': 0.75,
     }
-scale_values = tf.constant(list(cell_size_scales.values()))
+# scale_values = tf.constant(list(cell_size_scales.values()))
+
+def livecell_data_gen(path, split):
+    if split == 'train':
+        coco = COCO(annotation_file=join(path, 'annotations', 'LIVECell', 'livecell_coco_train.json'))
+        img_path = join(path, 'images', 'livecell_train_val_images')
+    elif split == 'val':
+        coco = COCO(annotation_file=join(path, 'annotations', 'LIVECell', 'livecell_coco_val.json'))
+        img_path = join(path, 'images', 'livecell_train_val_images')
+    elif split == 'test':
+        coco = COCO(annotation_file=join(path, 'annotations', 'LIVECell', 'livecell_coco_test.json'))
+        img_path = join(path, 'images', 'livecell_test_images')
+    else:
+        raise ValueError("split needs to be one of the 'train', 'val' or 'test'.")
+
+    ids = coco.getImgIds().copy()
+    random.shuffle(ids)
+    for imgid in ids:
+        imginfo = coco.imgs[imgid]
+        filename = imginfo['file_name']
+        cell_type = filename.split('_')[0]
+        cell_type_id = cell_type_table[cell_type]
+
+        img = imageio.imread(join(img_path, cell_type, filename)).astype('float32')
+        img = img / 255.0
+
+        height, width = img.shape
+        scaling = 1.0 / cell_size_scales[cell_type]
+        target_height = round(height * scaling)
+        target_width = round(width * scaling)
+
+        scaled_img = tf.image.resize(img[...,None], (target_height, target_width), antialias=scaling<1.0)
+
+        mask_indices = []
+        bboxes = []
+        row_lengths = []
+        for ann_id in coco.getAnnIds(imgIds=imgid):
+            box = np.array(coco.anns[ann_id]['bbox']) * scaling
+            seg = np.array(coco.anns[ann_id]['segmentation']).reshape([1,-1,2])
+            mask = cv2.fillPoly(
+                np.zeros([target_height, target_width], 'uint8'),
+                np.round(seg*scaling).astype('int32'),
+                1)
+            mask = mask[int(box[1]):int(box[1]+box[3]+1), int(box[0]):int(box[0]+box[2]+1)]
+            indices = np.stack(np.where(mask)).transpose() + [int(box[1]), int(box[0])]
+            mask_indices.append(indices)
+            row_lengths.append(indices.shape[0])
+            bboxes.append([box[1], box[0], box[1]+box[3], box[0]+box[2]])
+        mis = np.concatenate(mask_indices)
+        n_pixels = mis.shape[0]
+        mis = tf.RaggedTensor.from_row_lengths(mis, row_lengths)
+
+        locations = tf.cast(tf.reduce_mean(mis, axis=1), tf.float32)
+        bboxes = np.array(bboxes).astype('float32')
+        binary_mask = tf.scatter_nd(mis.values, tf.ones([n_pixels], tf.float32), (target_height, target_width))
+        binary_mask = tf.cast(binary_mask > 0.5, tf.float32)
+
+        yield {
+            'img_id': imgid,
+            'image': scaled_img,
+            'mask_indices': mis,
+            'locations': locations,
+            'binary_mask': binary_mask,
+            'bboxes': bboxes,
+            'scaling': scaling,
+        }
+
+def livecell_dataset(data_path, split):
+    ds = tf.data.Dataset.from_generator(
+        lambda : livecell_data_gen(data_path, split),
+        output_signature={
+            'img_id': tf.TensorSpec([], dtype=tf.int64),
+            'image': tf.TensorSpec([None,None,1], dtype=tf.float32),
+            'mask_indices': tf.RaggedTensorSpec([None, None, 2], tf.int64, 1),
+            'locations': tf.TensorSpec([None,2], dtype=tf.float32),
+            'binary_mask': tf.TensorSpec([None,None], dtype=tf.float32),
+            'bboxes': tf.TensorSpec([None,4], dtype=tf.float32),
+            'scaling': tf.TensorSpec([], dtype=tf.float32)
+        }
+    )
+    return ds
 
 def parse_coco_record(coco, imgid, data_dir):
     imginfo = coco.imgs[imgid]
