@@ -29,7 +29,7 @@ def self_supervised_segmentation_losses(y_pred, coords, binary_mask, lam=1.0, be
 
     log_yi = tf.gather_nd(log_yi_sum, coords) - log_yi
 
-    loss = - tf.reduce_mean(y_pred) - tf.reduce_mean(y_pred * log_yi) * lam
+    loss = (tf.reduce_sum(binary_mask)-tf.reduce_sum(y_pred))/tf.cast(tf.size(y_pred), tf.float32) - tf.reduce_mean(y_pred * log_yi) * lam
     # loss = loss * tf.cast(patch_shape[0], loss.dtype)
 
     return loss

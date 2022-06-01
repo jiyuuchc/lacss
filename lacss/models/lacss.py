@@ -236,6 +236,7 @@ class LacssModel(tf.keras.Model):
                         model_output['instance_coords'][k],
                         data['mask_indices'][k],
                     )
+                instance_loss = instance_loss / self._config_dict['train_batch_size']
             else:
                 x = model_output['stem_features']
                 for layer in self._edge_predictor:
@@ -257,6 +258,8 @@ class LacssModel(tf.keras.Model):
                         model_output['instance_coords'][k],
                         edge_pred[k],
                     )
+                instance_loss = instance_loss / self._config_dict['train_batch_size']
+                edge_loss = edge_loss / self._config_dict['train_batch_size']
 
             weights = self._config_dict['loss_weights']
             loss = score_loss * weights[0] + loc_loss * weights[1] + instance_loss * weights[2] + edge_loss * weights[3]

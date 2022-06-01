@@ -58,12 +58,14 @@ def detection_losses(gt_locations, pred_scores, pred_regressions, roi_size=1.5, 
     score_target, regression_target = locations_to_labels(gt_locations, target_shape, roi_size)
 
     score_loss = tf.keras.losses.binary_focal_crossentropy(score_target, pred_scores, **kwargs)
-    score_loss = tf.reduce_sum(tf.reduce_mean(tf.reshape(score_loss, [batch_size, -1]), axis=1))
+    score_loss = tf.reduce_mean(score_loss)
+    # score_loss = tf.reduce_sum(tf.reduce_mean(tf.reshape(score_loss, [batch_size, -1]), axis=1))
 
     regression_loss = tf.keras.losses.huber(regression_target, pred_regressions)
     regression_loss = tf.reshape(regression_loss, [batch_size, -1])
     score_target = tf.reshape(score_target, [batch_size, -1])
     regression_loss = tf.reduce_sum(tf.where(score_target>0, regression_loss, 0), axis=1) / (tf.reduce_sum(score_target, axis=1)+ 1e-9)
-    regression_loss = tf.reduce_sum(regression_loss)
+    regression_loss = tf.reduce_mean(regression_loss)
+    # regression_loss = tf.reduce_sum(regression_loss)
 
     return score_loss, regression_loss
