@@ -71,10 +71,10 @@ class LacssModel(tf.keras.Model):
     def build(self, input_shape):
         backbone = self._config_dict['backbone']
         img_shape = (None, None, input_shape['image'][-1])
-        if backbone == 'unet_s':
-            self._backbone = build_unet_s_backbone()
-        elif backbone == 'unet':
-            self._backbone = build_unet_backbone()
+        if backbone == 'resnet2':
+            self._backbone = build_resnet_backbone(input_shape=img_shape, is_v2=True, with_attention=False)
+        elif backbone == 'resnet2_att':
+            self._backbone = build_resnet_backbone(input_shape=img_shape, is_v2=True, with_attention=True)
         elif backbone == 'resnet':
             self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False)
         elif backbone == 'resnet_att':
@@ -159,8 +159,8 @@ class LacssModel(tf.keras.Model):
         encoder_out, decoder_out = self._backbone(y, training=True)
         # detection_features = tf.squeeze(decoder_out[-2], 0)
         # segmentation_features = tf.squeeze(decoder_out[-4], 0)
-        detection_features = decoder_out[-2]
-        segmentation_features = decoder_out[-4]
+        detection_features = decoder_out[2]
+        segmentation_features = decoder_out[0]
         stem_features = encoder_out[0]
 
         scores_out, regression_out = self._detection_head(detection_features, training=training)

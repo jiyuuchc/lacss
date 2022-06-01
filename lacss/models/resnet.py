@@ -104,37 +104,22 @@ class ResNet(layers.Layer):
     def get_config(self):
         return self._config_dict
 
-def build_resnet_backbone(input_shape=(None,None,1), is_v2=True, with_attention=True):
-    # if is_v2:
-    #     resnet = tf.keras.applications.ResNet50V2(include_top=False)
-    #     rn_input = resnet.get_layer('pool1_pad').input
-    #     rn_output = (
-    #         resnet.get_layer('conv2_block3_preact_relu').output,
-    #         resnet.get_layer('conv3_block4_preact_relu').output,
-    #         resnet.get_layer('conv4_block6_preact_relu').output,
-    #         resnet.get_layer('post_relu').output,
-    #     )
-    # else:
-    #     resnet = tf.keras.applications.ResNet50(include_top=False)
-    #     rn_input = resnet.get_layer('pool1_pad').input
-    #     rn_output = (
-    #         resnet.get_layer('conv2_block3_out').output,
-    #         resnet.get_layer('conv3_block4_out').output,
-    #         resnet.get_layer('conv4_block6_out').output,
-    #         resnet.get_layer('conv5_block3_out').output,
-    #     )
-    # encoder = tf.keras.Model(inputs=rn_input, outputs=rn_output)
-
+def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention=True):
     encoder = ResNet([(64,3),(128,4),(256,6),(512,3)], use_attention=with_attention, name='resnet')
     input = tf.keras.layers.Input(shape=input_shape)
     x = input
     x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1')(x)
-    x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
-    x = layers.BatchNormalization(name='stem_bn')(x)
+    if is_v2:
+        x1 = layers.Conv2D(64,3,strides=2,padding='same', activation='relu',name='stem_conv2')(x)
+        x1 = layers.BatchNormalization(name='stem_bn')(x1)
+        stem = (x, x1)
+    else:
+        x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
+        x = layers.BatchNormalization(name='stem_bn')(x)
+        stem = (x,)
 
-    stem = x
     x = encoder(x)
-    encoder_out = (stem,) + tuple(x)
+    encoder_out = stem + tuple(x)
 
     x = [layers.Conv2D(256,1,activation='relu',name=f'fpn_conv{k}_1')(d) for k,d in enumerate(x)]
     out5 = x[-1]
@@ -149,5 +134,9 @@ def build_resnet_backbone(input_shape=(None,None,1), is_v2=True, with_attention=
     out2 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv2_2')(m2)
 
     decoder_out = (out2, out3, out4, out5)
+    if is_v2:
+        m1 = tf.concat([layers.UpSampling2D(name='upsample_1')(out2), encoder_out[1]], axis=-1)
+        out1 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv1_2')(m2)
+        decoder_out = (out1,) + decoder_out
 
     return tf.keras.Model(inputs=input, outputs=(encoder_out, decoder_out))
