@@ -17,16 +17,17 @@ class ChannelAttention(layers.Layer):
             n_ch//self._config_dict['squeeze_factor'],
             activation='relu',
             name='w0')
-        self._w1 = layers.Dense(n_ch, name='relu')
+        self._w1 = layers.Dense(n_ch, name='w1')
 
     def call(self, x, training=False):
-        y = tf.reshape(x, (-1, x.shape[-1]))
-        y1 = tf.reduce_max(y, axis=0, keepdims=True)
+        n_batch = tf.shape(x)[0]
+        y = tf.reshape(x, (n_batch, -1, x.shape[-1]))
+        y1 = tf.reduce_max(y, axis=1)
         y1 = self._w0(y1)
-        y2 = tf.reduce_mean(y, axis=0, keepdims=True)
+        y2 = tf.reduce_mean(y, axis=1)
         y2 = self._w0(y2)
         y = self._w1(y1 + y2)
         y = tf.sigmoid(y)
-        y = x * y
+        y = x * y[:, None, None, :]
 
         return y
