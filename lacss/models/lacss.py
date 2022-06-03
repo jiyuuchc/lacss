@@ -93,10 +93,17 @@ class LacssModel(tf.keras.Model):
               )
 
         if not self._config_dict['train_supervised']:
-            self._edge_predictor = [
-                layers.Conv2D(64, 3, padding='same', activation='relu'),
-                layers.Conv2D(64, 3, padding='same', activation='sigmoid'),
-            ]
+            if backbone == 'resnet2' or backbone =='resnet2_att':
+                self._edge_predictor = [
+                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+                    layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+                ]
+            else:
+                self._edge_predictor = [
+                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+                    layers.Conv2D(64, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+                ]
 
     def _update_metrics(self, new_metrics):
         logs={}
@@ -118,6 +125,14 @@ class LacssModel(tf.keras.Model):
         threshold = self._config_dict['max_proposal_offset']
 
         def _training_locations_for_one_image(gt_locations, pred_locations):
+            ''' replacing gt_locations with pred_locations if the close enough
+              gt_locations: [N, 2] tensor
+              pred_locations: [M, 2] tensor, sorted with scores
+
+              1. Each pred_location is matched to the closest gt_location
+              2. For each gt_location, pick the matched pred_location with highest score
+              3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
+            '''
             n_gt_locs = tf.shape(gt_locations)[0]
             n_pred_locs = tf.shape(pred_locations)[0]
             matched_id, indicators = location_matching_unpadded(pred_locations, gt_locations, [threshold], [0,1])
@@ -126,13 +141,16 @@ class LacssModel(tf.keras.Model):
             matching_matrix = tf.concat([matching_matrix, tf.ones([n_gt_locs,1], tf.bool)], axis=-1)
             all_locs = tf.where(matching_matrix)
             matched_loc_ids = tf.math.segment_min(all_locs[:,1], all_locs[:,0])
-            matched_loc_ids=tf.cast(matched_loc_ids, n_pred_locs.dtype)
+            matched_loc_ids = tf.cast(matched_loc_ids, n_pred_locs.dtype)
 
             matched_locs = tf.gather(pred_locations, matched_loc_ids)
-            matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
+            # matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
+
+            max_allowed_pred = n_pred_locs
+            # max_allowed_pred = n_gt_locs + 10
 
             training_locations = tf.where(
-                matched_loc_ids[:,None]==n_pred_locs,
+                matched_loc_ids[:,None]>=max_allowed_pred,
                 gt_locations,
                 matched_locs,
                 )
