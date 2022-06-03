@@ -108,13 +108,13 @@ def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention
     encoder = ResNet([(64,3),(128,4),(256,6),(512,3)], use_attention=with_attention, name='resnet')
     input = tf.keras.layers.Input(shape=input_shape)
     x = input
-    x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1')(x)
+    x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1', kernel_initializer='he_normal')(x)
     if is_v2:
-        x1 = layers.Conv2D(64,3,strides=2,padding='same', activation='relu',name='stem_conv2')(x)
+        x1 = layers.Conv2D(64,3,strides=2,padding='same', activation='relu',name='stem_conv2', kernel_initializer='he_normal')(x)
         x1 = layers.BatchNormalization(name='stem_bn')(x1)
         stem = (x, x1)
     else:
-        x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2')(x)
+        x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2', kernel_initializer='he_normal')(x)
         x = layers.BatchNormalization(name='stem_bn')(x)
         stem = (x,)
 
