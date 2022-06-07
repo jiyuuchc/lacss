@@ -110,9 +110,10 @@ def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention
     x = input
     x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1', kernel_initializer='he_normal')(x)
     if is_v2:
-        x1 = layers.Conv2D(64,3,strides=2,padding='same', activation='relu',name='stem_conv2', kernel_initializer='he_normal')(x)
-        x1 = layers.BatchNormalization(name='stem_bn')(x1)
-        stem = (x, x1)
+        x0 = x
+        x = layers.Conv2D(64,3,strides=2,padding='same', activation='relu',name='stem_conv2', kernel_initializer='he_normal')(x0)
+        x = layers.BatchNormalization(name='stem_bn')(x)
+        stem = (x0, x)
     else:
         x = layers.Conv2D(64,3,padding='same', activation='relu',name='stem_conv2', kernel_initializer='he_normal')(x)
         x = layers.BatchNormalization(name='stem_bn')(x)
@@ -136,7 +137,7 @@ def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention
     decoder_out = (out2, out3, out4, out5)
     if is_v2:
         m1 = tf.concat([layers.UpSampling2D(name='upsample_1')(out2), encoder_out[1]], axis=-1)
-        out1 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv1_2')(m2)
+        out1 = layers.Conv2D(256, 3, activation='relu', padding='same', name=f'fpn_conv1_2')(m1)
         decoder_out = (out1,) + decoder_out
 
     return tf.keras.Model(inputs=input, outputs=(encoder_out, decoder_out))
