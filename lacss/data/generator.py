@@ -4,6 +4,7 @@ import json
 import imageio
 from pycocotools.coco import COCO
 from os.path import join
+from skimage.measure import regionprops
 
 def _coco_generator(annotation_file, image_path):
     coco = COCO(annotation_file=annotation_file)
@@ -94,5 +95,50 @@ def dataset_from_simple_annotations(annotation_file, image_path, image_shape=[No
             'image': tf.TensorSpec(image_shape, dtype=tf.float32),
             'locations': tf.TensorSpec([None,2], dtype=tf.float32),
             'binary_mask': tf.TensorSpec([None,None], dtype=tf.float32),
+        }
+    )
+
+def _img_mask_pair_generator(ds_files):
+    for k, (img_file, mask_file) in enumerate(ds_files):
+        img = imageio.imread(img_file).astype('float32')
+        img = img / img.max()
+        mask = imageio.imread(mask_file)
+        if len(mask.shape) == 3:
+            mask = mask[:,:,0]
+        binary_mask = (mask > 0).astype('float32')
+
+        bboxes = []
+        locs = []
+        mis = []
+        mi_lengths = []
+        for prop in regionprops(mask):
+            bboxes.append(prop['bbox'])
+            locs.append(prop['centroid'])
+            mi = np.array(np.where(prop['image'])).transpose()
+            mi = mi + bboxes[-1][:2]
+            mi_lengths.append(mi.shape[0])
+            mis.append(mi)
+        bboxes = np.array(bboxes, dtype='float32')
+        locs = np.array(locs, dtype='float32')
+        mis = tf.RaggedTensor.from_row_lengths(np.concatenate(mis), mi_lengths)
+        yield {
+            'img_id': k,
+            'image': img,
+            'locations': locs,
+            'binary_mask': binary_mask,
+            'bboxes': bboxes,
+            'mask_indices': mis
+        }
+
+def dataset_from_img_mask_pairs(imgfiles, maskfiles, image_shape=[None,None,3]):
+    return tf.data.Dataset.from_generator(
+        lambda : _img_mask_pair_generator(zip(imgfiles, maskfiles)),
+        output_signature={
+            'img_id': tf.TensorSpec([], dtype=tf.int64),
+            'image': tf.TensorSpec(image_shape, dtype=tf.float32),
+            'mask_indices': tf.RaggedTensorSpec([None, None, 2], tf.int64, 1),
+            'locations': tf.TensorSpec([None,2], dtype=tf.float32),
+            'binary_mask': tf.TensorSpec([None,None], dtype=tf.float32),
+            'bboxes': tf.TensorSpec([None,4], dtype=tf.float32),
         }
     )
