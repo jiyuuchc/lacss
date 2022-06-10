@@ -11,8 +11,8 @@ layers = tf.keras.layers
 class LacssModel(tf.keras.Model):
     def __init__(self,
             backbone = 'unet_s',
-            detection_head_conv_filers=(1024,),
-            detection_head_fc_filers=(1024,),
+            detection_head_conv_filters=(1024,),
+            detection_head_fc_filters=(1024,),
             detection_level=3,
             detection_roi_size=1.5,
             detection_nms_threshold=1.0,
@@ -33,8 +33,8 @@ class LacssModel(tf.keras.Model):
         super().__init__()
         self._config_dict = {
             'backbone': backbone,
-            'detection_head_conv_filers':detection_head_conv_filers,
-            'detection_head_fc_filers':detection_head_fc_filers,
+            'detection_head_conv_filters':detection_head_conv_filters,
+            'detection_head_fc_filters':detection_head_fc_filters,
             'detection_level': detection_level,
             'detection_roi_size': detection_roi_size,
             'detection_nms_threshold': detection_nms_threshold,
@@ -85,8 +85,8 @@ class LacssModel(tf.keras.Model):
             raise ValueError(f'unknown backbone type: {backbone}')
 
         self._detection_head = DetectionHead(
-            conv_filters=self._config_dict['detection_head_conv_filers'],
-            fc_filters=self._config_dict['detection_head_fc_filers'],
+            conv_filters=self._config_dict['detection_head_conv_filters'],
+            fc_filters=self._config_dict['detection_head_fc_filters'],
         )
         self._instance_head = InstanceHead(
               n_patch_conv_layers=self._config_dict['instance_n_convs'],
