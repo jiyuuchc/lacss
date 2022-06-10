@@ -1,18 +1,19 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
-from .detection_head import DetectionHead
 from .instance_head import InstanceHead
+from .detection_head import DetectionHead
 from ..metrics import *
 from ..losses import *
 from ..ops import *
 from .unet import *
 from .resnet import *
+layers = tf.keras.layers
 
 class LacssModel(tf.keras.Model):
     def __init__(self,
             backbone = 'unet_s',
             detection_head_conv_filers=(1024,),
             detection_head_fc_filers=(1024,),
+            detection_level=3,
             detection_roi_size=1.5,
             detection_nms_threshold=1.0,
             train_pre_nms_topk=2000,
@@ -34,6 +35,7 @@ class LacssModel(tf.keras.Model):
             'backbone': backbone,
             'detection_head_conv_filers':detection_head_conv_filers,
             'detection_head_fc_filers':detection_head_fc_filers,
+            'detection_level': detection_level,
             'detection_roi_size': detection_roi_size,
             'detection_nms_threshold': detection_nms_threshold,
             'train_pre_nms_topk': train_pre_nms_topk,
@@ -102,7 +104,7 @@ class LacssModel(tf.keras.Model):
             else:
                 self._edge_predictor = [
                     layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-                    layers.Conv2D(64, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+                    layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
                 ]
 
     def _update_metrics(self, new_metrics):
@@ -177,7 +179,8 @@ class LacssModel(tf.keras.Model):
         encoder_out, decoder_out = self._backbone(y, training=True)
         # detection_features = tf.squeeze(decoder_out[-2], 0)
         # segmentation_features = tf.squeeze(decoder_out[-4], 0)
-        detection_features = decoder_out[2]
+        detection_level = self._config_dict['detection_level']
+        detection_features = decoder_out[detection_level-1]
         segmentation_features = decoder_out[0]
         stem_features = encoder_out[0]
 
@@ -261,11 +264,6 @@ class LacssModel(tf.keras.Model):
                     x = layer(x)
                 edge_pred = x[:,:,:,0]
                 for k in range(self._config_dict['train_batch_size']):
-                    # instance_loss += self_supervised_segmentation_losses(
-                    #     model_output['instance_output'][k],
-                    #     model_output['instance_coords'][k],
-                    #     data['binary_mask'][k],
-                    # ) * tf.cast(tf.shape(data['locations'][k])[0], tf.float32) * 0.005
                     instance_loss += self_supervised_segmentation_losses(
                         model_output['instance_output'][k],
                         model_output['instance_coords'][k],
