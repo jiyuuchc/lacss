@@ -3,7 +3,7 @@ import tensorflow.keras.layers as layers
 from ..ops import *
 
 class InstanceHead(tf.keras.layers.Layer):
-    def __init__(self, n_conv_layers=2, n_conv_channels=64, n_patch_conv_layers=1, instance_crop_size=96, with_attention=False, **kwargs):
+    def __init__(self, n_conv_layers=3, n_conv_channels=64, n_patch_conv_layers=1, instance_crop_size=96, with_attention=False, **kwargs):
         self._config_dict = {
             'n_conv_layers': n_conv_layers,
             'n_conv_channels': n_conv_channels,

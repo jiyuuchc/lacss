@@ -24,7 +24,7 @@ class LacssModel(tf.keras.Model):
             test_min_score=0,
             max_proposal_offset=16,
             instance_crop_size=96,
-            instance_n_convs=1,
+            instance_n_convs=3,
             instance_conv_channels=64,
             train_supervised=False,
             loss_weights=(1.0, 1.0, 1.0, 1.0),
@@ -89,7 +89,7 @@ class LacssModel(tf.keras.Model):
             fc_filters=self._config_dict['detection_head_fc_filters'],
         )
         self._instance_head = InstanceHead(
-              n_patch_conv_layers=self._config_dict['instance_n_convs'],
+              n_conv_layers=self._config_dict['instance_n_convs'],
               n_conv_channels=self._config_dict['instance_conv_channels'],
               instance_crop_size=self._config_dict['instance_crop_size']//2,
               )
