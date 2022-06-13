@@ -2,6 +2,13 @@ import tensorflow as tf
 import numpy as np
 from ..ops import *
 
+'''
+metrics classes for computing coco-style AP metrics.
+
+BE CAREFUL making changes here. Very easy to make a mistake and resulting mismatch with
+coco algorithm. Be sure to validate against coco-evaluation before commit changes.
+'''
+
 def np_unique_location_matching(similarity_matrix, threshold):
     ''' Perform matching based on similarity_matrix.
     This is different from the function in ops/matchers.py in that the matching
@@ -81,6 +88,13 @@ class MeanAP():
         return np.array(aps, dtype=np.float32)
 
 class BoxMeanAP(tf.keras.metrics.Metric):
+    '''Compute coco-style mean AP based on bbox iou.
+      Usage:
+        m = BoxMeanAP([threshold_1, threshold_2,...])
+        m.update_state(gt_bboxes, prediction_bboxes, prediction_scores)
+        ...
+        m.result()
+    '''
     def __init__(self,thresholds=[0.5], **kwargs):
         super(BoxMeanAP, self).__init__(**kwargs)
         self.thresholds = thresholds
@@ -115,6 +129,20 @@ class LOIMeanAP(BoxMeanAP):
         self.reset_state()
 
 class MaskMeanAP(BoxMeanAP):
+    '''Compute coco-style mean AP based on segmentation iou.
+      Usage:
+        m = MaskMeanAP([threshold_1, threshold_2,...])
+        # gt_mask_indices: RaggedTensor of [n_instances, None, 2]
+        # gt_bboxes: Tensor of [n_instances, 4]
+        gt = (gt_mask_indices, gt_bboxes)
+        # instances: Tensor of [n_predictions, patch_size, patch_size, 1]
+        # coordinates: Tensor of [n_predictions, patch_size, patch_size, 2]
+        # bboxes: Tensor of [n_predictions, 4] or None
+        prediction = (instances, coordinates, bboxes)
+        m.update_state(gt, prediction, prediction_scores)
+        ...
+        m.result()
+    '''
     def __init__(self, thresholds, **kwargs):
         super(MaskMeanAP, self).__init__(thresholds, **kwargs)
 

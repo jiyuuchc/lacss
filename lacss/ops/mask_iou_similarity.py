@@ -2,6 +2,20 @@ import tensorflow as tf
 from .iou_similarity import *
 
 def mask_iou_similarity(gt, pred, patch_size=96):
+    ''' Compute mask_iou matrix.
+        The method is to compute box iou matrix first and update only non-zero
+        entries with the accurate mask_iou
+
+        Args:
+            gt: a tuple of (mask_indices, gt_bboxes)
+            pred: a tuple of (pred_mask_indices, pred_bboxes)
+            patch_size: int constant
+
+            *_mask_indices: RaggedTensor of [n, None, 2] (y,x) indices of all segmented pixels
+            *_bboxes: Tensor of [n, 4] in y0x0y1x1 format
+        Outputs:
+            similarity_matrix: Tensor of [n_pred_instances, n_gt_instances]
+    '''
     box_iou = IouSimilarity()
 
     gt_mask_indices, gt_bboxes = gt
