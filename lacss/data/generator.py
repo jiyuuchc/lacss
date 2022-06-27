@@ -71,7 +71,10 @@ def _simple_generator(annotation_file, image_path):
         image = imageio.imread(join(image_path, ann['image_file']))
         if len(image.shape) == 2:
             image = image[:,:,None]
-        image = (image / 255.0).astype('float32')
+        #image = (image / 255.0).astype('float32')
+        image = image.astype('float32')
+        image -= image.mean()
+        image /= image.std()
 
         binary_mask = imageio.imread(join(image_path, ann['mask_file']))
         if len(binary_mask.shape) == 3:
@@ -81,7 +84,7 @@ def _simple_generator(annotation_file, image_path):
         locations = np.array(ann['locations']).astype('float32')
 
         yield {
-            'img_id': ann['id'],
+            'img_id': ann['img_id'],
             'image': image,
             'binary_mask': binary_mask,
             'locations': locations,
@@ -101,7 +104,10 @@ def dataset_from_simple_annotations(annotation_file, image_path, image_shape=[No
 def _img_mask_pair_generator(ds_files):
     for k, (img_file, mask_file) in enumerate(ds_files):
         img = imageio.imread(img_file).astype('float32')
-        img = img / img.max()
+        img -= img.mean()
+        img /= img.std()
+        if len(img.shape) == 2:
+            img = img[:,:,None]
         mask = imageio.imread(mask_file)
         if len(mask.shape) == 3:
             mask = mask[:,:,0]
