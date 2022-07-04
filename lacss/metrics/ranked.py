@@ -60,10 +60,11 @@ class MeanAP():
         ...
         m.result()
     '''
-    def __init__(self,thresholds=[0.5]):
+    def __init__(self,thresholds=[0.5], coco_style=False):
         self.thresholds = thresholds
         self.cell_counts = 0
         self.scores = []
+        self.coco_style=coco_style
         self.indicator_list = [[] for _ in range(len(thresholds))]
 
     def update_state(self, sm, scores):
@@ -83,6 +84,8 @@ class MeanAP():
             indicators = np.concatenate(indicators)
             indicators = indicators[indices[::-1]]
             p_k = np.cumsum(indicators) / (np.arange(len(indicators))+1)
+            if self.coco_style:
+                p_k = np.maximum.accumulate(p_k[::-1])[::-1]
             aps.append(np.sum(p_k[indicators==1]) / self.cell_counts)
 
         return np.array(aps, dtype=np.float32)
