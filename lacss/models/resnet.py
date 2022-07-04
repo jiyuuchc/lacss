@@ -104,8 +104,18 @@ class ResNet(layers.Layer):
     def get_config(self):
         return self._config_dict
 
-def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention=True):
-    encoder = ResNet([(64,3),(128,4),(256,6),(512,3)], use_attention=with_attention, name='resnet')
+_RESNET_SPECS = {
+  '50': [(64,3),(128,4),(256,6),(512,3)],
+  '101': [(64,3),(128,4),(256,23),(512,3)],
+  '152': [(64,3),(128,8),(256,36),(512,3)],
+  '200': [(64,3),(128,24),(256,36),(512,3)],
+  '270': [(64,4),(128,29),(256,53),(512,4)],
+  '350': [(64,4),(128,36),(256,72),(512,4)],
+  '420': [(64,4),(128,44),(256,87),(512,4)],
+}
+
+def build_resnet_backbone(input_shape=(None,None,1), is_v2=False, with_attention=True, spec='50'):
+    encoder = ResNet(_RESNET_SPECS[spec], use_attention=with_attention, name='resnet')
     input = tf.keras.layers.Input(shape=input_shape)
     x = input
     x = layers.Conv2D(24,3,padding='same', activation='relu',name='stem_conv1', kernel_initializer='he_normal')(x)
