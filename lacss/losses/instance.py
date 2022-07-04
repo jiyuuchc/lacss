@@ -99,7 +99,8 @@ def supervised_segmentation_losses(y_pred, coordinates, mask_indices):
     gt_patches = tf.expand_dims(gt_patches, -1)
 
     loss = tf.keras.losses.binary_crossentropy(gt_patches, y_pred)
-    loss = tf.reduce_mean(loss) * tf.cast(patch_shape[0], loss.dtype)
+    # loss = tf.reduce_mean(loss) * tf.cast(patch_shape[0], loss.dtype)
+    loss = tf.reduce_mean(loss)
 
     return loss
 
