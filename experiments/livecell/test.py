@@ -85,4 +85,4 @@ if __name__ =="__main__":
     parser.add_argument('--checkpoint', type=str, default='model_weight', help='Model checkpoint name')
     args = parser.parse_args()
 
-    run_testing(args.data_path, args.log_path, checkpoint=args.checkpoint)
+    run_test(args.data_path, args.log_path, checkpoint=args.checkpoint)
