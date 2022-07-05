@@ -17,6 +17,11 @@ LACSS models are usually accurate enough to compete with fully-supervised models
 
 ![benchmarks](images/lacss2.png)
 
+</br>
+
+You can try the demo notebook in colab:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jiyuuchc/lacss/blob/main/notebooks/demo.ipynb)
+
 
 
 
