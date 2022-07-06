@@ -73,10 +73,10 @@ class LacssModel(tf.keras.Model):
     def build(self, input_shape):
         backbone = self._config_dict['backbone']
         img_shape = (None, None, input_shape['image'][-1])
-        if backbone == 'resnet2':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, is_v2=True, with_attention=False)
-        elif backbone == 'resnet2_att':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, is_v2=True, with_attention=True)
+        if backbone == 'resnet200':
+            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False, spec='200')
+        elif backbone == 'resnet200_att':
+            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=True, spec='200')
         elif backbone == 'resnet':
             self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False)
         elif backbone == 'resnet_att':
@@ -95,17 +95,21 @@ class LacssModel(tf.keras.Model):
               )
 
         if not self._config_dict['train_supervised']:
-            if backbone == 'resnet2' or backbone =='resnet2_att':
-                self._edge_predictor = [
-                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-                    layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
-                ]
-            else:
-                self._edge_predictor = [
-                    layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-                    layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
-                ]
+            self._edge_predictor = [
+                layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+                layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+            ]
+            # if backbone == 'resnet2' or backbone =='resnet2_att':
+            #     self._edge_predictor = [
+            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            #         layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+            #     ]
+            # else:
+            #     self._edge_predictor = [
+            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            #         layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+            #     ]
 
     def _update_metrics(self, new_metrics):
         logs={}
