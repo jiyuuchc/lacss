@@ -4,3 +4,4 @@ from .resnet import *
 from .detection_head import *
 from .instance_head import *
 from .lacss import *
+from .xcit import XCiT
