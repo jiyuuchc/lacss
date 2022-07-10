@@ -1,6 +1,7 @@
 import tensorflow as tf
 from .unet import UNet
 from .resnet import ResNet
+from .xcit import XCiT
 from .detector import Detector
 from .instance_head import InstanceHead
 from .detection_head import DetectionHead
@@ -41,10 +42,10 @@ class LacssModel(tf.keras.Model):
     def get_config(self):
         config_dict = {
             'backbone': self.backbone.__class__.__name__,
-            'backbone_config': self.backbone.get_config(),
-            'lpn': self.lpn.get_config(),
-            'detector': self.detector.get_config(),
-            'segmentor': self.segmentor.get_config(),
+            'backbone_config': dict(self.backbone.get_config()),
+            'lpn': dict(self.lpn.get_config()),
+            'detector': dict(self.detector.get_config()),
+            'segmentor': dict(self.segmentor.get_config()),
             'detection_level': self.detection_level,
             'detection_roi_size': self.detection_roi_size,
             'loss_weights': self.loss_weights,
@@ -65,6 +66,8 @@ class LacssModel(tf.keras.Model):
             backbone = ResNet(**backbone_cfg)
         elif backbone_name == 'UNet':
             backbone = UNet(**backbone_cfg)
+        elif backbone_name == 'XCiT':
+            backbone = XCiT(**backbone_cfg)
         else:
             raise ValueError(f'unknown backbone name {backbone_name}')
 
@@ -108,7 +111,6 @@ class LacssModel(tf.keras.Model):
     @property
     def metrics(self):
         return self._metrics
-
 
     def get_features(self, imgs, training):
         backbone_out = self.backbone(imgs, training=True)
