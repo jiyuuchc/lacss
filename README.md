@@ -19,6 +19,10 @@ LACSS models are usually accurate enough to compete with fully-supervised models
 
 </br>
 
+#### Model checkpoints
+Model checkpoints cam be downloaded [here](https://drive.google.com/drive/folders/1OWdll3vRcwWhuZgNoom1-BHSg0rpvZrc?usp=sharing).
+
+#### Usage
 You can try the demo notebook in colab:
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jiyuuchc/lacss/blob/main/notebooks/demo.ipynb)
 
