@@ -45,7 +45,7 @@ class LacssModel(tf.keras.Model):
             'backbone_config': dict(self.backbone.get_config()),
             'lpn': dict(self.lpn.get_config()),
             'detector': dict(self.detector.get_config()),
-            'segmentor': dict(self.segmentor.get_config()),``
+            'segmentor': dict(self.segmentor.get_config()),
             'detection_level': self.detection_level,
             'detection_roi_size': self.detection_roi_size,
             'loss_weights': self.loss_weights,
