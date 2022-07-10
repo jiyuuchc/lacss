@@ -2,10 +2,14 @@ import tensorflow as tf
 import numpy as np
 import json
 import imageio
-from pycocotools.coco import COCO
+try:
+  from pycocotools.coco import COCO
+except:
+  pass
 from os.path import join
 from skimage.measure import regionprops
 
+# FIXME avoid dependency on COCO
 def _coco_generator(annotation_file, image_path):
     coco = COCO(annotation_file=annotation_file)
     for imgid in coco.getImgIds():

@@ -1,15 +1,26 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
 from .channel_attention import ChannelAttention
+layers = tf.keras.layers
 
 class DetectionHead(tf.keras.layers.Layer):
-    def __init__(self, conv_filters=(1024,), fc_filters=(1024,), with_channel_attention=False, **kwargs):
-        self._config_dict = {
-            'conv_filters': conv_filters,
-            'fc_filters': fc_filters,
-            'with_channel_attention': with_channel_attention,
-        }
+    def __init__(self,
+          conv_layers=((1024,),(1024,)),
+          with_channel_attention=False,
+          activation='relu',
+          **kwargs,
+          ):
+        """
+          Args:
+            conv_layers: conv layer spec
+            with_channel_attention: whether include channel attention
+        """
         super(DetectionHead, self).__init__(**kwargs)
+        self._config_dict = {
+            'conv_layers': conv_layers,
+            'with_channel_attention': with_channel_attention,
+            'activation': activation,
+        }
+        self._config_dict.update(kwargs)
 
     def get_config(self):
         return self._config_dict
@@ -17,21 +28,24 @@ class DetectionHead(tf.keras.layers.Layer):
     def build(self, input_shape):
         conv_kwargs = {
             'padding': 'same',
-            'activation': 'relu',
             'kernel_initializer': 'he_normal',
+            'use_bias': False,
         }
-        conv_filters = self._config_dict['conv_filters']
-        fc_filters = self._config_dict['fc_filters']
 
+        conv_layer_spec = self._config_dict['conv_layers']
+        activation = self._config_dict['activation']
         conv_layers = []
-        for k in range(len(conv_filters)):
-            conv_layers.append(layers.Conv2D(conv_filters[k], 3, name=f'conv_{k}', **conv_kwargs))
+        for k, n_ch in enumerate(conv_layer_spec[0]):
+            conv_layers.append(layers.Conv2D(n_ch, 3, name=f'conv3_{k}', **conv_kwargs))
             conv_layers.append(layers.BatchNormalization(name=f'conv_bn_{k}'))
-        for k in range(len(fc_filters)):
-            conv_layers.append(layers.Conv2D(fc_filters[k], 1, name=f'fc_{k}', **conv_kwargs))
-            conv_layers.append(layers.BatchNormalization(name=f'fc_bn_{k}'))
-            if self._config_dict['with_channel_attention']:
-                conv_layers.append(ChannelAttention(name=f'att_{k}'))
+            conv_layers.append(layers.Activation(activation))
+        for k, n_ch in enumerate(conv_layer_spec[1]):
+            conv_layers.append(layers.Conv2D(n_ch, 1, name=f'conv1_{k}', **conv_kwargs))
+            conv_layers.append(layers.BatchNormalization(name=f'conv1_bn_{k}'))
+            conv_layers.append(layers.Activation(activation))
+        if self._config_dict['with_channel_attention']:
+            conv_layers.append(ChannelAttention())
+
         self._conv_layers = conv_layers
 
         self._score_layer = layers.Dense(1, name='score', activation='sigmoid', kernel_initializer='he_normal')

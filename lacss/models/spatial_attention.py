@@ -1,18 +1,11 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
+layers = tf.keras.layers
 
 class SpatialAttention(layers.Layer):
     def __init__(self, filter_size=7, **kwargs):
-        self._config_dict = {
-            'filter_size': filter_size,
-        }
-
-        self._w = layers.Conv2D(1, self._config_dict['filter_size'], activation='sigmoid')
-
         super(SpatialAttention, self).__init__(**kwargs)
-
-    def get_config(self):
-        return self._config_dict
+        self._w = layers.Conv2D(1, self._config_dict['filter_size'], activation='sigmoid')
+        self.filter_size = filter_size
 
     def call(self, x, training=False):
         y1 = tf.reduce_max(x, axis=-1)

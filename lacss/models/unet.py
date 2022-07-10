@@ -1,242 +1,117 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
+layers = tf.keras.layers
 
-class UNetDownSampler(tf.keras.layers.Layer):
-    def __init__(self, filters, n_layers = 2, use_bn=True, kernel_regularizer=None, bias_regularizer=None, **kwargs):
-        super(UNetDownSampler, self).__init__(**kwargs)
-        self._config_dict = kwargs
-        self._config_dict.update({
-            'filters': filters,
-            'n_layers': n_layers,
-            'kernel_regularizer': kernel_regularizer,
-            'bias_regularizer': bias_regularizer,
-            'use_bn': use_bn,
-        })
-        conv_kwargs = {
-            'activation': 'relu',
-            'padding': 'same',
-            'kernel_initializer': 'he_normal',
-            'kernel_regularizer': kernel_regularizer,
-            'bias_regularizer': bias_regularizer,
-        }
-        self._maxpool = tf.keras.layers.MaxPool2D(name='maxpool')
-        conv_block = []
-        for i in range(n_layers):
-            conv_block.append(layers.Conv2D(filters, 3, name=f'conv_{i}', **conv_kwargs))
-        self._conv_block = conv_block
-        if use_bn:
-            self._norm  = tf.keras.layers.BatchNormalization(name='norm')
+_unet_configs = {
+    'unet_s': (32, 64, 128, 256, 512),
+    'unet_n': (64, 128, 256, 512, 1024),
+    'unet_l': (96, 192, 384, 768, 1536),
+}
 
-    def get_config(self):
-        return self._config_dict
-
-    def call(self, inputs, **kwargs):
-        x = self._maxpool(inputs)
-        for layer in self._conv_block:
-            x = layer(x, **kwargs)
-        if self._config_dict['use_bn']:
-            x = self._norm(x, **kwargs)
-        return x
-
-class UNetUpSampler(tf.keras.layers.Layer):
-    def __init__(self,
-          out_filters,
-          n_layers = 2,
-          use_bn=True,
-          up_conv_method='sample',
-          up_conv_filters=-1,
-          mix_method='concat',
-          kernel_regularizer=None,
-          bias_regularizer=None,
-          **kwargs):
-        super(UNetUpSampler, self).__init__(**kwargs)
-        self._config_dict = kwargs
-        self._config_dict.update({
-            'out_filters': out_filters,
-            'n_layers': n_layers,
-            'use_bn': use_bn,
-            'up_conv_method': up_conv_method,
-            'up_conv_filters': up_conv_filters,
-            'mix_method': mix_method,
-            'kernel_regularizer': kernel_regularizer,
-            'bias_regularizer': bias_regularizer,
-        })
-
-    def get_config(self):
-        return self._config_dict
+class MixingBlock(layers.Layer):
+    def __init__(self, method='upsampling', hidden_dim=None, out_channels=None, **kwargs):
+        super().__init__(**kwargs)
+        self.method = method
+        self.hidden_dim = hidden_dim
+        self.out_channels = out_channels
 
     def build(self, input_shape):
-        x_shape, y_shape = input_shape
         conv_kwargs = {
-            'activation': 'relu',
             'padding': 'same',
             'kernel_initializer': 'he_normal',
-            'kernel_regularizer': self._config_dict['kernel_regularizer'],
-            'bias_regularizer': self._config_dict['bias_regularizer'],
         }
 
-        if self._config_dict['up_conv_method'] == 'sample':
-            self._upconv = [layers.UpSampling2D(name='upconv')]
-
-        elif self._config_dict['up_conv_method'] == 'conv':
-            if self._config_dict['mix_method'] == 'concat':
-                upconv_filters = self._config_dict['up_conv_filters']
-                if upconv_filters == -1:
-                    upconv_filters = x_shape.as_list()[-1] // 2
-            elif self._config_dict['mix_method'] == 'sum':
-                upconv_filters = y_shape.as_list()[-1]
-            else:
-                raise ValueError()
-
-            self._upconv = [
-                layers.Conv2DTranspose(upconv_filters, 3, strides=(2,2), name='upconv', **conv_kwargs)
-                ]
-            if self._config_dict['use_bn']:
-                self._upconv.append(layers.BatchNormalization())
+        if self.method == 'conv_add' or self.hidden_dim is None:
+            n_channels = input_shape[0][-1]
         else:
-            raise ValueError()
+            n_channels = self.hidden_dim
+        if self.method == 'conv_add' or self.method == 'conv_concat':
+            self._upconv = layers.Conv2DTranspose(n_channels, 3, strides=2, **conv_kwargs)
+        elif self.method == 'upsampling':
+            self._upconv = layers.UpSampling2D()
+        else:
+            raise ValueError('Valid methods are conv_add|conv_concat|upsampling')
 
-        conv_block = []
-        n_filters = self._config_dict['out_filters']
-        for i in range(self._config_dict['n_layers']):
-            conv_block.append(layers.Conv2D(n_filters, 3, name=f'conv_{i}', **conv_kwargs))
-            if self._config_dict['use_bn']:
-                conv_block.append(layers.BatchNormalization())
-        self._conv_block = conv_block
-
-        super(UNetUpSampler, self).build(input_shape)
-
-    def call(self, inputs, **kwargs):
-        ''' inputs = (bottom layer input, encoder input) '''
+    def call(self, inputs, training=None):
         x, y = inputs
-        for layer in self._upconv:
-            x = layer(x)
-        if self._config_dict['mix_method'] == 'concat':
-            x = tf.concat([x, y], axis=-1)
-        else:
+        y = self._upconv(y, training=training)
+        if self.method == 'conv_add':
             x = x + y
-        for layer in self._conv_block:
-            x = layer(x, **kwargs)
+        else:
+            x = tf.concat((x,y), axis=-1)
 
         return x
 
-#  [n_convs_per_level, (list of channel_nums)]
-encoder_configs = {
-    's': [2, (64, 128, 256, 512)],
-    'n': [2, (128, 256, 512, 1024)]
-}
-
-class UNetEncoder(tf.keras.layers.Layer):
-    def __init__(self, net_spec,  use_bn=True, **kwargs):
-        super(UNetEncoder, self).__init__(**kwargs)
-        self._config_dict = kwargs
-        self._config_dict.update({
+class UNet(layers.Layer):
+    def __init__(self, net_spec, use_bn=False, method='conv_concat', min_feature_level=1, activation='relu', **kwargs):
+        super(UNet, self).__init__(**kwargs)
+        self._config_dict = {
             'net_spec': net_spec,
             'use_bn': use_bn,
-        })
-        if isinstance(net_spec, str):
-            self.net_config = decoder_configs[net_spec]
-        else:
-            self.net_config = net_spec
+            'method': method,
+            'min_feature_level': min_feature_level,
+            'activation': activation,
+        }
+        self._config_dict.update(kwargs)
 
     def get_config(self):
         return self._config_dict
 
+    def build_conv_block(self, out_channels, repeats=2):
+        conv_kwargs = {
+            'padding': 'same',
+            'kernel_initializer': 'he_normal',
+            'use_bias': not self._config_dict['use_bn'],
+        }
+        block = []
+        for k in range(repeats):
+            block.append(layers.Conv2D(out_channels, 3, **conv_kwargs))
+            if self._config_dict['use_bn']:
+                block.append(layers.BatchNormalization())
+            block.append(layers.Activation(self._config_dict['activation']))
+
+        return block
+
     def build(self, input_shape):
-        n_layers = self.net_config[0]
-        ch_list = self.net_config[1]
-        self._down_stack = []
-        for k, ch in enumerate(ch_list, start=1):
-            self._down_stack.append(UNetDownSampler(ch, n_layers, use_bn=self._config_dict['use_bn'], name=f'downconv_{k}'),)
-
-        super(UNetEncoder,self).build(input_shape)
-
-    def call(self, data, **kwargs):
-        x = data
-        # for layer in self._stem:
-        #     x=layer(data, **kwargs)
-        outputs = [x]
-        for k, layer in enumerate(self._down_stack, start=1):
-            x = layer(x, **kwargs)
-            outputs.append(x)
-        return outputs
-
-# (n_convs_per_level, (list of channel_nums in reverse order))
-decoder_configs = {
-    's': (2, (256, 128, 64, 32)),
-    'n': (2, (512, 256, 128, 64)),
-}
-
-class UNetDecoder(tf.keras.layers.Layer):
-    def __init__(self, net_spec, use_bn=True, up_conv_method='sample', mix_method='concat', **kwargs):
-        super(UNetDecoder, self).__init__(**kwargs)
-        self._config_dict = kwargs
-        self._config_dict.update({
-            'net_spec': net_spec,
-            'use_bn': use_bn,
-            'up_conv_method': up_conv_method,
-            'mix_method': mix_method,
-        })
+        net_spec = self._config_dict['net_spec']
         if isinstance(net_spec, str):
-            self.net_config = decoder_configs[net_spec]
-        else:
-            self.net_config = net_spec
+            net_spec = _unet_configs[net_spec]
+        n_levels = len(net_spec)
 
-    def get_config(self):
-        return self._config_dict
+        self._encoder_conv_list = []
+        for k, n_channels in enumerate(net_spec):
+            self._encoder_conv_list.append(
+                self.build_conv_block(n_channels)
+            )
 
-    def build(self, input_shape):
-        n_layers = self.net_config[0]
-        ch_list = self.net_config[1]
-        max_level = len(ch_list)
+        l_min = self._config_dict['min_feature_level']
+        self._decoder_conv_list = []
+        self._mixer_list = []
+        for n_channels in net_spec[l_min:-1]:
+            self._decoder_conv_list.append(self.build_conv_block(n_channels))
+            self._mixer_list.append(MixingBlock(method=self._config_dict['method']))
 
-        self._up_stack = []
-        lvl =  max_level - 1
-        for ch in ch_list:
-            layer = UNetUpSampler(
-                ch,
-                n_layers,
-                use_bn=self._config_dict['use_bn'],
-                up_conv_method=self._config_dict['up_conv_method'],
-                mix_method=self._config_dict['mix_method'],
-                name=f'upconv_{lvl}'
-                )
-            self._up_stack.append(layer)
-            lvl -= 1
-        super(UNetDecoder, self).build(input_shape)
+        super(UNet, self).build(input_shape)
 
-    def call(self, data, **kwargs):
-        x = data[-1]
-        outputs = [x]
+    def call(self, x, training=None):
+        output = []
 
-        for k, layer in enumerate(self._up_stack):
-            x = layer((x, data[-k-2]), **kwargs)
-            outputs.insert(0, x)
+        for block in self._encoder_conv_list:
+            for layer in block:
+                x = layer(x, training=training)
+            output.append(x)
+            x = tf.nn.max_pool2d(x, ksize=2, strides=2, padding='SAME')
 
-        return outputs
+        l_min = self._config_dict['min_feature_level']
+        output = output[l_min:]
+        for k in range(len(output)-1, 0, -1):
+            mixer = self._mixer_list[k-1]
+            conv_block = self._decoder_conv_list[k-1]
+            x = mixer((output[k-1], output[k]), training=training)
+            for layer in conv_block:
+                x = layer(x, training=training)
+            output[k-1] = x
 
-def build_unet_s_backbone(input_shape=(None,None,1)):
-    encoder = UNetEncoder((2,[64,128,256,512]), use_bn=False, name='encoder')
-    decoder = UNetDecoder((1,[256,128,64]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-    input = layers.Input(shape=input_shape)
-    x = input
-    x = layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv1')(x)
-    x = layers.Conv2D(64,3,activation='relu', padding='same', name='stem_conv2')(x)
-    x = encoder(x)
-    x = decoder(x)
-    output = (x[0], x[2])
-    model = tf.keras.Model(inputs=input, outputs=output)
-    return model
+        keys = [str(k) for k in range(l_min, len(output)+l_min)]
+        output = dict(zip(keys, output))
 
-def build_unet_backbone(input_shape=(None,None,1)):
-    encoder = UNetEncoder((2,[128,256,512,1024]), use_bn=False, name='encoder')
-    decoder = UNetDecoder((1,[512,256,128]), use_bn=False, up_conv_method='conv', mix_method='sum', name='decoder')
-    input = layers.Input(shape=input_shape)
-    x = input
-    x = layers.Conv2D(32,3,activation='relu', padding='same', name='stem_conv1')(x)
-    x = layers.Conv2D(64,3,activation='relu', padding='same', name='stem_conv2')(x)
-    x = encoder(x)
-    x = decoder(x)
-    output = (x[0], x[2])
-    model = tf.keras.Model(inputs=input, outputs=output)
-    return model
+        return output

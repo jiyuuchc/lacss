@@ -1,57 +1,32 @@
 import tensorflow as tf
+from .unet import UNet
+from .resnet import ResNet
+from .detector import Detector
 from .instance_head import InstanceHead
 from .detection_head import DetectionHead
 from ..metrics import *
 from ..losses import *
 from ..ops import *
-from .unet import *
-from .resnet import *
 layers = tf.keras.layers
 
 class LacssModel(tf.keras.Model):
-    def __init__(self,
-            backbone = 'unet_s',
-            detection_head_conv_filters=(1024,),
-            detection_head_fc_filters=(1024,),
+    def __init__(self, backbone, lpn, detector, segmentor,
+            train_supervised=False,
             detection_level=3,
             detection_roi_size=1.5,
-            detection_nms_threshold=1.0,
-            train_pre_nms_topk=2000,
-            train_max_output=500,
-            train_min_score=0,
-            test_pre_nms_topk=0,
-            test_max_output=500,
-            test_min_score=0,
-            max_proposal_offset=16,
-            instance_crop_size=96,
-            instance_n_convs=3,
-            instance_conv_channels=64,
-            train_supervised=False,
             loss_weights=(1.0, 1.0, 1.0, 1.0),
             train_batch_size=1,
             ):
         super().__init__()
-        self._config_dict = {
-            'backbone': backbone,
-            'detection_head_conv_filters':detection_head_conv_filters,
-            'detection_head_fc_filters':detection_head_fc_filters,
-            'detection_level': detection_level,
-            'detection_roi_size': detection_roi_size,
-            'detection_nms_threshold': detection_nms_threshold,
-            'train_pre_nms_topk': train_pre_nms_topk,
-            'train_max_output': train_max_output,
-            'train_min_score': train_min_score,
-            'test_pre_nms_topk': test_pre_nms_topk,
-            'test_max_output': test_max_output,
-            'test_min_score': test_min_score,
-            'max_proposal_offset': max_proposal_offset,
-            'instance_crop_size': instance_crop_size,
-            'instance_n_convs': instance_n_convs,
-            'instance_conv_channels': instance_conv_channels,
-            'train_supervised': train_supervised,
-            'loss_weights': loss_weights,
-            'train_batch_size': train_batch_size,
-        }
+        self.backbone = backbone
+        self.lpn = lpn
+        self.detector = detector
+        self.segmentor = segmentor
+        self.train_supervised = train_supervised
+        self.detection_level = detection_level
+        self.detection_roi_size = detection_roi_size
+        self.loss_weights = loss_weights
+        self.train_batch_size = train_batch_size
 
         self._metrics = [
             tf.keras.metrics.Mean('loss', dtype=tf.float32),
@@ -64,52 +39,59 @@ class LacssModel(tf.keras.Model):
         ]
 
     def get_config(self):
-        return self._config_dict
+        config_dict = {
+            'backbone': self.backbone.__class__.__name__,
+            'backbone_config': self.backbone.get_config(),
+            'lpn': self.lpn.get_config(),
+            'detector': self.detector.get_config(),
+            'segmentor': self.segmentor.get_config(),
+            'detection_level': self.detection_level,
+            'detection_roi_size': self.detection_roi_size,
+            'loss_weights': self.loss_weights,
+            'train_batch_size': self.train_batch_size,
+        }
+        return config_dict
 
     @classmethod
     def from_config(cls, config):
-        return cls(**config)
+        if 'backbone' in config.keys():
+            backbone_name = config.pop('backbone')
+            backbone_cfg = config.pop('backbone_config')
+        else:
+            backbone_name = 'ResNet'
+            backbone_cfg = {'model_config': '50'}
+
+        if backbone_name == 'ResNet':
+            backbone = ResNet(**backbone_cfg)
+        elif backbone_name == 'UNet':
+            backbone = UNet(**backbone_cfg)
+        else:
+            raise ValueError(f'unknown backbone name {backbone_name}')
+
+        if 'lpn' in config.keys():
+            lpn = DetectionHead(**config.pop('lpn'))
+        else:
+            lpn = DetectionHead()
+
+        if 'detector' in config.keys():
+            detector = Detector(**config.pop('detector'))
+        else:
+            detector = Detector()
+
+        if 'segment' in config.keys():
+            segmentor = InstanceHead(**config.pop('segmentor'))
+        else:
+            segmentor = InstanceHead()
+
+        return cls(backbone, lpn, detector, segmentor, **config)
 
     def build(self, input_shape):
-        backbone = self._config_dict['backbone']
-        img_shape = (None, None, input_shape['image'][-1])
-        if backbone == 'resnet200':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False, spec='200')
-        elif backbone == 'resnet200_att':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=True, spec='200')
-        elif backbone == 'resnet':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=False)
-        elif backbone == 'resnet_att':
-            self._backbone = build_resnet_backbone(input_shape=img_shape, with_attention=True)
-        else:
-            raise ValueError(f'unknown backbone type: {backbone}')
-
-        self._detection_head = DetectionHead(
-            conv_filters=self._config_dict['detection_head_conv_filters'],
-            fc_filters=self._config_dict['detection_head_fc_filters'],
-        )
-        self._instance_head = InstanceHead(
-              n_conv_layers=self._config_dict['instance_n_convs'],
-              n_conv_channels=self._config_dict['instance_conv_channels'],
-              instance_crop_size=self._config_dict['instance_crop_size']//2,
-              )
-
-        if not self._config_dict['train_supervised']:
-            self._edge_predictor = [
-                layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-                layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
-            ]
-            # if backbone == 'resnet2' or backbone =='resnet2_att':
-            #     self._edge_predictor = [
-            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-            #         layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
-            #     ]
-            # else:
-            #     self._edge_predictor = [
-            #         layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
-            #         layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
-            #     ]
+        self._auxnet = [
+            layers.Conv2D(24, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            layers.Conv2D(64, 3, padding='same', activation='relu', kernel_initializer='he_normal'),
+            layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_initializer='he_normal'),
+        ]
 
     def _update_metrics(self, new_metrics):
         logs={}
@@ -127,47 +109,16 @@ class LacssModel(tf.keras.Model):
     def metrics(self):
         return self._metrics
 
-    def _gen_train_locations(self, batched_gt_locations, batched_pred_locations):
-        threshold = self._config_dict['max_proposal_offset']
 
-        def _training_locations_for_one_image(gt_locations, pred_locations):
-            ''' replacing gt_locations with pred_locations if the close enough
-              gt_locations: [N, 2] tensor
-              pred_locations: [M, 2] tensor, sorted with scores
+    def get_features(self, imgs, training):
+        backbone_out = self.backbone(imgs, training=True)
 
-              1. Each pred_location is matched to the closest gt_location
-              2. For each gt_location, pick the matched pred_location with highest score
-              3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
-            '''
-            n_gt_locs = tf.shape(gt_locations)[0]
-            n_pred_locs = tf.shape(pred_locations)[0]
-            matched_id, indicators = location_matching_unpadded(pred_locations, gt_locations, [threshold], [0,1])
-            matched_id = tf.where(tf.cast(indicators, tf.bool), matched_id, -1)
-            matching_matrix = matched_id == tf.range(n_gt_locs)[:,None]
-            matching_matrix = tf.concat([matching_matrix, tf.ones([n_gt_locs,1], tf.bool)], axis=-1)
-            all_locs = tf.where(matching_matrix)
-            matched_loc_ids = tf.math.segment_min(all_locs[:,1], all_locs[:,0])
-            matched_loc_ids = tf.cast(matched_loc_ids, n_pred_locs.dtype)
+        lr_features = backbone_out[str(self.detection_level)]
 
-            matched_locs = tf.gather(pred_locations, matched_loc_ids)
-            # matched_locs = tf.where(matched_loc_ids[:,None]==n_pred_locs, gt_locations, matched_locs)
+        segment_level = self.segmentor.feature_level
+        hr_features = backbone_out[str(segment_level)]
 
-            max_allowed_pred = n_pred_locs
-            # max_allowed_pred = n_gt_locs + 10
-
-            training_locations = tf.where(
-                matched_loc_ids[:,None]>=max_allowed_pred,
-                gt_locations,
-                matched_locs,
-                )
-
-            return training_locations
-
-        return tf.map_fn(
-            lambda x: _training_locations_for_one_image(*x),
-            (batched_gt_locations, batched_pred_locations),
-            fn_output_signature=tf.RaggedTensorSpec([None,2], batched_gt_locations.dtype, 0),
-        )
+        return lr_features, hr_features
 
     def call(self, inputs, training=False):
         model_output = {}
@@ -175,65 +126,46 @@ class LacssModel(tf.keras.Model):
         img = inputs['image']
         if len(tf.shape(img)) == 3:
             img = tf.expand_dims(img, 0)
+
         _, height, width, _ = img.shape
         height = height if height else tf.shape(img)[1]
         width = width if width else tf.shape(img)[2]
 
-        y = img
-        encoder_out, decoder_out = self._backbone(y, training=True)
-        # detection_features = tf.squeeze(decoder_out[-2], 0)
-        # segmentation_features = tf.squeeze(decoder_out[-4], 0)
-        detection_level = self._config_dict['detection_level']
-        detection_features = decoder_out[detection_level-1]
-        segmentation_features = decoder_out[0]
-        stem_features = encoder_out[0]
+        lr_features, hr_features = self.get_features(img, training)
 
-        scores_out, regression_out = self._detection_head(detection_features, training=training)
-
+        scores_out, regression_out = self.lpn(lr_features, training=training)
         model_output.update({
             'detection_scores': scores_out,
             'detection_regression': regression_out,
-            'stem_features': stem_features,
         })
 
         if training:
-            max_output = self._config_dict['train_max_output']
-            topk = self._config_dict['train_pre_nms_topk']
-            min_score = self._config_dict['train_min_score']
+            gt_locations = inputs['locations'] / tf.cast([height, width], tf.float32)
         else:
-            max_output = self._config_dict['test_max_output']
-            topk = self._config_dict['test_pre_nms_topk']
-            min_score = self._config_dict['test_min_score']
+            gt_locations = None
+        locations, scores = self.detector((scores_out, regression_out, gt_locations), training=training)
 
-        proposed_scores, proposed_locations = proposal_locations(
-                scores_out, regression_out,
-                max_output_size=max_output,
-                distance_threshold=self._config_dict['detection_nms_threshold'],
-                topk=topk,
-                score_threshold=min_score,
-                )
-        decoded_locations = proposed_locations * [height, width]
-        model_output.update({
-            'pred_location_scores': proposed_scores,
-            'pred_locations': decoded_locations,
+        if not training:
+            scaled_locations = locations * tf.cast([height, width], tf.float32)
+            model_output.update({
+                'proposed_locations': scaled_locations,
+                'proposal_location_scores': scores,
             })
 
-        if training:
-            training_locations = self._gen_train_locations(
-                inputs['locations'],
-                decoded_locations,
-                )
-            training_locations = (training_locations/[height, width]).to_tensor(-1.0)
-        else:
-            training_locations = proposed_locations.to_tensor(-1.0)
-        instance_inputs = (segmentation_features, training_locations)
-
-        instance_output, instance_coords = self._instance_head(instance_inputs, training=training)
-
+        instance_inputs = (hr_features, locations)
+        instance_output, instance_coords = self.segmentor(instance_inputs, training=training)
         model_output.update({
             'instance_output': instance_output,
             'instance_coords': instance_coords,
         })
+
+        if training:
+            x = img
+            for op in self._auxnet:
+                x = op(x)
+            model_output.update({
+                'auxnet_out': x,
+            })
 
         return model_output
 
@@ -245,29 +177,26 @@ class LacssModel(tf.keras.Model):
             model_output = self(data, training=True)
 
             score_loss, loc_loss = detection_losses(
-                data['locations'] / [height, width],
-                # model_output['scaled_gt_locations'][None, ...],
+                data['locations'] / tf.cast([height, width], tf.float32),
                 model_output['detection_scores'],
                 model_output['detection_regression'],
-                roi_size = self._config_dict['detection_roi_size'],
+                roi_size = self.detection_roi_size,
             )
 
             instance_loss = 0.
             edge_loss = 0.
-            if self._config_dict['train_supervised']:
-                for k in range(self._config_dict['train_batch_size']):
+            if self.train_supervised:
+                for k in range(self.train_batch_size):
                     instance_loss += supervised_segmentation_losses(
                         model_output['instance_output'][k],
                         model_output['instance_coords'][k],
                         data['mask_indices'][k],
                     )
-                instance_loss = instance_loss / self._config_dict['train_batch_size']
+                instance_loss = instance_loss / self.train_batch_size
             else:
-                x = model_output['stem_features']
-                for layer in self._edge_predictor:
-                    x = layer(x)
+                x = model_output['auxnet_out']
                 edge_pred = x[:,:,:,0]
-                for k in range(self._config_dict['train_batch_size']):
+                for k in range(self.train_batch_size):
                     instance_loss += self_supervised_segmentation_losses(
                         model_output['instance_output'][k],
                         model_output['instance_coords'][k],
@@ -278,18 +207,15 @@ class LacssModel(tf.keras.Model):
                         model_output['instance_coords'][k],
                         edge_pred[k],
                     )
-                instance_loss = instance_loss / self._config_dict['train_batch_size']
-                edge_loss = edge_loss / self._config_dict['train_batch_size']
+                instance_loss = instance_loss / self.train_batch_size
+                edge_loss = edge_loss / self.train_batch_size
 
-            weights = self._config_dict['loss_weights']
+            weights = self.loss_weights
             loss = score_loss * weights[0] + loc_loss * weights[1] + instance_loss * weights[2] + edge_loss * weights[3]
 
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients((g, v) for (g, v) in zip(grads, self.trainable_variables) if g is not None)
 
-        # gt_locations = data['locations']
-        # pred_locations = model_output['pred_locations']
-        # scores = model_output['pred_location_scores']
         logs = self._update_metrics({
             'loss': loss,
             'score_loss': score_loss,

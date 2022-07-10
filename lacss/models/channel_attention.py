@@ -1,20 +1,15 @@
 import tensorflow as tf
-import tensorflow.keras.layers as layers
+layers = tf.keras.layers
 
 class ChannelAttention(layers.Layer):
     def __init__(self, squeeze_factor=16, **kwargs):
-        self._config_dict = {
-            'squeeze_factor': squeeze_factor,
-        }
         super(ChannelAttention, self).__init__(**kwargs)
-
-    def get_config(self):
-        return self._config_dict
+        self.squeeze_factor = squeeze_factor
 
     def build(self, input_shape):
         n_ch = input_shape[-1]
         self._w0 = layers.Dense(
-            n_ch//self._config_dict['squeeze_factor'],
+            n_ch//self.squeeze_factor,
             activation='relu',
             name='w0')
         self._w1 = layers.Dense(n_ch, name='w1')
