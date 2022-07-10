@@ -1,6 +1,7 @@
 import math
-
 import tensorflow as tf
+from .unet import MixingBlock
+
 layers = tf.keras.layers
 
 ''' XCiT model
@@ -62,35 +63,42 @@ class ConvPatchEmbed(layers.Layer):
         n_ch = self.embed_dim
         activation = 'gelu'
 
-        block = []
+        blocks = []
         if self.patch_size >= 16:
-            block += [
+            blocks.append([
                 layers.Conv2D(n_ch//8, 3, strides=2, padding='same', use_bias=False),
                 layers.BatchNormalization(),
                 layers.Activation(activation),
-            ]
+            ])
 
-        block += [
-                layers.Conv2D(n_ch//4, 3, strides=2, padding='same', use_bias=False),
-                layers.BatchNormalization(),
-                layers.Activation(activation),
-                layers.Conv2D(n_ch//2, 3, strides=2, padding='same', use_bias=False),
-                layers.BatchNormalization(),
-                layers.Activation(activation),
-                layers.Conv2D(n_ch, 3, strides=2, padding='same', use_bias=False),
-                layers.BatchNormalization(),
-            ]
+        blocks.append([
+            layers.Conv2D(n_ch//4, 3, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.Activation(activation),
+        ])
+        blocks.append([
+            layers.Conv2D(n_ch//2, 3, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.Activation(activation),
+        ])
+        blocs.append([
+            layers.Conv2D(n_ch, 3, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+        ])
 
-        self._layers = block
+        self._blocks = blocks
 
         super().build(input_shape)
 
     def call(self, x, training=None):
         y = x
-        for layer in self._layers:
-            y = layer(y, training=training)
+        outputs = []
+        for block in self.blocks:
+            for op in block:
+                y = op(y, training=training)
+            outputs.append(y)
 
-        return y
+        return outputs
 
 class LPI(layers.Layer):
     ''' Local patch interaction layer
@@ -209,6 +217,46 @@ class XCABlock(layers.Layer):
         y = self._mlp_layer(y, training=training) * self.gamma3
         return y
 
+class Decoder(layers.Layer):
+    def __init__(self, method='conv_add', conv_repeats=2, **kwargs):
+        super().__init__(**kwargs)
+        self.method = method
+        self.conv_repeats = conv_repeats
+
+    def build(self, input_shape):
+        self._decoder_conv_list = []
+        self._mixer_list = []
+        for s in input_shape[:-1]:
+            self._decoder_conv_list.append(self.build_conv_block(s[-1]))
+            self._mixer_list.append(MixingBlock(method=self.method))
+
+        super().build(input_shape)
+
+    def build_conv_block(self, n_ch):
+        conv_kwargs = {
+            'padding': 'same',
+            'kernel_initializer': 'he_normal',
+            'activation': 'gelu'
+        }
+        block = []
+        for k in range(self.conv_repeats):
+            block.append(layers.Conv2D(n_ch, 3, **conv_kwargs))
+
+        return block
+
+    def call(self, inputs, training=None):
+        outputs = [None] * len(inputs)
+        outputs[-1] = inputs[-1]
+        for k in range(len(inputs)-1, 0, -1):
+            mixer = self._mixer_list[k-1]
+            conv_block = self._decoder_conv_list[k-1]
+            x = mixer((inputs[k-1], inputs[k]), training=training)
+            for layer in conv_block:
+                x = layer(x, training=training)
+            outputs[k-1] = x
+
+        return outputs
+
 class XCiT(layers.Layer):
     def __init__(self, patch_size=8, embed_dim=384, depth=12, n_heads=8, use_bias=True, mlp_ratio=4, **kwargs):
         '''
@@ -254,11 +302,14 @@ class XCiT(layers.Layer):
             )
         self._att_blocks = blocks
 
+        self._decoder = Decoder(method='upsampling')
+
         super().build(input_shape)
 
     def call(self, x, training=None):
         dim = self._config_dict['embed_dim']
-        y = self._embed_layer(x, training=training)
+        embed_out = self._embed_layer(x, training=training)
+        y = embed_out[-1]
         pos_encoding = self._pos_embed_layer(y, training=training)
         y += pos_encoding
 
@@ -268,4 +319,10 @@ class XCiT(layers.Layer):
             y = blk((y, (Hp, Wp)), training=training)
 
         y = tf.reshape(y, (-1, Hp, Wp, dim))
-        return y
+        embed_out[-1] = y
+
+        decoder_out = self._decoder(embed_out, training=training)
+        keys = [str(k) for k in range(1, len(decoder_out)+1)]
+        decoder_out = dict(zip(keys, decoder_out))
+
+        return decoder_out
