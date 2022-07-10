@@ -38,6 +38,9 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
     if score_threshold is None:
         score_threshold = 0
 
+    score_out = tf.stop_gradient(score_out)
+    regression_out = tf.stop_gradient(regression_out)
+
     batched = True
     if len(score_out.shape) == 3 and len(regression_out.shape) == 3:
         score_out = tf.expand_dims(score_out, 0)
@@ -45,43 +48,45 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
         batched = False
 
     batch_size = tf.shape(score_out)[0]
-    score_out_flatten = tf.reshape(tf.stop_gradient(score_out), [batch_size, -1])
-    if score_threshold > 0:
-        n_candidates = tf.math.count_nonzero(score_out_flatten > score_threshold)
-    else:
-        n_candidates = tf.shape(score_out_flatten)[1]
-    if topk <= 0 or topk > n_candidates:
-        topk = tf.cast(n_candidates, tf.int32)
-    scores, indices = tf.math.top_k(score_out_flatten, topk)
+    height = tf.shape(score_out)[1]
+    width = tf.shape(score_out)[2]
 
-    indices = tf.unravel_index(tf.reshape(indices, [-1]), tf.shape(score_out)[1:3])
+    score_flatten = tf.reshape(score_out, [batch_size, -1])
+    n_candidates = tf.size(score_flatten[0])
+    if topk <= 0 or topk > n_candidates:
+        topk = n_candidates
+    scores, indices = tf.math.top_k(score_flatten, topk)
+    indices = tf.unravel_index(tf.reshape(indices, [-1]), (height, width))
     indices = tf.transpose(indices)
     indices = tf.reshape(indices, [batch_size, -1, 2])
     locations = tf.cast(indices, tf.float32) + 0.5
-    regressions = tf.gather_nd(tf.stop_gradient(regression_out), indices, batch_dims=1)
+    regressions = tf.gather_nd(regression_out, indices, batch_dims=1)
     locations = locations + regressions
 
-    sqdist = tf.reduce_sum(tf.math.square(locations[:,None,:,:] - locations[:,:,None,:]), axis=-1)
-    sq_th = distance_threshold * distance_threshold
-    dist_matrix = tf.cast(tf.cast(sqdist, tf.float32) <= sq_th, tf.float32)
+    def process_one_sample(inputs):
+        loc, sc = inputs
+        sqdist = - tf.reduce_sum(tf.math.square(loc[None,:,:] - loc[:,None,:]), axis=-1)
+        sq_th = - distance_threshold * distance_threshold
+        # dist_matrix = tf.cast(tf.cast(sqdist, tf.float32) <= sq_th, tf.float32)
+        sel = tf.image.non_max_suppression_overlaps(
+            overlaps=sqdist,
+            scores=sc,
+            max_output_size=max_output_size,
+            overlap_threshold=sq_th,
+            score_threshold=score_threshold,
+        )
+        score_out = tf.gather(sc, sel)
+        loc_out = tf.gather(loc, sel)
 
-    # nms is developed for boxes (4d data) but this function works on overlap matrix directly so could also apply to
-    # out case (2d data)
-    def nms_one(element):
-        score, dist, loc = element
-        sel = tf.image.non_max_suppression_overlaps(dist, score, max_output_size)
-        score_out = tf.gather(score, sel)
-        ind_out = tf.gather(loc, sel)
-
-        return score_out, ind_out
+        return score_out, loc_out
 
     nms_scores, nms_locations =  tf.map_fn(
-        nms_one, (scores, dist_matrix, locations),
+        process_one_sample, (locations, scores),
         fn_output_signature = (tf.RaggedTensorSpec([None], scores.dtype, 0), tf.RaggedTensorSpec([None, 2], locations.dtype, 0)),
     )
 
     # scale to 0-1
-    scaling = tf.cast(tf.shape(score_out)[1:3], nms_locations.dtype)
+    scaling = tf.cast((height, width), nms_locations.dtype)
     nms_locations = nms_locations / scaling
     bm = (nms_locations>=0.) & (nms_locations<1.)
     bm = tf.logical_and(bm[:,:,0], bm[:,:,1])
