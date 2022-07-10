@@ -45,7 +45,7 @@ class LacssModel(tf.keras.Model):
             'backbone_config': dict(self.backbone.get_config()),
             'lpn': dict(self.lpn.get_config()),
             'detector': dict(self.detector.get_config()),
-            'segmentor': dict(self.segmentor.get_config()),``
+            'segmentor': dict(self.segmentor.get_config()),
             'detection_level': self.detection_level,
             'detection_roi_size': self.detection_roi_size,
             'loss_weights': self.loss_weights,
@@ -150,8 +150,8 @@ class LacssModel(tf.keras.Model):
         if not training:
             scaled_locations = locations * tf.cast([height, width], tf.float32)
             model_output.update({
-                'proposed_locations': scaled_locations,
-                'proposal_location_scores': scores,
+                'pred_locations': scaled_locations,
+                'pred_location_scores': scores,
             })
 
         instance_inputs = (hr_features, locations)
