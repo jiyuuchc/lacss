@@ -13,7 +13,7 @@ from .data import livecell_dataset_from_tfrecord
 
 layers = tf.keras.layers
 
-def evaluation(model, ds):
+def evaluation(model, ds, log_dir, epoch):
     test_log_dir = join(log_dir, 'validation')
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
     mask_mAP = {}
@@ -65,15 +65,13 @@ def run_training(data_path, log_dir):
     with open(join(log_dir, 'config.json'), 'w') as f:
         json.dump(model.get_config(), f)
 
-    log_func = lambda epoch, logs : evaluation(model, ds_val)
+    log_func = lambda epoch, _ : evaluation(model, ds_val, log_dir, epoch)
     callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False),
-            # tf.keras.callbacks.ModelCheckpoint(filepath=join(log_dir, 'chkpts-{epoch:02d}'), save_weights_only=True),
+            tf.keras.callbacks.ModelCheckpoint(filepath=join(log_dir, 'chkpts-{epoch:02d}'), save_weights_only=True),
             tf.keras.callbacks.LambdaCallback(on_epoch_end=log_func),
             ]
-    model.fit(ds_train, epochs=20, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=0)
-
-    model.save_weights(join(log_dir, 'model_weights'))
+    model.fit(ds_train, epochs=30, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=0)
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Train livecell model')
