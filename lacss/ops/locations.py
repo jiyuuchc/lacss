@@ -16,7 +16,7 @@ def topk_proposals(scores, regressions=None, topk=2000, scale_factor=8):
 
     proposed_locations = tf.cast(indices, tf.float32) * scale_factor + scale_factor / 2
 
-    if regression is not None:
+    if regressions is not None:
         proposed_locations += tf.gather_nd(regressions, indices, batch_dims=1)
 
 def proposal_locations(score_out, regression_out, max_output_size=500, distance_threshold=1.01, topk=2000, score_threshold=None, padded=False):
@@ -65,8 +65,9 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
 
     def process_one_sample(inputs):
         loc, sc = inputs
-        sc = tf.boolean_mask(sc, sc >= score_threshold)
-        loc = tf.boolean_mask(loc, sc >= score_thresold)
+        bm = sc >= score_threshold
+        sc = tf.boolean_mask(sc, bm)
+        loc = tf.boolean_mask(loc, bm)
         sqdist = - tf.reduce_sum(tf.math.square(loc[None,:,:] - loc[:,None,:]), axis=-1)
         sq_th = - distance_threshold * distance_threshold
         # dist_matrix = tf.cast(tf.cast(sqdist, tf.float32) <= sq_th, tf.float32)

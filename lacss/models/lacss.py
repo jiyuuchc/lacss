@@ -3,8 +3,8 @@ from .unet import UNet
 from .resnet import ResNet
 from .xcit import XCiT
 from .detector import Detector
-from .instance_head import InstanceHead
-from .detection_head import DetectionHead
+from .segmentor import Segmentor
+from .lpn import LPN
 from ..metrics import *
 from ..losses import *
 from ..ops import *
@@ -46,6 +46,7 @@ class LacssModel(tf.keras.Model):
             'lpn': dict(self.lpn.get_config()),
             'detector': dict(self.detector.get_config()),
             'segmentor': dict(self.segmentor.get_config()),
+            'train_supervised': self.train_supervised,
             'detection_level': self.detection_level,
             'detection_roi_size': self.detection_roi_size,
             'loss_weights': self.loss_weights,
@@ -60,7 +61,7 @@ class LacssModel(tf.keras.Model):
             backbone_cfg = config.pop('backbone_config')
         else:
             backbone_name = 'ResNet'
-            backbone_cfg = {'model_config': '50'}
+            backbone_cfg = {'model_spec': '50'}
 
         if backbone_name == 'ResNet':
             backbone = ResNet(**backbone_cfg)
@@ -72,9 +73,9 @@ class LacssModel(tf.keras.Model):
             raise ValueError(f'unknown backbone name {backbone_name}')
 
         if 'lpn' in config.keys():
-            lpn = DetectionHead(**config.pop('lpn'))
+            lpn = LPN(**config.pop('lpn'))
         else:
-            lpn = DetectionHead()
+            lpn = LPN()
 
         if 'detector' in config.keys():
             detector = Detector(**config.pop('detector'))
@@ -82,9 +83,9 @@ class LacssModel(tf.keras.Model):
             detector = Detector()
 
         if 'segmentor' in config.keys():
-            segmentor = InstanceHead(**config.pop('segmentor'))
+            segmentor = Segmentor(**config.pop('segmentor'))
         else:
-            segmentor = InstanceHead()
+            segmentor = Segmentor()
 
         return cls(backbone, lpn, detector, segmentor, **config)
 

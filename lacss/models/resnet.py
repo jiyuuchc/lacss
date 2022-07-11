@@ -107,10 +107,10 @@ _RESNET_SPECS = {
 }
 
 class ResNet(layers.Layer):
-    def __init__(self, model_config, use_attention=True, min_feature_level=1, out_channels=512, **kwargs):
+    def __init__(self, model_spec, use_attention=True, min_feature_level=1, out_channels=512, **kwargs):
         super(ResNet, self).__init__(**kwargs)
         self._config_dict = {
-            'model_config': model_config,
+            'model_spec': model_spec,
             'use_attention': use_attention,
             'min_feature_level': min_feature_level,
             'out_channels': out_channels,
@@ -118,7 +118,7 @@ class ResNet(layers.Layer):
         self._config_dict.update(kwargs)
 
     def build(self, input_shape):
-        spec = self._config_dict['model_config']
+        spec = self._config_dict['model_spec']
         if isinstance(spec, str):
             spec = _RESNET_SPECS[spec]
         use_attention = self._config_dict['use_attention']

@@ -2,7 +2,7 @@ import tensorflow as tf
 from .channel_attention import ChannelAttention
 layers = tf.keras.layers
 
-class DetectionHead(tf.keras.layers.Layer):
+class LPN(tf.keras.layers.Layer):
     def __init__(self,
           conv_layers=((1024,),(1024,)),
           with_channel_attention=False,
@@ -14,7 +14,7 @@ class DetectionHead(tf.keras.layers.Layer):
             conv_layers: conv layer spec
             with_channel_attention: whether include channel attention
         """
-        super(DetectionHead, self).__init__(**kwargs)
+        super(LPN, self).__init__(**kwargs)
         self._config_dict = {
             'conv_layers': conv_layers,
             'with_channel_attention': with_channel_attention,
@@ -51,7 +51,7 @@ class DetectionHead(tf.keras.layers.Layer):
         self._score_layer = layers.Dense(1, name='score', activation='sigmoid', kernel_initializer='he_normal')
         self._regression_layer = layers.Dense(2, name='regression', kernel_initializer='he_normal')
 
-        super(DetectionHead, self).build(input_shape)
+        super(LPN, self).build(input_shape)
 
     def call(self, inputs, training=False):
         '''

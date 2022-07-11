@@ -3,7 +3,7 @@ from ..ops import *
 from .spatial_attention import *
 layers = tf.keras.layers
 
-class InstanceHead(layers.Layer):
+class Segmentor(layers.Layer):
     def __init__(self,
             conv_layers=((64, 64, 64), (16,),),
             instance_crop_size=96,
@@ -20,7 +20,7 @@ class InstanceHead(layers.Layer):
             with_attention: T/F whether use spatial attention layer
             learned_encoding: Use hard-coded position encoding or not
         """
-        super(InstanceHead, self).__init__(**kwargs)
+        super(Segmentor, self).__init__(**kwargs)
 
         if feature_scale_ratio != 1 and feature_scale_ratio != 2 and feature_scale_ratio !=4 :
             raise('feature_scale_ratio should be 1,2 or 4')
@@ -89,7 +89,7 @@ class InstanceHead(layers.Layer):
         else:
             self._output = layers.Conv2DTranspose(1, 3, strides=2, padding='same', activation='sigmoid', name=f'instance_output')
 
-        super(InstanceHead, self).build(input_shape)
+        super(Segmentor, self).build(input_shape)
 
     def call(self, inputs, training=False):
         '''

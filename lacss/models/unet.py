@@ -42,7 +42,7 @@ class MixingBlock(layers.Layer):
         return x
 
 class UNet(layers.Layer):
-    def __init__(self, net_spec, use_bn=False, method='conv_concat', min_feature_level=1, activation='relu', **kwargs):
+    def __init__(self, net_spec='unet_n', use_bn=False, method='conv_concat', min_feature_level=1, activation='relu', **kwargs):
         super(UNet, self).__init__(**kwargs)
         self._config_dict = {
             'net_spec': net_spec,
