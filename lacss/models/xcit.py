@@ -40,7 +40,7 @@ class PositionalEncodingFourier(layers.Layer):
 
         mesh = mesh[..., None] / dim_t
         mesh = tf.concat((tf.math.sin(mesh[..., 0::2]), tf.math.cos(mesh[..., 1::2])), axis=-1)
-        mesh = tf.reshape(mesh, (batch_size, height, width, -1))
+        mesh = tf.reshape(mesh, (batch_size, height, width, self.hidden_dim * 2))
 
         pos = self._token_projection(mesh, training=training)
 
@@ -53,8 +53,8 @@ class ConvPatchEmbed(layers.Layer):
     def __init__(self, patch_size=8, embed_dim=384, **kwargs):
         super().__init__(**kwargs)
 
-        if patch_size != 16 and patch_size != 8:
-            raise('patch_size must be 8/16')
+        if patch_size != 16 and patch_size != 8 and patch_size != 4:
+            raise('patch_size must be 4|8|16')
 
         self.patch_size = patch_size
         self.embed_dim = embed_dim
@@ -71,17 +71,18 @@ class ConvPatchEmbed(layers.Layer):
                 layers.Activation(activation),
             ])
 
-        blocks.append([
-            layers.Conv2D(n_ch//4, 3, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.Activation(activation),
-        ])
+        if self.patch_size >= 8:
+            blocks.append([
+                layers.Conv2D(n_ch//4, 3, strides=2, padding='same', use_bias=False),
+                layers.BatchNormalization(),
+                layers.Activation(activation),
+            ])
         blocks.append([
             layers.Conv2D(n_ch//2, 3, strides=2, padding='same', use_bias=False),
             layers.BatchNormalization(),
             layers.Activation(activation),
         ])
-        blocs.append([
+        blocks.append([
             layers.Conv2D(n_ch, 3, strides=2, padding='same', use_bias=False),
             layers.BatchNormalization(),
         ])
@@ -93,7 +94,7 @@ class ConvPatchEmbed(layers.Layer):
     def call(self, x, training=None):
         y = x
         outputs = []
-        for block in self.blocks:
+        for block in self._blocks:
             for op in block:
                 y = op(y, training=training)
             outputs.append(y)
@@ -167,12 +168,13 @@ class XCA(layers.Layer):
 
     def call(self, x, training=None):
         batch_size = tf.shape(x)[0]
-        in_ch = x.shape[-1]
+        n_patches = tf.shape(x)[1]
+        in_ch = x.shape[2]
 
-        qkv = tf.reshape(self._qkv_layer(x, training=training), (batch_size, -1, self.n_heads, in_ch // self.n_heads, 3))
+        qkv = tf.reshape(self._qkv_layer(x, training=training), (batch_size, n_patches, self.n_heads, in_ch // self.n_heads, 3))
         q, k, v = qkv[..., 0], qkv[..., 1], qkv[..., 2]
-        q = tf.keras.utils.normalize(q, axis=1) # normalize along patch dim
-        k = tf.keras.utils.normalize(k, axis=1)
+        q = tf.linalg.normalize(q, axis=1)[0] # normalize along patch dim
+        k = tf.linalg.normalize(k, axis=1)[0]
 
         q = tf.transpose(q, (0,2,3,1)) # (batch, heads, ch, patch)
         k = tf.transpose(k, (0,2,1,3)) # (batch, heads, patch, ch)
