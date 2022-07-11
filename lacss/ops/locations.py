@@ -65,6 +65,8 @@ def proposal_locations(score_out, regression_out, max_output_size=500, distance_
 
     def process_one_sample(inputs):
         loc, sc = inputs
+        sc = tf.boolean_mask(sc, sc >= score_threshold)
+        loc = tf.boolean_mask(loc, sc >= score_thresold)
         sqdist = - tf.reduce_sum(tf.math.square(loc[None,:,:] - loc[:,None,:]), axis=-1)
         sq_th = - distance_threshold * distance_threshold
         # dist_matrix = tf.cast(tf.cast(sqdist, tf.float32) <= sq_th, tf.float32)
