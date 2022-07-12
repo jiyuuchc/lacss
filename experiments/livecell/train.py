@@ -8,16 +8,17 @@ from os.path import join
 import numpy as np
 import tensorflow as tf
 import lacss
-import tqdm
-from .data import livecell_dataset_from_tfrecord
+import data
+#from .data import livecell_dataset_from_tfrecord
 
 layers = tf.keras.layers
 
-def evaluation(model, ds):
+def evaluation(model, ds, log_dir, epoch):
+    print('evaluating...')
     test_log_dir = join(log_dir, 'validation')
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
     mask_mAP = {}
-    for x in tqdm(ds):
+    for x in ds:
         xx = lacss.data.parse_test_data_func(x)
         y = model(xx)
 
@@ -39,11 +40,13 @@ def evaluation(model, ds):
 
     with test_summary_writer.as_default():
         for k in mask_mAP:
-            tf.summary.scalar(f'mask_ap_{k}', mask_mAP[k].result()[0], step=epoch)
+            ap50 = mask_mAP[k].result()[0]
+            tf.summary.scalar(f'mask_ap_{k}', ap50, step=epoch)
+            print(f'[{k}]: AP50 = {ap50}')
 
 def run_training(data_path, log_dir):
-    ds_train = livecell_dataset_from_tfrecord(join(data_path, 'train.tfrecord'))
-    ds_val = livecell_dataset_from_tfrecord(join(data_path, 'val.tfrecord'))
+    ds_train = data.livecell_dataset_from_tfrecord(join(data_path, 'train.tfrecord'))
+    ds_val = data.livecell_dataset_from_tfrecord(join(data_path, 'val.tfrecord'))
 
     n_batch = 1
     parse_func = lambda x: lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.1), target_height=544, target_width=704)
@@ -65,10 +68,10 @@ def run_training(data_path, log_dir):
     with open(join(log_dir, 'config.json'), 'w') as f:
         json.dump(model.get_config(), f)
 
-    log_func = lambda epoch, logs : evaluation(model, ds_val)
+    log_func = lambda epoch, _ : evaluation(model, ds_val, log_dir, epoch)
     callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False),
-            # tf.keras.callbacks.ModelCheckpoint(filepath=join(log_dir, 'chkpts-{epoch:02d}'), save_weights_only=True),
+            tf.keras.callbacks.ModelCheckpoint(filepath=join(log_dir, 'chkpts-{epoch:02d}'), save_weights_only=True),
             tf.keras.callbacks.LambdaCallback(on_epoch_end=log_func),
             ]
     model.fit(ds_train, epochs=20, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=0)
@@ -77,13 +80,13 @@ def run_training(data_path, log_dir):
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Train livecell model')
-    parser.add_argument('data_path', type=str, help='Data dir of tfrecord files')
-    parser.add_argument('log_path', type=str, help='Log dir for storing results')
+    parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
+    parser.add_argument('logpath', type=str, help='Log dir for storing results')
     args = parser.parse_args()
 
     try:
-        os.makedirs(args.log_path)
+        os.makedirs(args.logpath)
     except:
         pass
 
-    run_training(args.data_path, args.log_path)
+    run_training(args.datapath, args.logpath)
