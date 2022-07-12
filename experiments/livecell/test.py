@@ -8,8 +8,8 @@ from os.path import join
 import numpy as np
 import tensorflow as tf
 import lacss
+import data
 import tqdm
-from .data import livecell_dataset_from_tfrecord
 
 def format_array(arr):
     s = [f'{v:.4f}' for v in arr]
@@ -26,23 +26,25 @@ def fnrs(m):
     return fnrs
 
 def run_test(data_path, log_dir, checkpoint='model_weights'):
-    ds_test = livecell_dataset_from_tfrecord(join(data_path, 'test.tfrecord'))
+    print('evaluating...')
+    ds_test = data.livecell_dataset_from_tfrecord(join(data_path, 'test.tfrecord'))
 
     with open(join(log_dir, 'config.json')) as f:
         model_cfg = json.load(f)
     model_cfg['test_max_output']=3000
+    model_cfg['test_min_score']=0.4
     model = lacss.models.LacssModel.from_config(model_cfg)
     model.load_weights(join(log_dir, checkpoint)).expect_partial()
+    print(f'model loaded from {checkpoint}')
 
     thresholds = [.5, .55, .6, .65, .7, .75, .8, .85, .9, .95]
     cell_APs = {}
     mAP = lacss.metrics.MaskMeanAP(thresholds)
-    for x in tqdm(ds_test):
+    for x in tqdm.tqdm(ds_test):
         xx = lacss.data.parse_test_data_func(x)
         y = model(xx)
 
         scores = y['pred_location_scores'][0]
-
         patches = y['instance_output'][0]
         coords = y['instance_coords'][0]
         pred_bboxes = lacss.ops.bboxes_of_patches(patches, coords)
@@ -80,9 +82,9 @@ def run_test(data_path, log_dir, checkpoint='model_weights'):
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Test livecell model')
-    parser.add_argument('data_path', type=str, help='Data dir of tfrecord files')
-    parser.add_argument('log_path', type=str, help='Log dir with model config and weights')
+    parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
+    parser.add_argument('logpath', type=str, help='Log dir with model config and weights')
     parser.add_argument('--checkpoint', type=str, default='model_weight', help='Model checkpoint name')
     args = parser.parse_args()
 
-    run_test(args.data_path, args.log_path, checkpoint=args.checkpoint)
+    run_test(args.datapath, args.logpath, checkpoint=args.checkpoint)
