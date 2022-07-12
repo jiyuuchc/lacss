@@ -9,7 +9,7 @@ from os.path import join
 import numpy as np
 import tensorflow as tf
 import lacss
-import tqdm
+from tqdm import tqdm
 
 def evaluation(model, ds, log_dir, epoch):
     test_log_dir = join(log_dir, 'validation')
@@ -32,7 +32,9 @@ def evaluation(model, ds, log_dir, epoch):
         maskAP.update_state(gt, pred, scores)
 
     with test_summary_writer.as_default():
-        tf.summary.scalar(f'mask_ap', maskAP.result()[0], step=epoch)
+        ap50 = maskAP.result()[0]
+        tf.summary.scalar(f'mask_ap', ap50, step=epoch)
+    print(f'maskAP50: {ap50}')
 
 def train_parser(x):
     x = lacss.data.parse_train_data_func(x, size_jitter=(0.9, 1.1))
@@ -56,7 +58,7 @@ def run_training(data_path, log_dir):
     ds_train = ds_train.map(parse_func).filter(lambda s: tf.size(s['locations']) > 0).repeat()
     ds_train = ds_train.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=n_batch))
 
-    model = lacss.models.LacssModel.from_config({})
+    model = lacss.models.LacssModel.from_config({'loss_weights': (1.0,1.0,1.0,0.0)})
     optimizer = tf.keras.optimizers.Adam()
     model.compile(optimizer=optimizer)
 
@@ -73,13 +75,13 @@ def run_training(data_path, log_dir):
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Train livecell model')
-    parser.add_argument('data_path', type=str, help='Data dir of tfrecord files')
-    parser.add_argument('log_path', type=str, help='Log dir for storing results')
+    parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
+    parser.add_argument('logpath', type=str, help='Log dir for storing results')
     args = parser.parse_args()
 
     try:
-        os.makedirs(args.log_path)
+        os.makedirs(args.logpath)
     except:
         pass
 
-    run_training(args.data_path, args.log_path)
+    run_training(args.datapath, args.logpath)
