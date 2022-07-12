@@ -20,7 +20,7 @@ LACSS models are usually accurate enough to compete with fully-supervised models
 </br>
 
 #### Model checkpoints
-Model checkpoints cam be downloaded [here](https://drive.google.com/drive/folders/1OWdll3vRcwWhuZgNoom1-BHSg0rpvZrc?usp=sharing).
+Model checkpoints can be found [here](https://drive.google.com/drive/folders/1OWdll3vRcwWhuZgNoom1-BHSg0rpvZrc?usp=sharing).
 
 #### Usage
 You can try the demo notebook in colab:
