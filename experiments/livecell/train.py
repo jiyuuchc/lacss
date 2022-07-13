@@ -13,10 +13,7 @@ import data
 layers = tf.keras.layers
 
 def evaluation(model, ds, log_dir, epoch):
-<<<<<<< HEAD
     print('evaluating...')
-=======
->>>>>>> 2b41ac383498b4a5bb175da7938b088009f984c4
     test_log_dir = join(log_dir, 'validation')
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
     mask_mAP = {}
@@ -47,14 +44,15 @@ def evaluation(model, ds, log_dir, epoch):
             print(f'[{k}]: AP50 = {ap50}')
 
 def run_training(args):
-    ds_train = data.livecell_dataset_from_tfrecord(join(args.datapath, 'train.tfrecord'))
     ds_val = data.livecell_dataset_from_tfrecord(join(args.datapath, 'val.tfrecord'))
+    ds_train = data.livecell_dataset_from_tfrecord(join(args.datapath, 'train.tfrecord'))
 
     n_batch = 1
     parse_func = lambda x: lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.1), target_height=544, target_width=704)
     ds_train = ds_train.map(parse_func).filter(lambda s: tf.size(s['locations']) > 0).repeat()
     ds_train = ds_train.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=n_batch))
 
+    print(ds_train.element_spec)
     model = lacss.models.LacssModel(
         detection_level=args.lpnlevel,
         backbone='resnet_att',
@@ -71,32 +69,36 @@ def run_training(args):
     with open(join(args.logpath, 'config.json'), 'w') as f:
         json.dump(model.get_config(), f)
 
-<<<<<<< HEAD
     log_func = lambda epoch, _ : evaluation(model, ds_val, args.logpath, epoch)
     callbacks = [
             tf.keras.callbacks.TensorBoard(log_dir=args.logpath, write_graph=False),
             tf.keras.callbacks.ModelCheckpoint(filepath=join(args.logpath, 'chkpts-{epoch:02d}'), save_weights_only=True),
             tf.keras.callbacks.LambdaCallback(on_epoch_end=log_func),
             ]
-    model.fit(ds_train, epochs=30, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=0)
 
-    ds_train = ds_train.filter(lambda x: x['cell_type']==args.celltype)
-    model.fit(ds_train, epoch=45, callbacks=callbacks, steps_per_epoch=500/n_batch, initial_epoch=30)
-=======
-    log_func = lambda epoch, _ : evaluation(model, ds_val, log_dir, epoch)
-    callbacks = [
-            tf.keras.callbacks.TensorBoard(log_dir=log_dir, write_graph=False),
-            tf.keras.callbacks.ModelCheckpoint(filepath=join(log_dir, 'chkpts-{epoch:02d}'), save_weights_only=True),
-            tf.keras.callbacks.LambdaCallback(on_epoch_end=log_func),
-            ]
-    model.fit(ds_train, epochs=30, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=0)
->>>>>>> 2b41ac383498b4a5bb175da7938b088009f984c4
+    cp = tf.train.latest_checkpoint(args.logpath).split('/')[-1]
+    if cp is not None:
+        model.load_weights(join(args.logpath, cp))
+        init_epoch = int(cp.split('-')[-1])
+    else:
+        init_epoch = 0
+
+    if init_epoch < 30:
+        model.fit(ds_train, epochs=30, callbacks=callbacks, steps_per_epoch=3500//n_batch, initial_epoch=init_epoch)
+        init_epoch = 30
+
+    if args.celltype >=0:
+        ds_train = data.livecell_dataset_from_tfrecord(join(args.datapath, 'train.tfrecord'))
+        ds_train = ds_train.filter(lambda x: x['cell_type']==args.celltype)
+        ds_train = ds_train.map(parse_func).filter(lambda s: tf.size(s['locations']) > 0).repeat()
+        ds_train = ds_train.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=n_batch))
+        model.fit(ds_train, epochs=45, callbacks=callbacks, steps_per_epoch=500/n_batch, initial_epoch=init_epoch)
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Train livecell model')
     parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
     parser.add_argument('logpath', type=str, help='Log dir for storing results')
-    parser.add_argument('--celltype', type=int, default=0, help='Cell type 0-7')
+    parser.add_argument('--celltype', type=int, default=-1, help='Cell type 0-7')
     parser.add_argument('--lpnlevel', type=int, default=3, help='LPN input feature level')
     args = parser.parse_args()
 
