@@ -1,11 +1,12 @@
 ### A431 models
 
 #### Dataset
-Download [here](https://drive.google.com/drive/folders/15aFQsONxHt_9PIgQiri_wxqqPchFJ5Oq)
+Download [here](https://drive.google.com/drive/folders/15aFQsONxHt_9PIgQiri_wxqqPchFJ5Oq).
+
 Unzip to a new directory
 
 #### Transfer learning
-Download the pretrained [lacss model] (https://drive.google.com/drive/folders/1zuUDOpqSNrN7C4oHwfHT8qHnFrruTn6_)
+Download the pretrained [lacss model](https://drive.google.com/drive/folders/1zuUDOpqSNrN7C4oHwfHT8qHnFrruTn6_)
 
 This model was pretrained on LIVECell dataset under full supervision
 
