@@ -47,22 +47,32 @@ def run_training(args):
     ds_val = data.livecell_dataset_from_tfrecord(join(args.datapath, 'val.tfrecord'))
     ds_train = data.livecell_dataset_from_tfrecord(join(args.datapath, 'train.tfrecord'))
 
-    n_batch = 1
-    parse_func = lambda x: lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.1), target_height=544, target_width=704)
+    print(ds_train.element_spec)
+
+    if args.config == "":
+        model = lacss.models.LacssModel(
+            detection_level=3,
+            backbone='resnet_att',
+            train_max_output=600,
+            test_max_output=2500,
+            test_min_score=0.25,
+            test_pre_nms_topk=0,
+            train_supervised=False,
+            train_batch_size=1,
+            )
+    else:
+        with open(args.config) as f:
+            model_cfg = json.load(f)
+        model = lacss.models.LacssModel.from_config(model_cfg)
+
+    n_batch = model.get_config()['train_batch_size']
+    if model.get_config()['train_supervised']:
+        parse_func = lambda x: lacss.parse_train_data_func_full_annotation(x, target_height=544, target_width=704)
+    else:
+        parse_func = lambda x: lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.1), target_height=544, target_width=704)
     ds_train = ds_train.map(parse_func).filter(lambda s: tf.size(s['locations']) > 0).repeat()
     ds_train = ds_train.apply(tf.data.experimental.dense_to_ragged_batch(batch_size=n_batch))
 
-    print(ds_train.element_spec)
-    model = lacss.models.LacssModel(
-        detection_level=args.lpnlevel,
-        backbone='resnet_att',
-        train_max_output=600,
-        test_max_output=2500,
-        test_min_score=0.25,
-        test_pre_nms_topk=0,
-        train_supervised=False,
-        train_batch_size=n_batch,
-        )
     optimizer = tf.keras.optimizers.Adam()
     model.compile(optimizer=optimizer)
 
@@ -76,9 +86,9 @@ def run_training(args):
             tf.keras.callbacks.LambdaCallback(on_epoch_end=log_func),
             ]
 
-    cp = tf.train.latest_checkpoint(args.logpath).split('/')[-1]
+    cp = tf.train.latest_checkpoint(args.logpath)
     if cp is not None:
-        model.load_weights(join(args.logpath, cp))
+        model.load_weights(cp)
         init_epoch = int(cp.split('-')[-1])
     else:
         init_epoch = 0
@@ -98,8 +108,9 @@ if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Train livecell model')
     parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
     parser.add_argument('logpath', type=str, help='Log dir for storing results')
+    parser.add_argument('--config', type=str, default="", help='path to the model config file')   
     parser.add_argument('--celltype', type=int, default=-1, help='Cell type 0-7')
-    parser.add_argument('--lpnlevel', type=int, default=3, help='LPN input feature level')
+    # parser.add_argument('--lpnlevel', type=int, default=3, help='LPN input feature level')
     args = parser.parse_args()
 
     try:
@@ -108,4 +119,3 @@ if __name__ =="__main__":
         pass
 
     run_training(args)
-
