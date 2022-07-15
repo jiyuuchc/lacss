@@ -67,7 +67,7 @@ def run_training(args):
 
     n_batch = model.get_config()['train_batch_size']
     if model.get_config()['train_supervised']:
-        parse_func = lambda x: lacss.parse_train_data_func_full_annotation(x, target_height=544, target_width=704)
+        parse_func = lambda x: lacss.data.parse_train_data_func_full_annotation(x, target_height=544, target_width=704)
     else:
         parse_func = lambda x: lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.1), target_height=544, target_width=704)
     ds_train = ds_train.map(parse_func).filter(lambda s: tf.size(s['locations']) > 0).repeat()
