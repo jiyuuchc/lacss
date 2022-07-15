@@ -1,6 +1,10 @@
-#### LIVECell models
+### LIVECell models
 
-Download the [LIVECell dataset](https://sartorius-research.github.io/LIVECell/). You will need an aws account.
+#### Download dataset
+
+The [LIVECell dataset](https://sartorius-research.github.io/LIVECell/). You will need an aws account.
+
+#### TFRecord
 
 Convert the original dataset into TRFRecord format.
 
@@ -12,7 +16,7 @@ Convert the original dataset into TRFRecord format.
 
 This creates three TFRecord files (train, val and test).
 
-Training:
+#### Train:
 
     export PYTHONPATH=<project_dir>:$PYTHONPATH
     python <project_dir>/experiments/livecell/train.py <data_dir> <log_dir> --config <model_config_file> --celltype -1|[0-7]
@@ -25,7 +29,8 @@ The losses and validation metrics (only maskAP50) were logged in tensorboard for
 
 Interrupted training will resume by running the same command.
 
-Testing: computing maskAP50-95 and FNRs on the testing set.
+#### Testing: 
+computing maskAP50-95 and FNRs on the testing set.
 
     python <project_dir>/experiments/livecell/test.py <data_dir> <log_dir> --checkpoint <checkpoint name>
 
