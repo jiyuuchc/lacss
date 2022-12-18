@@ -16,7 +16,7 @@ def evaluation(model, ds, log_dir, epoch):
     print('evaluating...')
     test_log_dir = join(log_dir, 'validation')
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
-    mask_mAP = {}
+    mAP = {}
     for x in ds:
         xx = lacss.data.parse_test_data_func(x)
         y = model(xx)
@@ -26,22 +26,25 @@ def evaluation(model, ds, log_dir, epoch):
         patches = y['instance_output'][0]
         coords = y['instance_coords'][0]
         pred_bboxes = lacss.ops.bboxes_of_patches(patches, coords)
-        pred = (patches, coords, pred_bboxes)
+        # pred = (patches, coords, pred_bboxes)
 
         gt_bboxes=x['bboxes']
-        gt_mi=x['mask_indices']
-        gt = (gt_mi,gt_bboxes)
+        # gt_mi=x['mask_indices']
+        # gt = (gt_mi,gt_bboxes)
 
         c = x['cell_type'].numpy()
-        if not c in mask_mAP:
-            mask_mAP[c] = lacss.metrics.MaskMeanAP([.5])
-        mask_mAP[c].update_state(gt, pred, scores)
+        if not c in mAP:
+            mAP[c] = lacss.metrics.BoxMeanAP([.5, .75])
+        mAP[c].update_state(gt_bboxes, pred_bboxes, scores)
 
     with test_summary_writer.as_default():
-        for k in mask_mAP:
-            ap50 = mask_mAP[k].result()[0]
-            tf.summary.scalar(f'mask_ap_{k}', ap50, step=epoch)
-            print(f'[{k}]: AP50 = {ap50}')
+        for k in sorted(mAP.keys()):
+            result = mAP[k].result() 
+            ap50 = result[0]
+            ap75 = result[1]
+            tf.summary.scalar(f'ap50_{k}', ap50, step=epoch)
+            tf.summary.scalar(f'ap75_{k}', ap50, step=epoch)
+            print(f'[{k}]: AP50 = {ap50}\tAP75 = {ap75}')
 
 def run_training(args):
     ds_val = data.livecell_dataset_from_tfrecord(join(args.datapath, 'val.tfrecord'))
@@ -51,7 +54,7 @@ def run_training(args):
 
     if args.config == "":
         model = lacss.models.LacssModel(
-            detection_level=3,
+            detection_level=2,
             backbone='resnet_att',
             train_max_output=600,
             test_max_output=2500,
