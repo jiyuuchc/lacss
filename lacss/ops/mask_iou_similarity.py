@@ -43,7 +43,7 @@ def mask_intersects(gt_mi, gt_box, pred_patches, pred_patch_co, th=0.5):
 
 def mask_ious(gt_mi, gt_box, pred_patches, pred_patch_co, th=0.5):
     gt_areas = gt_mi.row_lengths()
-    pred_areas = tf.count_nonzero(pred_patches > th, axis=(1,2,3))
+    pred_areas = tf.math.count_nonzero(pred_patches > th, axis=(1,2,3))
     sum_areas = gt_areas[:, None] + pred_areas
     intersects = mask_intersects(gt_mi, gt_box, pred_patches, pred_patch_co, th)
     ious = tf.cast(intersects, tf.float32) / (tf.cast(sum_areas - intersects, tf.float32) + 1e-8)

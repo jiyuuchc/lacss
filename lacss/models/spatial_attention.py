@@ -7,7 +7,7 @@ class SpatialAttention(layers.Layer):
             'filter_size': filter_size,
         }
 
-        self._w = layers.Conv2D(1, self._config_dict['filter_size'], activation='sigmoid')
+        self._w = layers.Conv2D(1, self._config_dict['filter_size'], padding='same', dilation_rate=2, activation='sigmoid')
 
         super(SpatialAttention, self).__init__(**kwargs)
 
