@@ -34,7 +34,7 @@ def self_supervised_segmentation_losses(y_pred, coords, binary_mask, lam=1.0, be
 
     return loss
 
-def self_supervised_segmentation_losses_2(y_pred, coords, binary_mask, lam=1.0, beta=-2.):
+def self_supervised_segmentation_losses_2(y_pred, coords, binary_mask, lam=1.0):
     '''
     Args:
         y: [n_patches, patch_size, patch_size, 1]: float32, prediction 0..1
@@ -57,17 +57,16 @@ def self_supervised_segmentation_losses_2(y_pred, coords, binary_mask, lam=1.0, 
     ]
     mask = tf.pad(tf.cast(binary_mask, tf.float32), paddings)
 
+    y_max = tf.zeros_like(mask)
+    y_max = tf.tensor_scatter_nd_max(y_max, coords, y_pred)
+    binary_loss = tf.reduce_mean(tf.losses.binary_focal_crossentropy(mask, y_max))
+
     log_yi = tf.math.log(tf.clip_by_value(1.0 - y_pred, tf.keras.backend.epsilon(), 1.0))
     log_yi_sum = tf.scatter_nd(coords, log_yi, tf.shape(mask))
-
-    binary_loss = -(1.0 - mask) * log_yi_sum - mask * tf.math.log(1.0 + tf.keras.backend.epsilon() - tf.math.exp(log_yi_sum))
-    binary_loss = tf.reduce_mean(binary_loss)
-
     log_yi = tf.gather_nd(log_yi_sum, coords) - log_yi
-
     overlap_loss =  - tf.reduce_mean(y_pred * log_yi)
 
-    loss = (binary_loss + lam * overlap_loss) * tf.cast(patch_shape[0], loss.dtype)
+    loss = binary_loss + lam * overlap_loss
 
     return loss
 
