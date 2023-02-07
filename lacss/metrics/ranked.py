@@ -1,4 +1,8 @@
 import numpy as np
+import jax
+import treex as tx
+# import jax.experimental.host_callback as hcb
+jnp = jax.numpy
 
 '''
 metrics classes for computing coco-style AP metrics.
@@ -66,7 +70,7 @@ class MeanAP():
         self.coco_style=coco_style
         self.indicator_list = [[] for _ in range(len(thresholds))]
 
-        self._result = [-1.0] * len(thresholds)
+        self._result = np.array([-1.0] * len(thresholds))
 
     def update_state(self, sm, scores):
         # sm = self.similarity(pred, gt)
@@ -96,4 +100,39 @@ class MeanAP():
         self._result = np.array(aps, dtype=float)
 
         return self._result
+
+# class LoiAP(tx.Metric):
+#     def __init__(self, thresholds, **kwargs):
+#         super().__init__(**kwargs)
+#         self.ap = MeanAP(thresholds)
+
+#     def update(self, preds, gt_locations, **kwargs):
+
+#         def _update_cb(args, transform):
+#             pred, gt_locs = args
+#             scores = np.asarray(pred['pred_scores'])
+#             mask = scores > 0
+#             gt_locs = np.asarray(gt_locs)
+#             pred_locs = np.asarray(pred['pred_locations'])[mask]
+#             dist2 = ((pred_locs[:,None,:] - gt_locs) ** 2).sum(axis=-1)
+#             sm = 1.0 / np.sqrt(dist2)
+#             self.ap.update_state(sm, scores[mask])
+
+#         pred = jax.tree_map(lambda v: v[0], preds)
+#         hcb.id_tap(_update_cb, (pred, gt_locations))
+    
+#     def compute_cb(self):
+#         return self.ap.result()
+
+#     def compute(self):
+#         hcb.barrier_wait()
+#         def _compute_cb(arg):
+#             return self.ap.result()
+        
+#         return hcb.call(
+#             _compute_cb,
+#             None,
+#             result_shape=
+#         )
+
 

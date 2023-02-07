@@ -15,7 +15,6 @@ class AuxNet(tx.Module):
     @tx.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         for n in self.conv_spec:
-            # x = tx.Conv(n, (3,3))(x)
             x = tx.Conv(n, (3,3), use_bias=False)(x)
             x = tx.GroupNorm(num_groups=None, group_size=1, use_scale=False)(x)
             x = jax.nn.relu(x)

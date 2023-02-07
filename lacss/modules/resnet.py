@@ -15,7 +15,7 @@ class Bottleneck(tx.Module):
         n_filters: int,
         strides: int = 1,
         dilation_rate: int = 1,
-        use_attention: bool = True,
+        se_ratio: int = 16,
         drop_rate: float = 0.0
     ) -> None:
         super().__init__()
@@ -23,7 +23,7 @@ class Bottleneck(tx.Module):
         self.n_filters = n_filters
         self.strides = strides
         self.dilation_rate = dilation_rate
-        self.use_attention = use_attention
+        self.se_ratio = se_ratio
         self.drop_rate = drop_rate
         if self.drop_rate > 0:
             self.key = tx.Initializer(lambda key: jnp.array(key))
@@ -60,8 +60,8 @@ class Bottleneck(tx.Module):
         x = tx.GroupNorm(num_groups=None, group_size=1)(x)
         x = jax.nn.relu(x)
 
-        if self.use_attention:
-            x = ChannelAttention()(x)
+        if self.se_ratio > 0:
+            x = ChannelAttention(squeeze_factor=self.se_ratio)(x)
 
         x = self._drop_path(x)
 
@@ -107,7 +107,7 @@ class ResNet(tx.Module):
     def __init__(
         self,
         model_spec: Union[str, List[Tuple[int, int]]] = '50',
-        use_attention: bool = True, 
+        se_ratio: int = 16, 
         min_feature_level:int = 1, 
         out_channels:int = 256,
         stochastic_drop_rate = 0.0,
@@ -117,7 +117,7 @@ class ResNet(tx.Module):
 
         self._config_dict = {
             'model_spec': model_spec,
-            'use_attention': use_attention,
+            'se_ratio': se_ratio,
             'min_feature_level': min_feature_level,
             'out_channels': out_channels,
             'stochastic_drop_rate': stochastic_drop_rate,
@@ -137,13 +137,13 @@ class ResNet(tx.Module):
         else:
             spec = model_spec
 
-        use_attention = self._config_dict['use_attention']
+        se_ratio = self._config_dict['se_ratio']
         stochastic_drop_rate = self._config_dict['stochastic_drop_rate'] if 'stochastic_drop_rate' in self._config_dict else 0.0
         for i, (n_filters, n_repeats) in enumerate(spec):
             drop_rate = stochastic_drop_rate * (i+2) / (len(spec) + 1)
-            x = Bottleneck(n_filters, 2, use_attention=use_attention, drop_rate=drop_rate)(x)
+            x = Bottleneck(n_filters, 2, se_ratio=se_ratio, drop_rate=drop_rate)(x)
             for _ in range(1, n_repeats):
-                x = Bottleneck(n_filters, use_attention=use_attention, drop_rate=drop_rate)(x)
+                x = Bottleneck(n_filters, se_ratio=se_ratio, drop_rate=drop_rate)(x)
             encoder_out.append(x)
 
         l_min = self._config_dict['min_feature_level']
@@ -151,7 +151,6 @@ class ResNet(tx.Module):
 
         decoder_out = FPN(out_channels)(encoder_out[l_min:])
 
-        # keys = [str(k) for k in range(l_min, len(decoder_out) + l_min)]
         keys = [str(k) for k in range(len(encoder_out))]
         encoder_out = dict(zip(keys, encoder_out))
         decoder_out = dict(zip(keys[l_min:], decoder_out))

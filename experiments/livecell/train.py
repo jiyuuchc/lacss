@@ -26,9 +26,15 @@ except:
 
 tf.config.set_visible_devices([], 'GPU')
 
+def pad_to(x, multiple=512):
+    s = x.shape[0]
+    ns = ((s - 1) // multiple + 1) * multiple
+    padding = ns - s
+    return np.pad(x, [[0,padding],[0,0]]), s
+
 def cb_fn(epoch, logs, model, ds):
-    if epoch < 10: 
-        return
+    # if args.schedule==1 and epoch < 10: 
+    #     return
     model = model.eval()
     loiAP = lacss.metrics.MeanAP([0.1, 0.2, 0.5, 1.0])
     boxAP = lacss.metrics.MeanAP([0.5, 0.75])
@@ -45,10 +51,10 @@ def cb_fn(epoch, logs, model, ds):
         sm = 1.0 / np.sqrt(sm)
         loiAP.update_state(sm, scores[mask])
 
-        gt_box = x['bboxes'].numpy()[0]
+        gt_box, sz = pad_to(x['bboxes'].numpy()[0])
         pred_box = lacss.ops.bboxes_of_patches(y)
         sm = lacss.ops.box_iou_similarity(pred_box, jnp.array(gt_box))
-        boxAP.update_state(np.array(sm)[mask], scores[mask])
+        boxAP.update_state(np.array(sm)[mask, :sz], scores[mask])
 
     loi_aps = loiAP.result()
     logs.update(dict(
@@ -67,7 +73,6 @@ def cb_fn(epoch, logs, model, ds):
 def train_parser_supervised(inputs):
     inputs = lacss.data.parse_train_data_func_full_annotation(inputs, target_height=544, target_width=544)
     
-    # image = tf.repeat(inputs['image'], 3, axis=-1)
     image = inputs['image']
     gt_locations = inputs['locations']
     mask_labels = tf.cast(inputs['mask_labels'], tf.float32)
@@ -91,7 +96,6 @@ def train_parser_semisupervised(inputs):
     cell_type = inputs['cell_type']
     inputs = lacss.data.parse_train_data_func(inputs, size_jitter=(0.85, 1.15), target_height=544, target_width=544)
 
-    # image = tf.repeat(inputs['image'], 3, axis=-1)
     image = inputs['image']
     gt_locations = inputs['locations']
     image_mask = tf.cast(inputs['binary_mask'], tf.float32)
@@ -114,13 +118,10 @@ def train_parser_semisupervised(inputs):
     return x_data, y_data
  
 def val_parser(inputs):
-    cell_type = inputs['cell_type']
     inputs = lacss.data.parse_test_data_func(inputs)
-    # inputs['image'] = tf.repeat(inputs['image'], 3, axis=-1)
-
     return inputs
 
-def prepare_data(n_buckets = 32):
+def prepare_data(n_buckets = 16):
     ds_train = data.livecell_dataset_from_tfrecord(join(args.datapath, 'train.tfrecord'))
 
     if args.celltype >= 0:
@@ -147,7 +148,6 @@ def get_schedule():
         n_epochs = 30
         steps_per_epoch = 3500
         optimizer = optax.adam(0.0005)
-        #optimizer = optax.adam(optax.linear_schedule(0, 0.001 * args.batchsize, 3500))
     elif args.schedule == 2:
         n_epochs = 10
         steps_per_epoch = 3500 * 5
@@ -168,28 +168,37 @@ def get_model(optimizer):
             init_epoch = int(args.resume.split('-')[-1])
         except:
             init_epoch = 0
-    else:
+        return model, init_epoch        
+
+    if args.transfer != "":
+        model = eg.model.model_base.load(args.transfer)
+        module = model.module
+        module.freeze(False, inplace=True)
+    elif args.config !="":
         with open(args.config) as f:
             model_cfg = json.load(f)
         module = lacss.modules.Lacss.from_config(model_cfg)
-        loss = [
-            lacss.losses.DetectionLoss(),
-            lacss.losses.LocalizationLoss(),
-        ]
-        if not args.supervised:
-            loss.append(lacss.losses.InstanceEdgeLoss())
-            loss.append(lacss.losses.InstanceLoss())
-        else:
-            loss.append(lacss.losses.SupervisedInstanceLoss())
-            pass
+    else:
+        raise ValueError('Must specify at least one of the "--resume", "--transfer" or "--config"')
 
-        model = eg.Model(
-            module = module,     
-            optimizer = optimizer,
-            seed = args.seed,
-            loss = loss,
-        )
-        init_epoch = 0
+    loss = [
+        lacss.losses.DetectionLoss(),
+        lacss.losses.LocalizationLoss(),
+    ]
+    if not args.supervised:
+        loss.append(lacss.losses.InstanceEdgeLoss())
+        loss.append(lacss.losses.InstanceLoss())
+    else:
+        loss.append(lacss.losses.SupervisedInstanceLoss())
+        pass
+
+    model = eg.Model(
+        module = module,     
+        optimizer = optimizer,
+        seed = args.seed,
+        loss = loss,
+    )
+    init_epoch = 0
 
     return model, init_epoch
 
@@ -200,7 +209,7 @@ def run_training():
     n_epochs, steps_per_epoch, optimizer = get_schedule()
     model, init_epoch = get_model(optimizer)
 
-    json.dumps(model.module.get_config(), indent=2, sort_keys=True)
+    print(json.dumps(model.module.get_config(), indent=2, sort_keys=True))
 
     callbacks = [
         eg.callbacks.TensorBoard(args.logpath),
@@ -222,6 +231,7 @@ if __name__ =="__main__":
     parser.add_argument('logpath', type=str, help='Log dir for storing results')
     parser.add_argument('--config', type=str, default="", help='path to the model config file')   
     parser.add_argument('--resume', type=str, default="", help='Resume from checkpoint')
+    parser.add_argument('--transfer', type=str, default="", help='Transfer from previous model')
     parser.add_argument('--celltype', type=int, default=-1, help='Cell type 0-7')
     parser.add_argument('--supervised', type=bool, default=False, help='Whether train superversed')
     parser.add_argument('--seed', type=int, default=42, help='RNG seed')

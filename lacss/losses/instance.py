@@ -1,3 +1,4 @@
+from functools import partial
 import jax
 import optax
 from treex.losses import Loss
@@ -8,7 +9,7 @@ jnp = jax.numpy
 
 EPS = jnp.finfo(float).eps
 
-def instance_overlap_losses(pred, yc, xc, binary_mask, n_instances):
+def instance_overlap_losses(pred, yc, xc, binary_mask, n_instances, ignore_mask=False):
     '''
     Args:
         pred: [n_patches, patch_size, patch_size, 1]: float32, prediction 0..1, padded with 0
@@ -31,11 +32,14 @@ def instance_overlap_losses(pred, yc, xc, binary_mask, n_instances):
 
     log_yi = jnp.log(jnp.clip(1.0 - pred, EPS, 1.0))
     log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
-    log_yi_sum += (1.0 - binary_mask) * (-2.0)
+    if not ignore_mask:
+        log_yi_sum += (1.0 - binary_mask) * (-2.0)
     log_yi = log_yi_sum[yc, xc] - log_yi
 
-    loss = (binary_mask.sum() - pred.sum()) / pred.size - (pred * log_yi).mean()
-    # loss = - (pred * log_yi).mean(axis=(1,2))
+    if not ignore_mask:
+        loss = (binary_mask.sum() - pred.sum()) / pred.size - (pred * log_yi).mean()
+    else:
+        loss = - (pred * log_yi).mean()
     
     return loss * pred.shape[0] / (n_instances+1e-8)
 
@@ -70,8 +74,31 @@ class InstanceLoss(Loss):
         preds: dict, 
         **kwargs,
     ):
+        if not 'training_locations' in preds:
+            return 0.0
+
         n_instances = jnp.count_nonzero(preds['training_locations'][:, :, 0] >= 0, axis=1)
         return jax.vmap(instance_overlap_losses)(
+            preds['instance_output'],
+            preds['instance_yc'],
+            preds['instance_xc'],
+            binary_mask,
+            n_instances,
+        )
+
+class InstanceOverlapLoss(Loss):
+    def call(
+        self,
+        binary_mask: jnp.ndarray,
+        preds: dict, 
+        **kwargs,
+    ):
+        if not 'training_locations' in preds:
+            return 0.0
+
+        op = partial(instance_overlap_losses, ignore_mask=True)
+        n_instances = jnp.count_nonzero(preds['training_locations'][:, :, 0] >= 0, axis=1)
+        return jax.vmap(op)(
             preds['instance_output'],
             preds['instance_yc'],
             preds['instance_xc'],
@@ -83,9 +110,12 @@ class SupervisedInstanceLoss(Loss):
     def call(
         self,
         mask_labels: jnp.ndarray,
-        preds: dict, 
+        preds: dict,
         **kwargs,
     ):
+        if not 'training_locations' in preds:
+            return 0.0
+
         n_instances = jnp.count_nonzero(preds['training_locations'][:, :, 0] >= 0, axis=1)
         return jax.vmap(supervised_segmentation_losses)(
             preds['instance_output'],
@@ -95,6 +125,17 @@ class SupervisedInstanceLoss(Loss):
             n_instances,
         )
 
+
+def _get_auxnet_prediction(preds, categoty):
+    auxnet_out = preds['auxnet_out']
+    instance_edge = preds['instance_edge']
+
+    if auxnet_out.shape[-1] == 1:
+        edge_pred = auxnet_out[:,:, 0]
+    else:
+        edge_pred = auxnet_out[:,:, category]
+    return edge_pred, instance_edge
+
 def self_supervised_edge_losses(preds, category):
     '''
     Args:
@@ -103,19 +144,10 @@ def self_supervised_edge_losses(preds, category):
     return:
         loss: float
     '''
-
-    auxnet_out = preds['auxnet_out']
-    instance_edge = preds['instance_edge']
-
-    if auxnet_out.shape[-1] == 1:
-        edge_pred = auxnet_out[:,:, 0]
-    else:
-        edge_pred = auxnet_out[:,:, category]
+    edge_pred, instance_edge = _get_auxnet_prediction(preds, categoty)
 
     # edge_pred = jax.lax.stop_gradient(jnp.maximum(edge_pred, instance_edge))
-    loss = optax.l2_loss(edge_pred, instance_edge).mean()
-
-    return loss
+    return optax.l2_loss(edge_pred, instance_edge).mean()
 
 def auxnet_losses(preds, category):
     '''
@@ -125,25 +157,21 @@ def auxnet_losses(preds, category):
     return:
         loss: float
     '''
-    auxnet_out = preds['auxnet_out']
-    instance_edge = preds['instance_edge']
+    edge_pred, instance_edge = _get_auxnet_prediction(preds, categoty)
 
-    if auxnet_out.shape[-1] == 1:
-        edge_pred = auxnet_out[:,:, 0]
-    else:
-        edge_pred = auxnet_out[:,:, category]
-
-    loss = _binary_focal_crossentropy(edge_pred, instance_edge >= 0.5).mean()
-
-    return loss
+    return _binary_focal_crossentropy(edge_pred, instance_edge >= 0.5).mean()
 
 class AuxnetLoss(Loss):
     def call(
         self,
-        group_num: jnp.ndarray,
         preds: dict,
+        group_num: jnp.ndarray = None,
         **kwargs
     ):
+
+        if not 'training_locations' in preds:
+            return 0.0
+
         return jax.vmap(auxnet_losses)(
             preds,
             group_num.astype(int),
@@ -152,10 +180,13 @@ class AuxnetLoss(Loss):
 class InstanceEdgeLoss(Loss):
     def call(
         self,
-        group_num: jnp.ndarray,
         preds: dict,
+        group_num: jnp.ndarray = None,
         **kwargs
     ):
+        if not 'training_locations' in preds:
+            return 0.0
+
         return jax.vmap(self_supervised_edge_losses)(
             preds,
             group_num.astype(int),

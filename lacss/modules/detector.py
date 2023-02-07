@@ -10,14 +10,14 @@ class Detector(tx.Module):
 
     def __init__(
         self,
-        train_nms_threshold: float = 1.0,
-        train_pre_nms_topk: int = 2000,
-        train_max_output: int = 512,
+        train_nms_threshold: float = 8.0,
+        train_pre_nms_topk: int = -1,
+        train_max_output: int = 768,
         train_min_score: float = 0.2,
-        max_proposal_offset: float = 0.0,
-        test_nms_threshold: float = 1.0,
+        max_proposal_offset: float = 12,
+        test_nms_threshold: float = 8.0,
         test_pre_nms_topk: int = -1,
-        test_max_output: int = 2560,
+        test_max_output: int = 768,
         test_min_score:float = 0.25,
     ):
         super().__init__()
@@ -163,19 +163,18 @@ class Detector(tx.Module):
             scores, 
             regressions,
         )
-
+        outputs = dict(
+                pred_locations = proposed_locations,
+                pred_scores = proposed_scores,
+            )
         if self.training:
-            return dict(
+            outputs.update(dict(
                 training_locations = jax.vmap(self._gen_train_locations)(
                     gt_locations,
                     proposed_locations,
                 )
-            )
-        else:
-            return dict(
-                pred_locations = proposed_locations,
-                pred_scores = proposed_scores,
-            )
+            ))
+        return outputs
 
     def get_config(self):
         return self._config_dict

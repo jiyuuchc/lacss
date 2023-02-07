@@ -14,7 +14,6 @@ class LPN(tx.Module):
         feature_levels: Tuple[int] = (4,3,2),
         conv_spec: Tuple[Tuple[int], Tuple[int]] = ((256,256,256,256),()),
         detection_roi: float = 8.0,
-        use_attention:bool = False,
     ):
         """
           Args:
@@ -29,7 +28,6 @@ class LPN(tx.Module):
         self._config_dict = dict(
             feature_levels = feature_levels,
             conv_spec = conv_spec,
-            use_attention = use_attention,
             detection_roi = detection_roi,
         )
 
@@ -58,9 +56,6 @@ class LPN(tx.Module):
             # x = tx.GroupNorm(num_groups=n_ch)(x)
             x = tx.BatchNorm()(x)
             x = jax.nn.relu(x)
-
-        if self._config_dict['use_attention']:
-            x = ChannelAttention()(x)
 
         scores_out = tx.Conv(1, (1,1))(x)
         scores_out = jax.nn.sigmoid(scores_out)

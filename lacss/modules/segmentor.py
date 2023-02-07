@@ -34,11 +34,9 @@ class _Encoder(tx.Module):
         return encodings
 
 class Segmentor(tx.Module):
-    # pos: jnp.ndarray = tx.Parameter.node()
     mix_bias: jnp.ndarray = tx.Parameter.node()
     ra_avg: jnp.ndarray = tx.BatchStat.node()
     ra_var: jnp.ndarray = tx.BatchStat.node()
-    #mix_scale: jnp.ndarray = tx.Parameter.node()  
 
     def __init__(
         self,

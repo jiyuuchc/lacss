@@ -116,7 +116,14 @@ class Lacss(tx.Module):
                 'instance_y_coords: 
                 'instance_x_coords: 
         '''
-        _, height, width, _ = image.shape
+        _, height, width, ch = image.shape
+        if ch == 1:
+            image = jnp.repeat(image, 3, axis=-1)
+        elif ch == 2:
+            image = jnp.pad(image, [[0,0],[0,0],[0,0],[0,1]])
+
+        assert image.shape[-1] == 3
+
         if gt_locations is not None:
             scaled_gt_locations = gt_locations / jnp.array([height, width])
         else:

@@ -58,3 +58,27 @@ class LocalizationLoss(Loss):
             return regr_loss / cnt
 
         return jax.vmap(_inner)(preds['lpn_regressions'], preds['lpn_gt_regressions'], preds['lpn_gt_scores'])
+
+class LocalizationLossAlt(Loss):
+    def __init__(self, delta=1.0, sigma=2.0, **kwargs):
+        super().__init__(**kwargs)
+        self.delta=delta
+        self.sigma_sq=sigma*sigma
+
+    def call(
+        self, 
+        preds: dict,
+    ) -> jnp.ndarray:
+
+        def _inner(regrs, gt_regrs, gt_scores):
+            regr_loss = 0.0
+            cnt = 1e-8
+            for k in regrs:
+                #h = optax.l2_loss(regrs[k], gt_regrs[k])
+                h = optax.huber_loss(regrs[k], gt_regrs[k], delta=self.delta).mean(axis=-1)
+                w = jnp.exp(-(gt_regrs[k] ** 2).sum(axis=-1) / self.sigma_sq)
+                regr_loss += jnp.sum(h * w)
+                cnt += w.sum()
+            return regr_loss / cnt
+
+        return jax.vmap(_inner)(preds['lpn_regressions'], preds['lpn_gt_regressions'], preds['lpn_gt_scores'])
