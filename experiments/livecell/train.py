@@ -100,7 +100,10 @@ def train_parser_semisupervised(inputs):
     gt_locations = inputs['locations']
     image_mask = tf.cast(inputs['binary_mask'], tf.float32)
     group_num = tf.cast(cell_type, tf.float32)
-    
+
+    image = tf.image.random_contrast(image, 0.6, 1.4)
+    image = tf.image.random_brightness(image, 0.3)
+
     if tf.random.uniform([]) >= .5:
         image = tf.image.transpose(image)
         gt_locations = gt_locations[..., ::-1]

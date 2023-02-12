@@ -1,4 +1,4 @@
-from typing import List
+from typing import Union,List
 import jax
 import treex as tx
 jnp = jax.numpy
@@ -14,13 +14,14 @@ class _Block(tx.Module):
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
     gamma: jnp.ndarray = tx.Parameter.node()
-    key: jnp.ndarray = tx.Rng.node()
+    key: Union[tx.Initializer, jnp.ndarray] = tx.Rng.node()
     
     def __init__(self, drop_rate=0., layer_scale_init_value=1e-6, kernel_size=7):
         super().__init__()
         self.drop_rate = drop_rate
         self.layer_scale_init_value = layer_scale_init_value
         self.kernel_size = kernel_size
+        self.key = tx.Initializer(lambda key: jnp.array(key))
 
     def _drop_path(self, x):
         if self.training and self.drop_rate > 0:
@@ -133,7 +134,7 @@ class ConvNeXt(tx.Module):
         keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
         decoder_out = dict(zip(keys, decoder_out))
 
-        return decoder_out
+        return None, decoder_out
     
     def get_config(self):
         return dict(
@@ -157,6 +158,14 @@ model_urls = {
 }
 
 def load_weight(jax_model, url):
+    ''' Load pretrained convnext models
+    specs for pretrained models are:
+        tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
+        small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
+        base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
+        large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
+        X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
+    '''
     import torch
 
     def t(m, k, new_value):

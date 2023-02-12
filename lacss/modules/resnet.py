@@ -51,13 +51,16 @@ class Bottleneck(tx.Module):
 
         x = inputs
         x = tx.Conv(n_filters, (1,1), use_bias=False)(x)
-        x = tx.GroupNorm(num_groups=None, group_size=1)(x)
+        x = tx.LayerNorm()(x)
+        # x = tx.GroupNorm(num_groups=None, group_size=1)(x)
         x = jax.nn.relu(x)
         x = tx.Conv(n_filters, (3,3), strides=(strides, strides), input_dilation=(dilation, dilation), use_bias=False)(x)
-        x = tx.GroupNorm(num_groups=None, group_size=1)(x)
+        x = tx.LayerNorm()(x)
+        # x = tx.GroupNorm(num_groups=None, group_size=1)(x)
         x = jax.nn.relu(x)
         x = tx.Conv(n_filters * 4, (1,1), use_bias=False)(x)
-        x = tx.GroupNorm(num_groups=None, group_size=1)(x)
+        x = tx.LayerNorm()(x)
+        # x = tx.GroupNorm(num_groups=None, group_size=1)(x)
         x = jax.nn.relu(x)
 
         if self.se_ratio > 0:
@@ -128,7 +131,7 @@ class ResNet(tx.Module):
 
         x = jax.nn.relu(tx.Conv(24, (3,3))(x))
         x = jax.nn.relu(tx.Conv(64, (3,3))(x))
-        x = tx.GroupNorm(num_groups=None, group_size=1)(x)
+        # x = tx.GroupNorm(num_groups=None, group_size=1)(x)
         encoder_out = [x]
 
         model_spec = self._config_dict['model_spec']

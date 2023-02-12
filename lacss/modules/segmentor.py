@@ -9,10 +9,12 @@ from ..ops import gather_patches
 jnp = jax.numpy
 
 class _Encoder(tx.Module):
-    def __init__(self, n_ch, patch_size):
+    def __init__(self, n_ch, patch_size, resolution=8, encoding_ch=4):
         super().__init__()
         self.n_ch = n_ch
         self.patch_size = patch_size
+        self.resolution = resolution
+        self.encoding_ch = 4
     
     @tx.compact
     def __call__(self, feature, loc):
@@ -20,23 +22,25 @@ class _Encoder(tx.Module):
         patch_center, _, _, _ = gather_patches(feature, loc, patch_size=2)
         encodings = patch_center.mean(axis=(-2,-3))
 
+        dim = self.encoding_ch * self.resolution * self.resolution
         # encodings = tx.Dropout(0.5)(encodings)
-        encodings = tx.Linear(256)(encodings)
+        encodings = tx.Linear(dim)(encodings)
         encodings = jax.nn.relu(encodings)
-        encodings = tx.Linear(256)(encodings)
+        encodings = tx.Linear(dim)(encodings)
         encodings = jax.nn.relu(encodings)
 
-        encodings = tx.Linear(256)(encodings).reshape([-1,8,8,4])
-        encodings = jax.image.resize(encodings, [encodings.shape[0], self.patch_size, self.patch_size, 4], 'linear')
+        encoding_shape = (-1, self.resolution, self.resolution, self.encoding_ch)
+        encodings = tx.Linear(dim)(encodings).reshape(encoding_shape)
+        encodings = jax.image.resize(encodings, [encodings.shape[0], self.patch_size, self.patch_size, self.encoding_ch], 'linear')
 
         encodings = tx.Conv(self.n_ch, (1,1), use_bias=False)(encodings)
         
         return encodings
 
 class Segmentor(tx.Module):
-    mix_bias: jnp.ndarray = tx.Parameter.node()
-    ra_avg: jnp.ndarray = tx.BatchStat.node()
-    ra_var: jnp.ndarray = tx.BatchStat.node()
+    # mix_bias: jnp.ndarray = tx.Parameter.node()
+    # ra_avg: jnp.ndarray = tx.BatchStat.node()
+    # ra_var: jnp.ndarray = tx.BatchStat.node()
 
     def __init__(
         self,
@@ -45,6 +49,7 @@ class Segmentor(tx.Module):
         instance_crop_size: int = 96,
         use_attention: bool = False,
         learned_encoding: bool = False,
+        masked_batchnorm: bool = True,
     ):
         """
           Args:
@@ -67,10 +72,10 @@ class Segmentor(tx.Module):
             'learned_encoding': learned_encoding,
         }
 
-        mix_ch = conv_spec[1][0]
-        self.mix_bias = jnp.zeros([mix_ch])
-        self.ra_avg = jnp.zeros([mix_ch])
-        self.ra_var = jnp.ones([mix_ch])
+        # mix_ch = conv_spec[1][0]
+        # self.mix_bias = jnp.zeros([mix_ch])
+        # self.ra_avg = jnp.zeros([mix_ch])
+        # self.ra_var = jnp.ones([mix_ch])
 
     @tx.compact
     def __call__(self, features: dict, locations: jnp.ndarray) -> tuple:
@@ -93,18 +98,16 @@ class Segmentor(tx.Module):
         _, h, w, _ = x.shape
 
         #feature convs
-        if self._config_dict['use_attention']:
-            x = SpatialAttention()(x)
-
         for n_ch in conv_spec[0]:
             x = tx.Conv(n_ch, (3,3), use_bias=False)(x)
-            # x = tx.GroupNorm(num_groups=n_ch)(x)
-            x = tx.BatchNorm()(x)
+            x = tx.GroupNorm(num_groups=n_ch)(x)
+            # x = tx.BatchNorm()(x)
             x = jax.nn.relu(x)
 
         # mixing features with pos_encodings
         n_ch = conv_spec[1][0]
-        x = tx.Conv(n_ch, (1,1), use_bias=False)(x)
+        # x = tx.Conv(n_ch, (1,1), use_bias=False)(x)
+        x = tx.Conv(n_ch, (3,3), use_bias=False)(x)
         gather_op = partial(gather_patches, patch_size=patch_size)
         patches, yy, xx, _ = jax.vmap(gather_op)(x, locations)
 
@@ -114,19 +117,26 @@ class Segmentor(tx.Module):
         else:
             encodings = jax.vmap(_Encoder(n_ch, patch_size))(features[str(lvl)], locations)
         patches += encodings
+        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2,3,4))
 
         # norm
-        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2,3,4))
-        if self.training:
-            avg = jnp.mean(patches, where=mask, axis=(0,1,2,3))
-            var = jnp.var(patches, where=mask, axis=(0,1,2,3))
-            self.ra_avg = 0.99 * self.ra_avg + 0.01 * avg
-            self.ra_var = 0.99 * self.ra_var + 0.01 * var
-        else:
-            avg = self.ra_avg
-            var = self.ra_var
-        patches = (patches - avg) * jax.lax.rsqrt(var + 1e-5) + self.mix_bias
+        # if self.training:
+        #     avg = jnp.mean(patches, where=mask, axis=(0,1,2,3))
+        #     var = jnp.var(patches, where=mask, axis=(0,1,2,3))
+        #     self.ra_avg = 0.99 * self.ra_avg + 0.01 * avg
+        #     self.ra_var = 0.99 * self.ra_var + 0.01 * var
+        # else:
+        #     avg = self.ra_avg
+        #     var = self.ra_var
+        # patches = (patches - avg) * jax.lax.rsqrt(var + 1e-5) + self.mix_bias
+        # patch_shape = patches.shape
+        # patches = patches.reshape(patch_shape[:-3] + (-1,))
+        # patches = tx.LayerNorm()(patches)
+        # patches = patches.reshape(patch_shape)
         patches = jax.nn.relu(patches)
+
+        if self._config_dict['use_attention']:
+            patches = SpatialAttention()(patches)
 
         # patche convs
         for n_ch in conv_spec[1][1:]:
@@ -137,7 +147,7 @@ class Segmentor(tx.Module):
         if scale == 1:
             logits = jax.vmap(tx.Conv(1, (3,3)))(patches)
         else:
-            logits = jax.vmap(tx.ConvTranspose(1, (3,3), strides=(2,2)))(patches)
+            logits = jax.vmap(tx.ConvTranspose(1, (2,2), strides=(2,2)))(patches)
             if scale == 4:
                 logits = jax.image.resize(logits, patches.shape[:2] + (crop_size, crop_size, 1), 'linear')
 

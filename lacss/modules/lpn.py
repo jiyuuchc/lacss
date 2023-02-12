@@ -47,14 +47,14 @@ class LPN(tx.Module):
 
         for n_ch in conv_spec[0]:
             x = tx.Conv(n_ch, (3,3), use_bias=False)(x)
-            # x = tx.GroupNorm(num_groups=n_ch)(x)
-            x = tx.BatchNorm()(x)
+            # x = tx.BatchNorm()(x, use_running_average=False)
+            x = tx.GroupNorm(num_groups=n_ch)(x)
             x = jax.nn.relu(x)
 
         for n_ch in conv_spec[1]:
             x = tx.Conv(n_ch, (1,1), use_bias=False)(x)
-            # x = tx.GroupNorm(num_groups=n_ch)(x)
-            x = tx.BatchNorm()(x)
+            # x = tx.BatchNorm()(x, use_running_average=False)
+            x = tx.GroupNorm(num_groups=n_ch)(x)
             x = jax.nn.relu(x)
 
         scores_out = tx.Conv(1, (1,1))(x)
