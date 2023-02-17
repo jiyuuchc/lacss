@@ -7,7 +7,6 @@ from .detection import _binary_focal_crossentropy
 
 jnp = jax.numpy
 
-
 def _get_auxnet_prediction(auxnet_out, instance_edge, category=None):
     if auxnet_out.shape[-1] == 1 or category is None:
         edge_pred = auxnet_out[:,:, 0]

@@ -4,25 +4,24 @@ from logging.config import valid_ident
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-import sys
-import os
 import json
 from functools import partial
-import argparse
 from os.path import join
+from skimage.measure import regionprops
+
 import numpy as np
-import jax
 import optax
 import elegy as eg
-import tensorflow as tf
-from skimage.measure import regionprops
-from tqdm import tqdm
-
+import jax
 jnp = jax.numpy
 
 import lacss
 
-tf.config.set_visible_devices([], 'GPU')
+import typer
+app = typer.Typer(pretty_exceptions_enable=False)
+
+# import tensorflow as tf
+# tf.config.set_visible_devices([], 'GPU')
 
 def pad_to(x, multiple=256):
     x = np.asarray(x)
@@ -81,41 +80,41 @@ def train_data_gen_fn(teacher, data_path):
             binary_mask = binary_mask,
         )
         data = lacss.data.parse_train_data_func(data, size_jitter=[0.8, 1.2])
+
+        data = dict(image = data['image'], gt_locations = pad_to(data['locations'].numpy())), dict(binary_mask=data['binary_mask'])        
         data = jax.tree_map(lambda v: jnp.asarray(v)[None,...], data)
+        
+        yield data
 
-        yield dict(image = data['image'], gt_locations = data['locations']), dict(binary_mask=data['binary_mask'])
-
-def cb_fn(epoch, logs, model):
+def cb_fn(epoch, logs, model, ds, datapath):
     model = model.eval()
-    loiAP = lacss.metrics.MeanAP([0.1, 0.2, 0.5, 1.0])
-    X = np.load(join(args.datapath, 'val', 'X.npy'), mmap_mode='r+')
-    Y = np.load(join(args.datapath, 'val', 'y.npy'), mmap_mode='r+')
-    for x, y in tqdm(zip(X, Y)):
+    metrics = eg.metrics.Metrics([
+        lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
+    ])
+    X = np.load(join(datapath, 'val', 'X.npy'), mmap_mode='r+')
+    Y = np.load(join(datapath, 'val', 'y.npy'), mmap_mode='r+')
+    for x, y in zip(X, Y):
         img = jnp.expand_dims(jnp.asarray(x), 0).astype('float32')
         label_in_ch0 = np.argmax(np.count_nonzero(y, axis=(0,1))) == 0
         y = y[..., 0] if label_in_ch0 else y[..., 1]
-        gt_locs = np.asarray([prop['centroid'] for prop in regionprops(y)])
+        gt_locs = jnp.asarray([prop['centroid'] for prop in regionprops(y)])
+        gt_locs = jnp.expand_dims(gt_locs, 0)
 
         preds = model.predict_on_batch(img)
-        pred = jax.tree_map(lambda v: v[0], preds) #unbatch
+        metrics.update(preds=preds, gt_locations = gt_locs)
+        
+    logs.update(metrics.compute())
 
-        scores = np.asarray(y['pred_scores'])
-        mask = scores > 0
-        pred_locs = np.asarray(pred['pred_locations'])[mask]
-        dist2 = ((pred_locs[:,None,:] - gt_locs) ** 2).sum(axis=-1)
-        sm = 1.0 / np.sqrt(dist2)
-        loiAP.update_state(sm, scores[mask])
+@app.command()
+def run_training(
+    checkpoint:str, 
+    datapath:str, 
+    logpath:str='./', 
+    verbose:int=2, 
+    seed:int=42
+):
 
-    loi_aps = loiAP.result()
-    logs.update(dict(
-        val_loi10_ap=loi_aps[0], 
-        val_loi5_ap=loi_aps[1], 
-        val_loi2_ap=loi_aps[2],
-        val_loi1_ap=loi_aps[3],
-        ))
-
-def run_training():
-    teacher = eg.load(args.cp)
+    teacher = eg.load(checkpoint)
     student = eg.Model(
         module = teacher.module.copy(),
         loss = [
@@ -125,7 +124,7 @@ def run_training():
             lacss.losses.InstanceEdgeLoss(),
         ],
         optimizer = optax.adamw(0.001),
-        seed = args.seed,
+        seed=seed,
     )
 
     print(json.dumps(teacher.module.get_config(), indent=2))
@@ -134,31 +133,15 @@ def run_training():
         print(f'epoch : {epoch}')
         teacher.module.merge(student.module.parameters(), inplace=True)
         student.fit(
-            inputs=train_data_gen_fn(teacher, args.datapath), 
+            inputs=train_data_gen_fn(teacher, datapath), 
             epochs=1, 
             steps_per_epoch=2601,
-            verbose = args.verbose,
+            verbose = verbose,
             callbacks = [
-                eg.callbacks.ModelCheckpoint(path=join(args.logpath, 'chkpt-{epoch:02d}')),
-                eg.callbacks.LambdaCallback(on_epoch_end = partial(cb_fn, model=student)),
+                eg.callbacks.ModelCheckpoint(path=join(logpath, 'chkpt-{epoch:02d}')),
+                eg.callbacks.LambdaCallback(on_epoch_end = partial(cb_fn, model=student, datapath=datapath)),
             ]
         )
 
-if __name__ =="__main__":
-    parser = argparse.ArgumentParser(description='Train livecell model')
-    parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
-    parser.add_argument('logpath', type=str, help='Log dir for storing results')
-    parser.add_argument('cp', type=str, default='', help='checkpoint name')
-    parser.add_argument('--seed', type=int, default=42, help='RNG seed')
-    parser.add_argument('--verbose', type=int, default=2, help='output verbosity')
-
-    args = parser.parse_args()
-
-    tf.random.set_seed(args.seed)
-
-    try:
-        os.makedirs(args.logpath)
-    except:
-        pass
-
-    run_training()
+if __name__ == "__main__":
+    app()

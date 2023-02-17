@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
 import json
-import argparse
 from os.path import join
+from tqdm import tqdm
+
 import numpy as np
 import elegy as eg
-import tensorflow as tf
 import lacss
-from tqdm import tqdm
 import jax
 jnp =jax.numpy
 
+import tensorflow as tf
 tf.config.set_visible_devices([], 'GPU')
 
 try:
@@ -18,30 +18,25 @@ try:
 except:
     import data
 
+import typer
+app = typer.Typer(pretty_exceptions_enable=False)
+
 def format_array(arr):
     s = [f'{v:.4f}' for v in arr]
     s = ',\t'.join(s)
     return s
 
-def fnrs(m):
-    fnrs=[]
-    for indicators in m.indicator_list:
-        tp = np.count_nonzero(np.concatenate(indicators))
-        recall = tp / m.cell_counts
-        fnr = 1-recall
-        fnrs.append(fnr)
-    return fnrs
-
-def run_test():
-    log_dir = args.logpath
-    data_path = args.datapath
+@app.command()
+def run_test(
+    datapath: str,
+    checkpoint: str,
+):
 
     print('evaluating...')
-    ds_test = data.livecell_dataset_from_tfrecord(join(data_path, 'test.tfrecord'))
+    ds_test = data.livecell_dataset_from_tfrecord(datapath, 'test.tfrecord')
 
-    model = eg.model.model_base.load(join(log_dir, args.checkpoint))
-    # model.module.detector._config_dict['test_max_output']=3000
-    print(f'model loaded from {args.checkpoint}')
+    model = eg.model.model_base.load(checkpoint)
+    print(f'model loaded from {checkpoint}')
 
     thresholds = [.5, .55, .6, .65, .7, .75, .8, .85, .9, .95]
     mask_APs = {}
@@ -98,20 +93,5 @@ def run_test():
     result_str = format_array(all_result)
     print(f'all: {result_str}')
 
-    print('FNRs...')
-    for c in range(8):
-        m = mask_APs[c]
-        fnr_str = format_array(fnrs(m))
-        print(f'{c}: {fnr_str}')
-    fnr_str = format_array(fnrs(mask_mAP))
-    print(f'all: {fnr_str}')
-
 if __name__ =="__main__":
-    parser = argparse.ArgumentParser(description='Test livecell model')
-    parser.add_argument('datapath', type=str, help='Data dir of tfrecord files')
-    parser.add_argument('logpath', type=str, help='Log dir with model config and weights')
-    parser.add_argument('--checkpoint', type=str, default='model_weight', help='Model checkpoint name')
-    
-    args = parser.parse_args()
-
-    run_test()
+    app()

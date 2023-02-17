@@ -113,40 +113,21 @@ def pad_to(x, multiple=256):
 
 def cb_fn(epoch, logs, model, ds):
     model = model.eval()
-    loiAP = lacss.metrics.MeanAP([0.1, 0.2, 0.5, 1.0])
-    boxAP = lacss.metrics.MeanAP([0.5, 0.75])
-    for x in tqdm(ds):
-        image = jnp.array(x['image'])
-        y = model.predict_on_batch(image[None, ...])
-        y = jax.tree_map(lambda v: v[0], y) #unbatch
-
-        scores = np.asarray(y['pred_scores'])
-        mask = scores > 0
-
-        gt_locs = x['locations'].numpy()
-        pred_locs = np.asarray(y['pred_locations'])[mask]
-        dist2 = ((pred_locs[:,None,:] - gt_locs) ** 2).sum(axis=-1)
-        sm = 1.0 / np.sqrt(dist2)
-        loiAP.update_state(sm, scores[mask])
-
-        gt_box, sz = pad_to(x['bboxes'].numpy())
-        pred_box = lacss.ops.bboxes_of_patches(y)
-        sm = lacss.ops.box_iou_similarity(pred_box, jnp.array(gt_box))
-        boxAP.update_state(np.asarray(sm)[mask, :sz], scores[mask])
-
-    loi_aps = loiAP.result()
-    logs.update(dict(
-        val_loi10_ap=loi_aps[0], 
-        val_loi5_ap=loi_aps[1], 
-        val_loi2_ap=loi_aps[2],
-        val_loi1_ap=loi_aps[3],
-        ))
-
-    box_aps = boxAP.result()
-    logs.update(dict(
-        val_box_ap_50=box_aps[0],
-        val_box_ap_75=box_aps[1],
-        ))
+    metrics = eg.metrics.Metrics([
+        lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
+        lacss.metrics.BoxAP([0.5, 0.75])
+    ])
+    
+    for data in ds.skip(3).take(3):
+        del data['mask_indices']
+        preds = model.predict_on_batch(jnp.array(data['image']))
+        labels = dict(
+            gt_locations = jnp.array(data['locations']),
+            gt_boxes = jnp.array(data['bboxes']),
+        )
+        metrics.update(preds=preds, **labels)
+        
+    logs.update(metrics.compute())
 
 def run_training():
     ds_train, ds_val = prepare_data()
@@ -176,10 +157,6 @@ def run_training():
             )
         module = lacss.modules.Lacss.from_config(model_cfg)
 
-        # schedules = [optax.cosine_decay_schedule(learning_rate, steps_per_epoch)] * training_epochs
-        # boundaries = [steps_per_epoch * i for i in range(1, training_epochs)]
-        # schedule = optax.join_schedules(schedules, boundaries)
-        # optimizer = optax.adamw(schedule)
         optimizer = optax.adamw(0.0005)
 
         loss = [
