@@ -3,6 +3,8 @@ import jax
 import treex as tx
 jnp = jax.numpy
 
+from .types import *
+
 _unet_configs = {
     'unet_s': (32, 64, 128, 256, 512),
     'unet_n': (64, 128, 256, 512, 1024),
@@ -45,7 +47,7 @@ class MixingBlock(tx.Module):
 
         return x
 
-class UNet(tx.Module):
+class UNet(tx.Module, ModuleConfig):
     def __init__(
         self, 
         net_spec: Union[str, Tuple[int]] = 'unet_n', 
@@ -53,12 +55,13 @@ class UNet(tx.Module):
         min_feature_level: int = 1
     ):
         super().__init__()
-        self._config_dict = {
-            'net_spec': net_spec,
-            'method': method,
-            'min_feature_level': min_feature_level,
-        }
 
+        self._config_dict = dict(
+            net_spec = net_spec, 
+            method = method, 
+            min_feature_level = min_feature_level,
+        )
+    
     def maxpool(self, x):
         b,h,w,c = x.shape
         x = x.reshape(b,h//2, 2, w, c).max(2)
@@ -69,30 +72,25 @@ class UNet(tx.Module):
     def __call__(self, x: jnp.ndarray) -> dict:
         output = []
 
-        net_spec = self._config_dict['net_spec']
-        if isinstance(net_spec, str):
+        if isinstance(self.net_spec, str):
             net_spec = _unet_configs[net_spec]
 
         for k, n_ch in enumerate(net_spec):
             for _ in range(2):
                 x = tx.Conv(n_ch, (3,3), use_bias=True)(x)
-                #x = tx.GroupNorm()(x)
                 x = jax.nn.relu(x)
             output.append(x)
     
             if k < len(net_spec)-1:
                 x = self.maxpool(x)
 
-        method = self._config_dict['method']
-        l_min = self._config_dict['min_feature_level']
-        # output = output[l_min:]
+        l_min = self.min_feature_level
 
         for k in range(len(output)-1, l_min, -1):
-            x = MixingBlock(method)(output[k], output[k-1])
+            x = MixingBlock(self.method)(output[k], output[k-1])
             n_ch = net_spec[k-1]
             for _ in range(2):
                 x = tx.Conv(n_ch, (3,3), use_bias=True)(x)
-                # x = tx.GroupNorm()(x)
                 x = jax.nn.relu(x)
             output[k-1] = x
 
@@ -100,10 +98,3 @@ class UNet(tx.Module):
         output = dict(zip(keys, output[l_min:]))
 
         return output
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))

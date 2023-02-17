@@ -6,8 +6,9 @@ jnp = jax.numpy
 
 from .se_net import ChannelAttention
 from ..ops import locations_to_labels
+from .types import ModuleConfig
 
-class LPN(tx.Module):
+class LPN(tx.Module, ModuleConfig):
 
     def __init__(
         self,
@@ -29,16 +30,8 @@ class LPN(tx.Module):
             feature_levels = feature_levels,
             conv_spec = conv_spec,
             detection_roi = detection_roi,
-        )
-
-    @property
-    def feature_levels(self):
-        return self._config_dict['feature_levels']
-
-    @property
-    def detection_roi(self):
-        return self._config_dict['detection_roi']
-
+            )
+    
     @tx.compact
     def _process_feature(self, feature: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         conv_spec = self._config_dict['conv_spec']
@@ -112,10 +105,3 @@ class LPN(tx.Module):
             ))
 
         return outputs
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))

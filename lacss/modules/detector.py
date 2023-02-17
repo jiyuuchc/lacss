@@ -2,9 +2,11 @@ from typing import Optional, Sequence, Union, List, Tuple
 import jax
 import treex as tx
 from ..ops import location_matching, sorted_non_max_suppression
+from .types import *
+
 jnp = jax.numpy
 
-class Detector(tx.Module):
+class Detector(tx.Module, ModuleConfig):
     ''' A weightless layer that conver LPN output to a list of locations
     '''
 
@@ -21,18 +23,18 @@ class Detector(tx.Module):
         test_min_score:float = 0.25,
     ):
         super().__init__()
-        self._config_dict = {
-            'train_nms_threshold': train_nms_threshold,
-            'train_pre_nms_topk': train_pre_nms_topk,
-            'train_max_output': train_max_output,
-            'train_min_score': train_min_score,
-            'max_proposal_offset': max_proposal_offset,
-            'test_nms_threshold': test_nms_threshold,
-            'test_pre_nms_topk': test_pre_nms_topk,
-            'test_max_output': test_max_output,
-            'test_min_score': test_min_score,
-        }
-
+        self._config_dict = dict(
+            train_nms_threshold = train_nms_threshold,
+            train_pre_nms_topk = train_pre_nms_topk,
+            train_max_output = train_max_output,
+            train_min_score = train_min_score,
+            max_proposal_offset = max_proposal_offset,
+            test_nms_threshold = test_nms_threshold,
+            test_pre_nms_topk = test_pre_nms_topk,
+            test_max_output =test_max_output,
+            test_min_score = test_min_score,
+        )
+    
     def _proposal_locations(self, lpn_scores, lpn_regression):
         '''
         Produce a list of proposal locations based on predication map, remove redundency with non_max_suppression
@@ -44,15 +46,15 @@ class Detector(tx.Module):
             locations: [N, 2], proposed location
         '''
         if self.training:
-            distance_threshold = self._config_dict['train_nms_threshold']
-            output_size = self._config_dict['train_max_output']
-            topk = self._config_dict['train_pre_nms_topk']
-            score_threshold = self._config_dict['train_min_score']
+            distance_threshold = self.train_nms_threshold
+            output_size = self.train_max_output
+            topk = self.train_pre_nms_topk
+            score_threshold = self.train_min_score
         else:
-            distance_threshold = self._config_dict['test_nms_threshold']
-            output_size = self._config_dict['test_max_output']
-            topk = self._config_dict['test_pre_nms_topk']
-            score_threshold = self._config_dict['test_min_score']
+            distance_threshold = self.test_nms_threshold
+            output_size = self.test_max_output
+            topk = self.test_pre_nms_topk
+            score_threshold = self.test_min_score
 
         # preprocess
         scores = []
@@ -105,7 +107,7 @@ class Detector(tx.Module):
             3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
         '''
 
-        threshold = self._config_dict['max_proposal_offset']
+        threshold = self.max_proposal_offset
 
         n_gt_locs = gt_locations.shape[0]
         n_pred_locs = pred_locations.shape[0]
@@ -154,7 +156,7 @@ class Detector(tx.Module):
         scores = jax.lax.stop_gradient(scores)
         regressions = jax.lax.stop_gradient(regressions)
 
-        if self.training and self._config_dict['max_proposal_offset'] <= 0:
+        if self.training and self.max_proposal_offset <= 0:
             return dict(
                 training_locations = gt_locations,
             )
@@ -175,10 +177,3 @@ class Detector(tx.Module):
                 )
             ))
         return outputs
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))

@@ -158,7 +158,7 @@ def mask_ious(gt_label, gt_box, pred):
     '''
     n_labels = gt_label.max()
     gt_areas = jnp.count_nonzero(gt_label == jnp.arange(1, n_labels+1)[:, None, None], axis=(1,2))
-    pred_areas = jnp.count_nonzero(pred['instance_mask'] >= 0.5, axis=(1,2,3))
+    pred_areas = jnp.count_nonzero(pred['instance_mask'] >= 0.5, axis=(1,2))
     sum_areas = gt_areas[:, None] + pred_areas
     intersects = mask_intersects(gt_label, gt_box, pred)
     ious = intersects / (sum_areas - intersects + 1e-8)

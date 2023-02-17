@@ -1,7 +1,9 @@
 import numpy as np
 import jax
 import treex as tx
-# import jax.experimental.host_callback as hcb
+import jax.experimental.host_callback as hcb
+from ..ops import *
+
 jnp = jax.numpy
 
 '''
@@ -59,21 +61,16 @@ class MeanAP():
       These are numpy functions
       Usage:
         m = MeanAP([threshold_1, threshold_2,...])
-        m.update_state(similarity_matrix, scores)
+        m.update_states(similarity_matrix, scores)
         ...
         m.result()
     '''
     def __init__(self,thresholds=[0.5], coco_style=False):
         self.thresholds = thresholds
-        self.cell_counts = 0
-        self.scores = []
         self.coco_style=coco_style
-        self.indicator_list = [[] for _ in range(len(thresholds))]
-
-        self._result = np.array([-1.0] * len(thresholds))
+        self.reset()
 
     def update_state(self, sm, scores):
-        # sm = self.similarity(pred, gt)
         self.cell_counts += sm.shape[1]
         self.scores.append(scores)
         for th, indicators in zip(self.thresholds, self.indicator_list):
@@ -101,38 +98,76 @@ class MeanAP():
 
         return self._result
 
-# class LoiAP(tx.Metric):
-#     def __init__(self, thresholds, **kwargs):
-#         super().__init__(**kwargs)
-#         self.ap = MeanAP(thresholds)
+    def reset(self):
+        self.scores = []
+        self.cell_counts = 0
+        self.indicator_list = [[] for _ in range(len(self.thresholds))]
+        self._result = np.array([-1.0] * len(self.thresholds))
 
-#     def update(self, preds, gt_locations, **kwargs):
+class LoiAP(tx.Metric):
+    ap: MeanAP = tx.field(node=False)
+    needs_reset = tx.MetricState.node()
 
-#         def _update_cb(args, transform):
-#             pred, gt_locs = args
-#             scores = np.asarray(pred['pred_scores'])
-#             mask = scores > 0
-#             gt_locs = np.asarray(gt_locs)
-#             pred_locs = np.asarray(pred['pred_locations'])[mask]
-#             dist2 = ((pred_locs[:,None,:] - gt_locs) ** 2).sum(axis=-1)
-#             sm = 1.0 / np.sqrt(dist2)
-#             self.ap.update_state(sm, scores[mask])
+    def __init__(self, thresholds = [.5], coco_style=False, **kwargs):
+        super().__init__(**kwargs)
+        self.ap = MeanAP(thresholds)
+        self.needs_reset = jnp.array(True)
 
-#         pred = jax.tree_map(lambda v: v[0], preds)
-#         hcb.id_tap(_update_cb, (pred, gt_locations))
-    
-#     def compute_cb(self):
-#         return self.ap.result()
+    def update(self, preds, gt_locations):
+        def _update_cb(args, transform):
+            if self.needs_reset:
+                self.ap.reset()
+                self.needs_reset = jnp.array(False)
 
-#     def compute(self):
-#         hcb.barrier_wait()
-#         def _compute_cb(arg):
-#             return self.ap.result()
-        
-#         return hcb.call(
-#             _compute_cb,
-#             None,
-#             result_shape=
-#         )
+            pred, gt_locs = args
+            n_batch = gt_locs.shape[0]
+            for k in range(n_batch):
+                scores = np.asarray(pred['pred_scores'][k])
+                mask = scores > 0
+                scores = scores[mask]
+                pred_locs = np.asarray(pred['pred_locations'][k])[mask]
 
+                locs = np.asarray(gt_locs[k])
+                gt_mask = locs[:,0] > 0
+                locs = locs[gt_mask]
 
+                dist2 = ((pred_locs[:,None,:] - locs) ** 2).sum(axis=-1)
+                sm = 1.0 / np.sqrt(dist2)
+                self.ap.update_state(sm, scores)
+
+        hcb.id_tap(_update_cb, (preds, gt_locations))
+
+    def compute(self):
+        hcb.barrier_wait()
+
+        def _compute_cb(arg):
+            return self.ap.result()
+
+        return hcb.call(
+            _compute_cb,
+            None,
+            result_shape=jnp.zeros([len(self.ap.thresholds)])
+        )
+
+class BoxAP(LoiAP):
+    def update(self, preds, gt_boxes):
+        def _update_cb(args, transform):
+            if self.needs_reset:
+                self.ap.reset()
+                self.needs_reset = jnp.array(False)
+
+            box_sms, scores = args
+            n_batch = gt_boxes.shape[0]
+            for k in range(n_batch):
+                sm = box_sms[k]
+                score = scores[k]
+                mask = sm > 0
+                row_mask = mask.any(axis=1)
+                col_mask = mask.any(axis=0)
+                score = score[row_mask]
+                sm = sm[row_mask][:, col_mask]
+                self.ap.update_state(sm, score)
+
+        pred_boxes = jax.vmap(bboxes_of_patches)(preds)
+        box_sm = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
+        hcb.id_tap(_update_cb, (box_sm, preds['pred_scores']))

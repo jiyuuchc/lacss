@@ -5,6 +5,7 @@ import treex as tx
 
 from .se_net import SpatialAttention
 from ..ops import gather_patches
+from .types import *
 
 jnp = jax.numpy
 
@@ -37,7 +38,7 @@ class _Encoder(tx.Module):
         
         return encodings
 
-class Segmentor(tx.Module):
+class Segmentor(tx.Module, ModuleConfig):
     # mix_bias: jnp.ndarray = tx.Parameter.node()
     # ra_avg: jnp.ndarray = tx.BatchStat.node()
     # ra_var: jnp.ndarray = tx.BatchStat.node()
@@ -49,7 +50,7 @@ class Segmentor(tx.Module):
         instance_crop_size: int = 96,
         use_attention: bool = False,
         learned_encoding: bool = False,
-        masked_batchnorm: bool = True,
+        # masked_batchnorm: bool = True,
     ):
         """
           Args:
@@ -64,19 +65,14 @@ class Segmentor(tx.Module):
         if not feature_level in (0,1,2):
             raise ValueError('feature_level should be 1,2 or 0')
 
-        self._config_dict = {
-            'feature_level': feature_level,
-            'conv_spec': conv_spec,
-            'instance_crop_size': instance_crop_size,
-            'use_attention': use_attention,
-            'learned_encoding': learned_encoding,
-        }
-
-        # mix_ch = conv_spec[1][0]
-        # self.mix_bias = jnp.zeros([mix_ch])
-        # self.ra_avg = jnp.zeros([mix_ch])
-        # self.ra_var = jnp.ones([mix_ch])
-
+        self._config_dict = dict(
+            feature_level = feature_level,
+            conv_spec = conv_spec,
+            instance_crop_size = instance_crop_size,
+            use_attention = use_attention,
+            learned_encoding = learned_encoding,
+        )
+    
     @tx.compact
     def __call__(self, features: dict, locations: jnp.ndarray) -> tuple:
         '''
@@ -109,7 +105,7 @@ class Segmentor(tx.Module):
         # x = tx.Conv(n_ch, (1,1), use_bias=False)(x)
         x = tx.Conv(n_ch, (3,3), use_bias=False)(x)
         gather_op = partial(gather_patches, patch_size=patch_size)
-        patches, yy, xx, _ = jax.vmap(gather_op)(x, locations)
+        patches, y0, x0, _ = jax.vmap(gather_op)(x, locations)
 
         if not self._config_dict['learned_encoding']:
             encodings = (jnp.mgrid[:patch_size, :patch_size] / patch_size - .5).transpose(1,2,0)
@@ -117,7 +113,7 @@ class Segmentor(tx.Module):
         else:
             encodings = jax.vmap(_Encoder(n_ch, patch_size))(features[str(lvl)], locations)
         patches += encodings
-        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2,3,4))
+        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2,3))
 
         # norm
         # if self.training:
@@ -151,28 +147,24 @@ class Segmentor(tx.Module):
             if scale == 4:
                 logits = jax.image.resize(logits, patches.shape[:2] + (crop_size, crop_size, 1), 'linear')
 
+        logits = logits.squeeze(-1)
         outputs = jax.nn.sigmoid(logits)
 
         # indicies
         yc, xc = jnp.mgrid[:crop_size, :crop_size]
-        yc = yc + yy[:, :, :1, :1] * scale
-        xc = xc + xx[:, :, :1, :1] * scale
+        yc = yc + y0[:, :, None, None] * scale
+        xc = xc + x0[:, :, None, None] * scale
 
         # clear invalid locations
         outputs = jnp.where(mask, outputs, 0)
         logits = jnp.where(mask, logits, 0)
-        xc = jnp.where(mask.squeeze(-1), xc, -1)
-        yc = jnp.where(mask.squeeze(-1), yc, -1)
+        xc = jnp.where(mask, xc, -1)
+        yc = jnp.where(mask, yc, -1)
 
-        return outputs, yc, xc, logits, mask
-
-    @property
-    def feature_level(self):
-        return self._config_dict['feature_level']
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))
+        return dict(
+            instance_output = outputs,
+            instance_yc = yc,
+            instance_xc = xc,
+            instance_logtis = logits,
+            instance_mask = mask,
+        )

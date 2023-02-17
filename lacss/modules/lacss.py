@@ -79,7 +79,7 @@ class Lacss(tx.Module):
         ps = self.segmentor._config_dict['instance_crop_size']
         padding = ps // 2 + 1
 
-        patch_edges = jnp.square(sorbel_edges(instance_output.squeeze(-1)))
+        patch_edges = jnp.square(sorbel_edges(instance_output))
         patch_edges = (patch_edges[0] + patch_edges[1]) / 8.0
         patch_edges = jnp.sqrt(jnp.clip(patch_edges, 1e-8, 1.0)) # avoid GPU error
         # patch_edges = jnp.where(patch_edges > 0, jnp.sqrt(patch_edges), 0)
@@ -97,63 +97,59 @@ class Lacss(tx.Module):
     ) -> dict:
         '''
         Args:
-            image: [H, W, C]
-            gt_locations: [N, 2] if training, otherwise None
+            image: [N, H, W, C]
+            gt_locations: [N, M, 2] if training, otherwise None
         Returns:
             a dict of model outputs
-            if training:
-                'detection_scores': LPN output
-                'detection_regression': LPN output
-                'training_locations': training locations
-                'instance_output': instance segmentations
-                'instance_y_coords: 
-                'instance_x_coords: 
-                'auxnet_out':
-            else:
-                'pred_locations': predicted cell locations,
-                'pred_location_scores': scores,
-                'instance_output': instance segmentations
-                'instance_y_coords: 
-                'instance_x_coords: 
         '''
-        _, height, width, ch = image.shape
+        n_batches, orig_height, orig_width, ch = image.shape
         if ch == 1:
             image = jnp.repeat(image, 3, axis=-1)
         elif ch == 2:
             image = jnp.pad(image, [[0,0],[0,0],[0,0],[0,1]])
-
         assert image.shape[-1] == 3
 
-        if gt_locations is not None:
-            scaled_gt_locations = gt_locations / jnp.array([height, width])
-        else:
-            scaled_gt_locations = None
-
+        # ensure input size is multiple of 32
+        height = ((orig_height-1) // 32 + 1) * 32
+        width = ((orig_width-1) // 32 + 1) * 32
+        image = jnp.pad(image, [[0,0],[0, height-orig_height],[0, width - orig_width],[0,0]])
+ 
+        # backbone
         encoder_features, features = self.backbone(image)
+        model_output = dict(
+            encoder_features = encoder_features,
+            decoder_features = features,
+        )
 
-        model_output = self.lpn(features, scaled_gt_locations)
-
+        # detection
+        scaled_gt_locations = gt_locations / jnp.array([height, width]) if gt_locations is not None else None
+        model_output.update(self.lpn(
+            inputs = features, 
+            scaled_gt_locations = scaled_gt_locations,
+        ))
         model_output.update(self.detector(
-            model_output['lpn_scores'], 
-            model_output['lpn_regressions'],
-            gt_locations,
+            scores = model_output['lpn_scores'], 
+            regressions = model_output['lpn_regressions'],
+            gt_locations = gt_locations,
             ))
 
+        # segmentation
         locations = model_output['training_locations' if self.training else 'pred_locations']
         scaled_locs = locations / jnp.array([height, width])
-        instance_output, instance_yc, instance_xc, instance_logits, instance_mask = self.segmentor(features, scaled_locs)
-        model_output.update(dict(
-            instance_output = instance_output,
-            instance_yc = instance_yc,
-            instance_xc = instance_xc,
-            instance_logtis = instance_logits,
-            instance_mask = instance_mask,
+        model_output.update(self.segmentor(
+            features = features, 
+            locations = scaled_locs,
         ))
 
+        # edge detection
         if self.training and self.auxnet is not None:
             auxnet_input = encoder_features['0'] if self.auxnet.share_weights else image
             op = partial(self._compute_edge, height=height, width=width)
-            instance_edge = jax.vmap(op)(instance_output, instance_yc, instance_xc)
+            instance_edge = jax.vmap(op)(
+                model_output['instance_output'], 
+                model_output['instance_yc'], 
+                model_output['instance_xc'],
+            )
             model_output.update(dict(
                 auxnet_out = self.auxnet(auxnet_input),
                 instance_edge = instance_edge,

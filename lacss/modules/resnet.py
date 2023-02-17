@@ -1,6 +1,7 @@
 from typing import Sequence, Union, List, Tuple, Dict
 import jax
 import treex as tx
+from .types import *
 
 jnp = jax.numpy
 
@@ -8,7 +9,6 @@ from .se_net import ChannelAttention
 
 class Bottleneck(tx.Module):
     key: Union[tx.Initializer, jnp.ndarray] = tx.Rng().node()
-    drop_rate = 0.0
 
     def __init__(
         self,
@@ -106,7 +106,7 @@ _RESNET_SPECS = {
   '420': [(64,4),(128,44),(256,87),(512,4)],
 }
 
-class ResNet(tx.Module):
+class ResNet(tx.Module, ModuleConfig):
     def __init__(
         self,
         model_spec: Union[str, List[Tuple[int, int]]] = '50',
@@ -118,14 +118,14 @@ class ResNet(tx.Module):
 
         super().__init__()
 
-        self._config_dict = {
-            'model_spec': model_spec,
-            'se_ratio': se_ratio,
-            'min_feature_level': min_feature_level,
-            'out_channels': out_channels,
-            'stochastic_drop_rate': stochastic_drop_rate,
-        }
-
+        self._config_dict = dict(
+            model_spec = model_spec,
+            se_ratio = se_ratio, 
+            min_feature_level = min_feature_level,
+            out_channels = out_channels,
+            stochastic_drop_rate = stochastic_drop_rate,
+        )
+    
     @tx.compact
     def __call__(self, x: jnp.ndarray) -> dict:
 
@@ -159,10 +159,3 @@ class ResNet(tx.Module):
         decoder_out = dict(zip(keys[l_min:], decoder_out))
 
         return encoder_out, decoder_out
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))

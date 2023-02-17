@@ -104,11 +104,6 @@ def train_parser_semisupervised(inputs):
     image = tf.image.random_contrast(image, 0.6, 1.4)
     image = tf.image.random_brightness(image, 0.3)
 
-    if tf.random.uniform([]) >= .5:
-        image = tf.image.transpose(image)
-        gt_locations = gt_locations[..., ::-1]
-        image_mask = tf.transpose(image_mask)
-
     x_data = dict(
         image = image,
         gt_locations = gt_locations,

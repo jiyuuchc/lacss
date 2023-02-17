@@ -1,16 +1,16 @@
 import jax
 import treex as tx
+from .types import *
 jnp = jax.numpy
 
-class AuxNet(tx.Module):
-    n_groups = 1
-    conv_spec = (24,64,64)
-    share_weights = None
-
+class AuxNet(tx.Module, ModuleConfig):
     def __init__(self, conv_spec=(24,64,64), n_groups=1, share_weights=False):
-        self.conv_spec = conv_spec
-        self.n_groups = n_groups
-        self.share_weights = share_weights
+        super().__init__()
+        self._config_dict = dict(
+            conv_spec = conv_spec,
+            n_groups = n_groups,
+            share_weights = share_weights,
+        )
 
     @tx.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -23,14 +23,3 @@ class AuxNet(tx.Module):
         x = jax.nn.sigmoid(x)
 
         return x
-
-    def get_config(self):
-        return dict(
-            conv_spec = self.conv_spec,
-            n_groups = self.n_groups,
-            share_weights = self.share_weights,
-        )
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))

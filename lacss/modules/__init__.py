@@ -6,5 +6,4 @@ from .detector import Detector
 from .auxnet import AuxNet
 from .xcit import XCiT
 from .convnext import ConvNeXt
-
 from .lacss import Lacss

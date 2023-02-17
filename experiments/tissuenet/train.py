@@ -30,14 +30,8 @@ learning_rate = 2e-3 * batch_size
 training_epochs = 16
 steps_per_epoch = 2601 // batch_size
 
-platform_lookup = dict(
-    codex = 0,
-    cycif = 1,
-    imc = 2,
-    mibi = 3,
-    mxif = 4,
-    vectra = 5,
-)
+platform_names = ['codex', 'cycif', 'imc', 'mibi', 'mxif', 'vectra']
+tissue_names = ['breast', 'gi', 'immune', 'lung', 'pancreas', 'skin']
 
 def tissue_net_gen_fn(data_path):
     X = np.load(join(data_path, 'X.npy'), mmap_mode='r+')
@@ -63,18 +57,13 @@ def tissue_net_gen_fn(data_path):
             'binary_mask': binary_mask,
             'bboxes': bboxes,
             'mask_labels': y,
-            'platform': platform_lookup[pf],
-            # 'tissue': t,
+            'platform': platform_names.index(pf),
+            'tissue': tissue_names.index(t),
         }
 
 def train_parser(x):
     pf = x['platform']
-    x = lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.15), target_height=544, target_width=544)
-    if tf.random.uniform([]) >=0.5:
-        x['image'] = tf.image.transpose(x['image'])
-        x['binary_mask'] = tf.transpose(x['binary_mask'])
-        x['locations'] = x['locations'][:,::-1]
-    
+    x = lacss.data.parse_train_data_func(x, size_jitter=(0.85, 1.15), target_height=544, target_width=544)    
     x_data = dict(
         image = x['image'],
         gt_locations = x['locations'],
@@ -93,7 +82,7 @@ def prepare_data(n_buckets=8):
             'bboxes': tf.TensorSpec([None, 4], dtype=tf.float32),
             'mask_labels': tf.TensorSpec([None, None], tf.float32),
             'platform': tf.TensorSpec([], tf.int32),
-            #'tissue': tf.TensorSpec([], tf.string),
+            'tissue': tf.TensorSpec([], tf.int32),
         }
 
     ds_train = tf.data.Dataset.from_generator(

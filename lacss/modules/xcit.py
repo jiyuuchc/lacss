@@ -3,6 +3,8 @@ from typing import List
 import jax
 import treex as tx
 from .unet import MixingBlock
+from .types import *
+
 jnp = jax.numpy
 
 ''' XCiT model
@@ -171,7 +173,7 @@ class XCABlock(tx.Module):
 
         return x
 
-class XCiT(tx.Module):
+class XCiT(tx.Module, ModuleConfig):
     def __init__(self, min_feature_level=1, patch_size=8, embed_dim=384, depth=12, n_heads=8, use_bias=True, mlp_ratio=4):
         '''
         Args:
@@ -184,23 +186,16 @@ class XCiT(tx.Module):
             mlp_ratio:
         '''
         super().__init__()
-        self._config_dict = {
-            'min_feature_level': min_feature_level,
-            'patch_size': patch_size,
-            'embed_dim':embed_dim,
-            'depth': depth,
-            'n_heads': n_heads,
-            'use_bias': use_bias,
-            'mlp_ratio': mlp_ratio,
-        }
-
-    def get_config(self):
-        return self._config_dict
-
-    @classmethod
-    def from_config(cls, config):
-        return(cls(**config))
-
+        self._config_dict = dict(
+            min_feature_level=min_feature_level, 
+            patch_size=patch_size, 
+            embed_dim=embed_dim, 
+            depth=depth, 
+            n_heads=n_heads, 
+            use_bias=use_bias,
+            mlp_ratio=mlp_ratio,
+        )
+    
     @tx.compact
     def __call__(self, x: jnp.ndarray) -> list:
         config = self.get_config()

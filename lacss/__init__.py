@@ -1,5 +1,1 @@
-import lacss.data
-import lacss.losses
-import lacss.metrics
-import lacss.ops
-import lacss.modules
+from . import data, losses, metrics, ops, modules

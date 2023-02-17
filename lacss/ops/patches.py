@@ -3,6 +3,10 @@ import jax
 from .boxes import box_iou_similarity
 jnp = jax.numpy
 
+''' Various functions deals with segmentation pathces
+    All functions here takes unbatched input. Use vmap to convert to batched data
+'''
+
 def gather_patches(
     features, 
     locations, 
@@ -15,13 +19,14 @@ def gather_patches(
         patch_size: int
     Returns:
         patches: [N, patch_size, patch_size, C] 
-        yy: [N, patch_size, patch_size]: y coordinates of patches
-        xx: [N, patch_size, patch_size]: x coordinates of patches
+        y0: [N]: y0 coordinates of patches
+        x0: [N]: x0 coordinates of patches
     '''
     height, width, _ = features.shape
     
     locations *= jnp.array([height, width])
-    i_locations = (locations + .5).astype(int)
+    #i_locations = (locations + .5).astype(int)
+    i_locations = locations.astype(int)
     i_locations_x = jnp.clip(i_locations[:, 1], 0, width-1)
     i_locations_y = jnp.clip(i_locations[:, 0], 0, height-1)
     yy, xx = jnp.mgrid[:patch_size, :patch_size] - patch_size // 2
@@ -40,15 +45,15 @@ def gather_patches(
 
     patches = padded_features[yy + padding_size, xx + padding_size, :]
 
-    return patches, yy, xx, remainder
+    return patches, yy[:,0,0], xx[:,0,0], remainder
 
-def _get_patch_data(predictions):
-    if isinstance(predictions, dict):
-        patches = predictions['instance_output']
-        yc = predictions['instance_yc']
-        xc = predictions['instance_xc']
+def _get_patch_data(pred):
+    if isinstance(pred, dict):
+        patches = pred['instance_output']
+        yc = pred['instance_yc']
+        xc = pred['instance_xc']
     else:
-        patches, yc, xc = predictions
+        patches, yc, xc = pred
 
     if patches.ndim > yc.ndim:
         patches = patches.squeeze(-1)
@@ -56,12 +61,12 @@ def _get_patch_data(predictions):
     return patches, yc, xc
 
 def bboxes_of_patches(
-    predictions: Union[Sequence, Dict],
+    pred: Union[Sequence, Dict],
     threshold: float = 0.5
 ) -> jnp.ndarray:
     '''
     Args:
-        predictions: either a tuple or a dict containing three arrays:
+        pred: either a tuple or a dict containing three arrays:
             instance_outputs: [n, patch_size, patch_size, 1] float
             instance_y_coords: [n, patch_size, patch_size] y patch coords
             instance_x_coords: [n, patch_size, patch_size] x patch coords
@@ -70,7 +75,7 @@ def bboxes_of_patches(
         bboxes: [n, 4] int
         bboox for empty patches are filled with -1
     '''
-    patches, yy, xx = _get_patch_data(predictions)
+    patches, yy, xx = _get_patch_data(pred)
 
     _, d0, d1 = patches.shape
     row_mask = jnp.any(patches>threshold, axis=1)
@@ -94,30 +99,26 @@ def bboxes_of_patches(
     return bboxes
 
 def indices_of_patches(
-    predictions: Union[Sequence, Dict],
-    image_shape: Tuple[int, int] = None, 
+    pred: Union[Sequence, Dict],
+    input_size: Tuple[int, int] = None,
     threshold: float = 0.5
     ) -> tuple:
     '''
     Args:
-        predictions: either a tuple or a dict containing three arrays:
-            instance_outputs: [n, patch_size, patch_size, 1] float
-            instance_y_coords: [n, patch_size, patch_size] y patch coords
-            instance_x_coords: [n, patch_size, patch_size] x patch coords
-        image_shape: (height, width) int
+        pred: model output (unbatched):
         threshold: float
     Returns:
         data for MaskIndices
     '''
-    patches, yy, xx = _get_patch_data(predictions)
+    patches, yy, xx = _get_patch_data(pred)
 
     indices = patches >= threshold
     yy = yy[indices]
     xx = xx[indices]
     rowids = jnp.argwhere(indices)[:,0]
 
-    if image_shape is not None:
-        height, width = image_shape
+    if input_size is not None:
+        height, width = input_size
         valid_coords = ((yy >= 0) & (yy < height)) & ((xx >= 0) & (xx < width))
         yy = yy[valid_coords]
         xx = xx[valid_coords]
@@ -125,24 +126,16 @@ def indices_of_patches(
 
     return jnp.stack([yy, xx, rowids], axis=-1)
 
-    # remove empty ones
-    # rowlengths = mask_coords.row_lengths()
-    # rowlengths = tf.boolean_mask(rowlengths, rowlengths>0)
-    # mask_coords = tf.RaggedTensor.from_row_lengths(mask_coords.values, rowlengths)
-
-def iou_patches_and_labels(predictions, labels, BLOCK_SIZE=128):
+def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128):
     ''' Compute iou between two sets of segmentations.
     The first set is defined by patches; the second by image labels
     Args:
-        predictions: either a tuple or a dict containing three arrays:
-            instance_mask: [n, patch_size, patch_size, 1] float
-            instance_yc: [n, patch_size, patch_size] y patch coords
-            instance_xc: [n, patch_size, patch_size] x patch coords
-        labels: (height, width) int, bg_label == 0
+        pred: model output (unbatched):
+        threshold: float
     Returns:
         [n, m] iou values. 
     '''
-    patches, yc, xc = _get_patch_data(predictions)
+    patches, yc, xc = _get_patch_data(pred)
     patches = patches >= .5
     pred_areas = jnp.count_nonzero(patches, axis=(-1,-2))
 
@@ -153,6 +146,7 @@ def iou_patches_and_labels(predictions, labels, BLOCK_SIZE=128):
     all_gt_areas = jnp.count_nonzero(labels[:,:,None] == jnp.arange(max_indices) + 1, axis=(0, 1)) 
 
     ious = []
+    # FIXME change to scan
     for k in range(1, labels.max() + 1, BLOCK_SIZE):
         gt_p = gt_patches == jnp.arange(k, k+BLOCK_SIZE).reshape(-1,1,1,1) # [B, N, s, s]
         gt_areas = all_gt_areas[k-1:k+BLOCK_SIZE-1] 
@@ -163,19 +157,44 @@ def iou_patches_and_labels(predictions, labels, BLOCK_SIZE=128):
     ious = ious[:, :labels.max()]
     return ious
 
-def patches_to_segmentations(predictions, image_size):
+def patches_to_segmentations(pred, input_size, threshold=0.5):
     ''' expand patches to the full image size
     Args:
-        predictions: either a tuple or a dict containing three arrays:
-        image_size: a tuple of (height, width) 
+        pred: model output (unbatched):
+        input_size: tuple(int, int)
+        threshold: float
     Returns:
         segmentations: [n, height, width]
     '''
-    patches, yc, xc = _get_patch_data(predictions)
-
+    patches, yc, xc = _get_patch_data(pred)
     n_patches, patch_size, _  = yc.shape
+
     page_nums = jnp.arange(n_patches)
-    segms = jnp.zeros((n_patches,) + image_size)
+    segms = jnp.zeros((n_patches,) + input_size)
     segms = segms.at[page_nums[:, None, None], yc, xc].set(patches)
 
-    return (segms >= 0.5).astype(int)
+    return (segms >= threshold).astype(int)
+
+def patches_to_label(pred, input_size, score_threshold=0.5, threshold=0.5):
+    ''' convert patches to the image label
+    Args:
+        pred: model output (unbatched):
+        threshold: float
+    Returns:
+        label: [height, width]
+    '''
+    label = jnp.zeros(input_size)
+
+    if 'training_locations' in pred:
+        mask = pred['instance_mask']
+    else:
+        mask = pred['pred_scores'] >= score_threshold
+
+    pr = pred['instance_output']
+    pr = (pr > threshold) * (jnp.arange(pr.shape[0]) + 1)[:, None, None]
+    yc = pred['instance_yc']
+    xc = pred['instance_xc']
+
+    label = label.at[yc, xc].max(pr)
+
+    return label

@@ -3,6 +3,9 @@ import jax
 import treex as tx
 jnp = jax.numpy
 
+from .types import *
+from .se_net import ChannelAttention
+
 ''' Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
 Original implementation: https://github.com/facebookresearch/ConvNeXt
 '''
@@ -16,11 +19,12 @@ class _Block(tx.Module):
     gamma: jnp.ndarray = tx.Parameter.node()
     key: Union[tx.Initializer, jnp.ndarray] = tx.Rng.node()
     
-    def __init__(self, drop_rate=0., layer_scale_init_value=1e-6, kernel_size=7):
+    def __init__(self, drop_rate=0., layer_scale_init_value=1e-6, se_ratio=0, kernel_size=7):
         super().__init__()
         self.drop_rate = drop_rate
         self.layer_scale_init_value = layer_scale_init_value
         self.kernel_size = kernel_size
+        self.se_ratio = se_ratio
         self.key = tx.Initializer(lambda key: jnp.array(key))
 
     def _drop_path(self, x):
@@ -54,6 +58,9 @@ class _Block(tx.Module):
         if scale > 0:
             x = x * self.gamma
 
+        if self.se_ratio > 0:
+            x = ChannelAttention(self.se_ratio)(x)
+
         x = self._drop_path(x)
 
         x = x + shortcut
@@ -83,7 +90,7 @@ class _FPN(tx.Module):
 
         return outputs
 
-class ConvNeXt(tx.Module):
+class ConvNeXt(tx.Module, ModuleConfig):
     """ ConvNeXt
     Args:
         patch_size: for stem default 4
@@ -91,26 +98,33 @@ class ConvNeXt(tx.Module):
         dims (int): Feature dimension at each stage. Default: [96, 192, 384, 768]
         drop_path_rate (float): Stochastic depth rate. Default: 0.
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
-        head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
+        out_channels (int): FPN output channels. Default: 256
     """
     def __init__(
         self,
-        patch_size = 4,
+        patch_size=4,
         depths=[3, 3, 9, 3], 
         dims=[96, 192, 384, 768], 
+        se_ratio = 0,
         drop_path_rate=0., 
-        layer_scale_init_value=1e-6, 
+        layer_scale_init_value=1e-6,
+        out_channels=256,
     ):
         super().__init__()
 
         if patch_size != 2 and patch_size != 4:
             raise ValueError(f'patch_size must be 2 or 4, got {patch_size}')
-        self.patch_size = patch_size
-        self.depths = depths
-        self.dims = dims
-        self.drop_path_rate = drop_path_rate
-        self.layer_scale_init_value = layer_scale_init_value
 
+        self._config_dict = dict(
+            patch_size=patch_size,
+            depths=depths, 
+            dims=dims, 
+            se_ratio = se_ratio,
+            drop_path_rate=drop_path_rate, 
+            layer_scale_init_value=layer_scale_init_value,
+            out_channels=out_channels,
+        )
+    
     @tx.compact
     def __call__(self, x: jnp.ndarray)->jnp.ndarray:
         dp_rate = 0
@@ -125,25 +139,20 @@ class ConvNeXt(tx.Module):
                 x = tx.Conv(self.dims[k], (2,2), strides=(2,2))(x)
 
             for _ in range(self.depths[k]):
-                x = _Block(dp_rate, self.layer_scale_init_value)(x)
+                x = _Block(dp_rate, self.layer_scale_init_value, self.se_ratio)(x)
                 dp_rate += self.drop_path_rate / (sum(self.depths) - 1)
 
             outputs.append(x)
 
-        decoder_out = _FPN(256)(outputs)
+        decoder_out = _FPN(self.out_channels)(outputs)
         keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
+        encoder_out = dict(zip(keys, outputs))
         decoder_out = dict(zip(keys, decoder_out))
 
-        return None, decoder_out
-    
-    def get_config(self):
-        return dict(
-            patch_size = self.patch_size,
-            depths = self.depths,
-            dims = self.dims,
-            drop_path_rate = self.drop_path_rate,
-            layer_scale_init_value = self.layer_scale_init_value,
-        )
+        return encoder_out, decoder_out
+
+
+# utility funcs
 
 model_urls = {
     "convnext_tiny_1k": "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_1k_224_ema.pth",
