@@ -1,6 +1,3 @@
 [submodule "treex"]
 	path = treex
 	url = https://github.com/jiyuuchc/treex.git
-[submodule "elegy"]
-	path = elegy
-	url = https://github.com/jiyuuchc/elegy.git

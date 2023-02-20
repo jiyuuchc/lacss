@@ -105,69 +105,57 @@ class MeanAP():
         self._result = np.array([-1.0] * len(self.thresholds))
 
 class LoiAP(tx.Metric):
-    ap: MeanAP = tx.field(node=False)
+    ap: MeanAP = tx.field(node=False, opaque=True)
     needs_reset = tx.MetricState.node()
 
     def __init__(self, thresholds = [.5], coco_style=False, **kwargs):
         super().__init__(**kwargs)
-        self.ap = MeanAP(thresholds)
+        self.ap = MeanAP([th * th for th in thresholds])
         self.needs_reset = jnp.array(True)
-
+    
     def update(self, preds, gt_locations):
-        def _update_cb(args, transform):
-            if self.needs_reset:
-                self.ap.reset()
-                self.needs_reset = jnp.array(False)
+        if self.needs_reset:
+            self.ap.reset()
+            self.needs_reset = jnp.array(False)
 
-            pred, gt_locs = args
-            n_batch = gt_locs.shape[0]
-            for k in range(n_batch):
-                scores = np.asarray(pred['pred_scores'][k])
-                mask = scores > 0
-                scores = scores[mask]
-                pred_locs = np.asarray(pred['pred_locations'][k])[mask]
+        scores = preds['pred_scores']
+        pred_locations = preds['pred_locations']
+        n_batch = gt_locations.shape[0]
+        for k in range(n_batch):
+            score = scores[k]
+            pred = pred_locations[k]
+            gt = gt_locations[k]
+            row_mask = score > 0
+            col_mask = (gt >= 0).all(axis=-1)
+            dist2 = ((pred[:,None,:] - gt[:,:]) ** 2).sum(axis=-1)
 
-                locs = np.asarray(gt_locs[k])
-                gt_mask = locs[:,0] > 0
-                locs = locs[gt_mask]
-
-                dist2 = ((pred_locs[:,None,:] - locs) ** 2).sum(axis=-1)
-                sm = 1.0 / np.sqrt(dist2)
-                self.ap.update_state(sm, scores)
-
-        hcb.id_tap(_update_cb, (preds, gt_locations))
+            dist2 = np.asarray(1.0 / dist2)
+            dist2 = dist2[row_mask][:, col_mask]
+            score = np.asarray(score)[row_mask]
+            
+            self.ap.update_state(dist2, score)
 
     def compute(self):
-        hcb.barrier_wait()
-
-        def _compute_cb(arg):
-            return self.ap.result()
-
-        return hcb.call(
-            _compute_cb,
-            None,
-            result_shape=jnp.zeros([len(self.ap.thresholds)])
-        )
+        return self.ap.result()
 
 class BoxAP(LoiAP):
     def update(self, preds, gt_boxes):
-        def _update_cb(args, transform):
-            if self.needs_reset:
-                self.ap.reset()
-                self.needs_reset = jnp.array(False)
-
-            box_sms, scores = args
-            n_batch = gt_boxes.shape[0]
-            for k in range(n_batch):
-                sm = box_sms[k]
-                score = scores[k]
-                mask = sm > 0
-                row_mask = mask.any(axis=1)
-                col_mask = mask.any(axis=0)
-                score = score[row_mask]
-                sm = sm[row_mask][:, col_mask]
-                self.ap.update_state(sm, score)
+        if self.needs_reset:
+            self.ap.reset()
+            self.needs_reset = jnp.array(False)
 
         pred_boxes = jax.vmap(bboxes_of_patches)(preds)
-        box_sm = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
-        hcb.id_tap(_update_cb, (box_sm, preds['pred_scores']))
+        box_sms = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
+        scores = preds['pred_scores']
+        n_batch = gt_boxes.shape[0]
+        for k in range(n_batch):
+            sm = box_sms[k]
+            score = scores[k]
+            mask = sm > 0
+            row_mask = mask.any(axis=1)
+            col_mask = mask.any(axis=0)
+
+            score = np.asarray(score)[row_mask]
+            sm = np.asarray(sm)[row_mask][:, col_mask]
+
+            self.ap.update_state(sm, score)

@@ -19,12 +19,11 @@ class _Block(tx.Module):
     gamma: jnp.ndarray = tx.Parameter.node()
     key: Union[tx.Initializer, jnp.ndarray] = tx.Rng.node()
     
-    def __init__(self, drop_rate=0., layer_scale_init_value=1e-6, se_ratio=0, kernel_size=7):
+    def __init__(self, drop_rate=0., layer_scale_init_value=1e-6, kernel_size=7):
         super().__init__()
         self.drop_rate = drop_rate
         self.layer_scale_init_value = layer_scale_init_value
         self.kernel_size = kernel_size
-        self.se_ratio = se_ratio
         self.key = tx.Initializer(lambda key: jnp.array(key))
 
     def _drop_path(self, x):
@@ -45,7 +44,7 @@ class _Block(tx.Module):
 
         if self.initializing():
             self.gamma = scale * jnp.ones((dim))
-            self.key = tx.next_key()
+            # self.key = tx.next_key()
 
         shortcut = x
 
@@ -57,9 +56,6 @@ class _Block(tx.Module):
 
         if scale > 0:
             x = x * self.gamma
-
-        if self.se_ratio > 0:
-            x = ChannelAttention(self.se_ratio)(x)
 
         x = self._drop_path(x)
 
@@ -105,7 +101,6 @@ class ConvNeXt(tx.Module, ModuleConfig):
         patch_size=4,
         depths=[3, 3, 9, 3], 
         dims=[96, 192, 384, 768], 
-        se_ratio = 0,
         drop_path_rate=0., 
         layer_scale_init_value=1e-6,
         out_channels=256,
@@ -119,7 +114,6 @@ class ConvNeXt(tx.Module, ModuleConfig):
             patch_size=patch_size,
             depths=depths, 
             dims=dims, 
-            se_ratio = se_ratio,
             drop_path_rate=drop_path_rate, 
             layer_scale_init_value=layer_scale_init_value,
             out_channels=out_channels,
@@ -139,7 +133,7 @@ class ConvNeXt(tx.Module, ModuleConfig):
                 x = tx.Conv(self.dims[k], (2,2), strides=(2,2))(x)
 
             for _ in range(self.depths[k]):
-                x = _Block(dp_rate, self.layer_scale_init_value, self.se_ratio)(x)
+                x = _Block(dp_rate, self.layer_scale_init_value)(x)
                 dp_rate += self.drop_path_rate / (sum(self.depths) - 1)
 
             outputs.append(x)

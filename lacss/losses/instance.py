@@ -90,7 +90,7 @@ class InstanceOverlapLoss(Loss):
     ):
         if not 'training_locations' in preds:
             return 0.0
-        segs = jnp.ones(input['image'].shape[:-1])
+        segs = jnp.ones(inputs['image'].shape[:-1])
         op = partial(instance_overlap_losses, ignore_seg_los=True)
         return jax.vmap(op)(
             instances = preds['instance_output'],

@@ -121,25 +121,26 @@ def _img_mask_pair_generator(ds_files, normalize=True):
 
         bboxes = []
         locs = []
-        mis = []
-        mi_lengths = []
+        # mis = []
+        # mi_lengths = []
         for prop in regionprops(mask):
             bboxes.append(prop['bbox'])
             locs.append(prop['centroid'])
-            mi = np.array(np.where(prop['image'])).transpose()
-            mi = mi + bboxes[-1][:2]
-            mi_lengths.append(mi.shape[0])
-            mis.append(mi)
+            # mi = np.array(np.where(prop['image'])).transpose()
+            # mi = mi + bboxes[-1][:2]
+            # mi_lengths.append(mi.shape[0])
+            # mis.append(mi)
         bboxes = np.array(bboxes, dtype='float32')
         locs = np.array(locs, dtype='float32')
-        mis = tf.RaggedTensor.from_row_lengths(np.concatenate(mis), mi_lengths)
+        # mis = tf.RaggedTensor.from_row_lengths(np.concatenate(mis), mi_lengths)
         yield {
             'img_id': k,
             'image': img,
             'locations': locs,
             'binary_mask': binary_mask,
             'bboxes': bboxes,
-            'mask_indices': mis
+            'label': mask,
+            # 'mask_indices': mis
         }
 
 def dataset_from_img_mask_pairs(imgfiles, maskfiles, image_shape=[None,None,3], **kwargs):
@@ -148,9 +149,10 @@ def dataset_from_img_mask_pairs(imgfiles, maskfiles, image_shape=[None,None,3], 
         output_signature={
             'img_id': tf.TensorSpec([], dtype=tf.int64),
             'image': tf.TensorSpec(image_shape, dtype=tf.float32),
-            'mask_indices': tf.RaggedTensorSpec([None, None, 2], tf.int64, 1),
+            # 'mask_indices': tf.RaggedTensorSpec([None, None, 2], tf.int64, 1),
             'locations': tf.TensorSpec([None,2], dtype=tf.float32),
             'binary_mask': tf.TensorSpec([None,None], dtype=tf.float32),
             'bboxes': tf.TensorSpec([None,4], dtype=tf.float32),
+            'label': tf.TensorSpec([None,None], dtype=tf.int32)
         }
     )

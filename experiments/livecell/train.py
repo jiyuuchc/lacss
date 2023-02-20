@@ -11,7 +11,7 @@ from os.path import join
 
 import numpy as np
 import optax
-import elegy as eg
+import treex as tx
 import jax
 jnp = jax.numpy
 
@@ -26,26 +26,6 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 import tensorflow as tf
 tf.config.set_visible_devices([], 'GPU')
-
-def cb_fn(epoch, logs, model, ds):
-
-    def pad_to_block_size(x, block_size=256, constant_values=-1.):
-        ns = ((x.shape[0] - 1) // block_size + 1) * block_size
-        padding = ns - x.shape[0]
-        return jnp.pad(x, [[0,padding],[0,0]], constant_values=constant_values)
-
-    metrics = eg.metrics.Metrics([
-        lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
-        lacss.metrics.BoxAP([0.5, 0.75])
-    ])
-    
-    for data in ds:
-        inputs, labels = jax.tree_map(lambda v: jnp.asarray(v), data)
-        labels = jax.tree_map(jax.vmap(pad_to_block_size), labels)
-        preds = model.predict_on_batch(**inputs)
-        metrics.update(preds=preds, **labels)
-        
-    logs.update(metrics.compute())
 
 def train_parser_supervised(inputs):
     inputs = lacss.data.parse_train_data_func_full_annotation(inputs, target_height=544, target_width=544)
@@ -133,32 +113,33 @@ def get_schedule(schedule, batchsize):
         schedules = [optax.cosine_decay_schedule(0.002 * batchsize, steps_per_epoch)] * n_epochs
         boundaries = [steps_per_epoch * i for i in range(1, n_epochs)]
         schedule = optax.join_schedules(schedules, boundaries)
-        optimizer = optax.adamw(schedule)
     else:
         raise ValueError()
 
-    return n_epochs, steps_per_epoch, optimizer
+    return n_epochs, steps_per_epoch, schedule
 
-def get_model(resume, transfer, config, supervised, seed, optimizer):
-    if resume is not None:
-        model = eg.model.model_base.load(resume)
-        print(f'Loaded checkpoint {resume}')
+def get_model(cmd, config, supervised, seed, lr):
+    if cmd == 'resume':
+        cp = lacss.trainer.Trainer.from_checkpoint(config)
+        assert(isinstance(cp, lacss.trainer.Trainer))
+
+        print(f'Loaded checkpoint {config}')
         try:
-            init_epoch = int(resume.split('-')[-1])
+            init_epoch = int(config.split('-')[-1])
         except:
             init_epoch = 0
-        return model, init_epoch        
+        return cp, init_epoch        
 
-    if transfer is not None:
-        model = eg.model.model_base.load(transfer)
-        module = model.module
-        module.freeze(False, inplace=True)
-    elif config is not None:
+    if cmd == 'transfer':
+        cp = lacss.trainer.Trainer.from_checkpoint(config)
+        model = cp.model
+        model.freeze(False, inplace=True)
+    elif cmd == 'config':
         with open(config) as f:
             model_cfg = json.load(f)
-        module = lacss.modules.Lacss.from_config(model_cfg)
+        model = lacss.modules.Lacss.from_config(model_cfg)
     else:
-        raise ValueError('Must specify at least one of the "--resume", "--transfer" or "--config"')
+        raise ValueError('Cmd musst be one of "resume", "transfer" or "config"')
 
     loss = [
         lacss.losses.DetectionLoss(),
@@ -171,27 +152,25 @@ def get_model(resume, transfer, config, supervised, seed, optimizer):
         loss.append(lacss.losses.SupervisedInstanceLoss())
         pass
 
-    model = eg.Model(
-        module = module,     
-        optimizer = optimizer,
+    trainer = lacss.train.Trainer(
+        model = model,
+        optimizer = optax.adamw(lr),
+        losses = loss,
         seed = seed,
-        loss = loss,
     )
     init_epoch = 0
 
-    return model, init_epoch
+    return trainer, init_epoch
 
 @app.command()
 def run_training(
-    datapath: str,
+    cmd: str,
+    config: str,
+    datapath: str = '../livecell_dataset',
     logpath: str = './',
-    config: str = None,
-    resume: str = None,
-    transfer: str = None,
     celltype: int = -1,
     supervised: bool = False,
     seed: int = 42,
-    verbose: int = 2,
     schedule: int = 1,
     batchsize: int = 1,
 ):
@@ -205,24 +184,36 @@ def run_training(
     ds_train, ds_val = prepare_data(datapath, celltype, supervised, batchsize)
     print(ds_train.element_spec)
 
-    n_epochs, steps_per_epoch, optimizer = get_schedule(schedule, batchsize)
-    model, init_epoch = get_model(resume, transfer, config, supervised, seed, optimizer)
+    n_epochs, steps_per_epoch, lr = get_schedule(schedule, batchsize)
+    trainer, init_epoch = get_model(cmd, config, supervised, seed, lr)
 
-    print(json.dumps(model.module.get_config(), indent=2, sort_keys=True))
+    print(json.dumps(trainer.model.get_config(), indent=2, sort_keys=True))
 
-    callbacks = [
-        eg.callbacks.TensorBoard(logpath),
-        eg.callbacks.ModelCheckpoint(path=join(logpath, 'chkpt-{epoch:02d}')),
-        eg.callbacks.LambdaCallback(on_epoch_end = partial(cb_fn, model=model, ds=ds_val)),
+    epoch = init_epoch
+    train_gen = lacss.trainer.TFDatasetAdapter(ds_train).get_dataset()
+    val_gen = lacss.trainer.TFDatasetAdapter(ds_val).get_dataset()
+    val_metrics = [
+        lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
+        lacss.metric.BoxAP([0.5, 0.75])
     ]
-    model.fit(
-        inputs=ds_train, 
-        epochs=n_epochs,
-        steps_per_epoch=steps_per_epoch,
-        initial_epoch=init_epoch,
-        verbose = verbose,
-        callbacks = callbacks,
-    )
+    for steps, logs in enumerate(trainer(train_gen)):
+        if (steps + 1) % steps_per_epoch == 0:
+            epoch += 1
+            print(f'epoch - {epoch}')
+            print(", ".join([f'{k}:{v:.4f}' for k,v in logs.items()]))
+
+            trainer.checkpoint(join(logpath, f'cp-{epoch}'))
+            trainer.reset_metrics()
+
+            var_logs = lacss.train.Tester(
+                model = trainer.model,
+                metrics = val_metrics,
+            ).test_and_compute(val_gen)
+
+            print(", ".join([f'{k}:{v}' for k,v in logs.items()]))
+
+            if epoch == n_epochs:
+                break
 
 if __name__ =="__main__":
     app()

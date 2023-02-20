@@ -191,7 +191,10 @@ def patches_to_label(pred, input_size, score_threshold=0.5, threshold=0.5):
         mask = pred['pred_scores'] >= score_threshold
 
     pr = pred['instance_output']
-    pr = (pr > threshold) * (jnp.arange(pr.shape[0]) + 1)[:, None, None]
+    n = jnp.count_nonzero(pred['instance_mask'])
+    seq = jnp.arange(pr.shape[0])
+    seq = n - jnp.where(seq<n, seq, n)
+    pr = (pr > threshold) * (seq[:, None, None])
     yc = pred['instance_yc']
     xc = pred['instance_xc']
 
