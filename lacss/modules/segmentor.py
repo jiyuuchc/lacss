@@ -39,9 +39,6 @@ class _Encoder(tx.Module):
         return encodings
 
 class Segmentor(tx.Module, ModuleConfig):
-    # mix_bias: jnp.ndarray = tx.Parameter.node()
-    # ra_avg: jnp.ndarray = tx.BatchStat.node()
-    # ra_var: jnp.ndarray = tx.BatchStat.node()
 
     def __init__(
         self,
@@ -50,7 +47,7 @@ class Segmentor(tx.Module, ModuleConfig):
         instance_crop_size: int = 96,
         use_attention: bool = False,
         learned_encoding: bool = False,
-        # masked_batchnorm: bool = True,
+        n_cls: int = -1,
     ):
         """
           Args:
@@ -71,6 +68,7 @@ class Segmentor(tx.Module, ModuleConfig):
             instance_crop_size = instance_crop_size,
             use_attention = use_attention,
             learned_encoding = learned_encoding,
+            n_cls = n_cls,
         )
     
     @tx.compact
@@ -114,21 +112,6 @@ class Segmentor(tx.Module, ModuleConfig):
             encodings = jax.vmap(_Encoder(n_ch, patch_size))(features[str(lvl)], locations)
         patches += encodings
         mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2,3))
-
-        # norm
-        # if self.training:
-        #     avg = jnp.mean(patches, where=mask, axis=(0,1,2,3))
-        #     var = jnp.var(patches, where=mask, axis=(0,1,2,3))
-        #     self.ra_avg = 0.99 * self.ra_avg + 0.01 * avg
-        #     self.ra_var = 0.99 * self.ra_var + 0.01 * var
-        # else:
-        #     avg = self.ra_avg
-        #     var = self.ra_var
-        # patches = (patches - avg) * jax.lax.rsqrt(var + 1e-5) + self.mix_bias
-        # patch_shape = patches.shape
-        # patches = patches.reshape(patch_shape[:-3] + (-1,))
-        # patches = tx.LayerNorm()(patches)
-        # patches = patches.reshape(patch_shape)
         patches = jax.nn.relu(patches)
 
         if self._config_dict['use_attention']:
@@ -165,6 +148,6 @@ class Segmentor(tx.Module, ModuleConfig):
             instance_output = outputs,
             instance_yc = yc,
             instance_xc = xc,
-            instance_logtis = logits,
+            instance_logit = logits,
             instance_mask = mask,
         )

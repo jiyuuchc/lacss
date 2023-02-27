@@ -82,3 +82,12 @@ class LocalizationLossAlt(Loss):
             return regr_loss / cnt
 
         return jax.vmap(_inner)(preds['lpn_regressions'], preds['lpn_gt_regressions'], preds['lpn_gt_scores'])
+
+class LPNLoss(Loss):
+    def __init__(self, delta=1.0, gamma=2.0, **kwargs):
+        super().__init__(**kwargs)
+        self.det_loss = DetectionLoss(gamma=gamma)
+        self.loc_loss = LocalizationLoss(delta=delta)
+    
+    def call(self, preds:dict):
+        return self.det_loss.call(preds=preds) + self.loc_loss(preds=preds)

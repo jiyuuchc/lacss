@@ -3,8 +3,7 @@ import jax
 from treex.losses import Loss
 
 jnp = jax.numpy
-
-EPS = jnp.finfo(float).eps
+EPS = jnp.finfo("float32").eps
 
 def instance_overlap_losses(instances, yc, xc, mask, seg, ignore_seg_loss=False):
     '''
@@ -91,7 +90,7 @@ class InstanceOverlapLoss(Loss):
         if not 'training_locations' in preds:
             return 0.0
         segs = jnp.ones(inputs['image'].shape[:-1])
-        op = partial(instance_overlap_losses, ignore_seg_los=True)
+        op = partial(instance_overlap_losses, ignore_seg_loss=True)
         return jax.vmap(op)(
             instances = preds['instance_output'],
             yc = preds['instance_yc'],

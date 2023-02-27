@@ -1,3 +1,6 @@
 [submodule "treex"]
 	path = treex
 	url = https://github.com/jiyuuchc/treex.git
+[submodule "treeo"]
+	path = treeo
+	url = https://github.com/jiyuuchc/treeo.git

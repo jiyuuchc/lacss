@@ -52,7 +52,7 @@ class SpatialAttention(tx.Module):
 
         y = jnp.stack([x.max(axis=-1), x.mean(axis=-1)], axis=-1)
         y = tx.Conv(1, [self.filter_size, self.filter_size])(y)
-        y = jnp.nn.sigmoid(y)
+        y = jax.nn.sigmoid(y)
 
         y = x * y
 

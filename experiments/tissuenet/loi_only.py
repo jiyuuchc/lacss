@@ -2,14 +2,11 @@ from logging.config import valid_ident
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-import json
+import os, io, json, pickle
 from functools import partial
-import os
 from os.path import join
-import pickle
 
 from tqdm import tqdm
-from skimage.measure import regionprops
 import numpy as np
 import optax
 import treex as tx
@@ -24,128 +21,112 @@ app = typer.Typer(pretty_exceptions_enable=False)
 import tensorflow as tf
 tf.config.set_visible_devices([], 'GPU')
 
-def _to_mask(img, pred):
-    label = jnp.zeros(img.shape[:-1])
-    label = label.at[pred['instance_yc'], pred['instance_xc']].max(pred['instance_output'])
-    return label
-
-class SizeLoss(tx.Loss):
-    def __init__(self, a, **kwargs):
-        super().__init__(**kwargs)
-        self.a = a
-
-    def call(self, preds):
-        valid_locs = (preds['instance_yc'] >= 0) & (preds['instance_yc'] < 512) & (preds['instance_xc'] >= 0) & (preds['instance_xc'] < 512)
-        areas = jnp.sum(preds['instance_output'], axis=(2,3), where=valid_locs, keepdims=True) / 96 / 96
-        loss =  self.a / (jnp.sqrt(areas)+1e-8)
-        loss = jnp.sum(loss, axis=1, where=preds['instance_mask']) / (jnp.count_nonzero(preds['instance_mask'], axis=(1,2,3)) + 1e-8)
-        return loss
-
-class LOIInstanceLoss(lacss.losses.InstanceLoss):
-    def call(self, preds):
-        mask_pred = jax.lax.stop_gradient((preds['fg_pred'] >= .5).astype("float32"))
-        return super().call(preds=preds, binary_mask = mask_pred.squeeze(-1))
-
-class LOIMaskPredLoss(tx.Loss):
-    def call(self, inputs, preds):
-        mask_from_instances = jax.lax.stop_gradient((jax.vmap(_to_mask)(inputs['image'], preds) >= 0.5)).astype(int)
-        mask_from_instances = mask_from_instances[..., None]
-        p_t = mask_from_instances * preds['fg_pred'] + (1 - mask_from_instances) * (1.0 - preds['fg_pred'])
-        bce = - jnp.log(jnp.clip(p_t, 1e-9, 1.0)).mean(axis=(1,2,3))
-        return bce
+from data import *
+from util import *
 
 class ForegroundPredict(tx.Module):
     @tx.compact
     def __call__(self, image):
-        x = image
-        x = tx.Conv(24, (3,3), strides=(2,2), use_bias=False)(x)
+        orig = image
+        x = tx.Conv(24, (3,3), strides=(2,2), use_bias=False)(image)
         x = tx.LayerNorm(use_scale=False)(x)
         x = jax.nn.relu(x)
-
-        x = tx.Conv(64, (3,3), use_bias=False)(x)
-        x = tx.LayerNorm(use_scale=False)(x)
-        x = jax.nn.relu(x)
-
-        x = tx.Conv(64, (3,3), use_bias=False)(x)
-        x = tx.LayerNorm(use_scale=False)(x)
-        x = jax.nn.relu(x)
-
-        x = tx.ConvTranspose(1, (2,2), strides=(2,2))(x)
-        x = jax.nn.sigmoid(x)
+        for ch in (64, 64):
+            x = tx.Conv(ch, (3,3), use_bias=False)(x)
+            x = tx.LayerNorm(use_scale=False)(x)
+            x = jax.nn.relu(x)
+        x = lacss.modules.se_net.SpatialAttention()(x)
+        x = jax.image.resize(x, orig.shape[:-1] + (1,), 'cubic')
+        x = jnp.concatenate([orig, x], axis=-1)
+        x = tx.Conv(6, (3,3))(x)
 
         return x
 
+class SegLoss(tx.Loss):
+    def call(self, preds, tissue_type):
+        @jax.vmap
+        def _to_patch(img, yc, xc):
+            img = jnp.pad(img, [[48,48],[48,48]], constant_values=-1.)
+            return img[yc+48, xc+48]
+
+        fg = jax.vmap(lambda y,k: y[..., k])(preds['fg_pred'], tissue_type)
+        fg = jax.lax.stop_gradient(fg)
+        weights = jax.nn.tanh(fg)
+        yc = preds['instance_yc']
+        xc = preds['instance_xc']
+        weight_patch = _to_patch(weights, yc, xc)
+        loss = - preds['instance_output'] * weight_patch
+        loss = loss.sum(where=preds['instance_mask'])
+        loss += jnp.count_nonzero(fg>0)
+        loss = loss / (jnp.count_nonzero(preds['instance_mask']) + 1e-8)
+        loss = loss / 96 /96
+        
+        return loss
+
+class AuxSegLoss(tx.Loss):
+    def call(self, preds, tissue_type):
+        @jax.vmap
+        def _to_patch(img, yc, xc):
+            img = jnp.pad(img, [[48,48],[48,48]], constant_values=-1.)
+            return img[yc+48, xc+48]
+
+        @jax.vmap
+        def _max_merge(pred):
+            label = jnp.zeros([512,512])
+            label = jnp.pad(label, [[48,48],[48,48]])
+            label -= 1e8
+            yc, xc = pred['instance_yc'], pred['instance_xc']
+            label = label.at[yc+48, xc+48].max(pred['instance_logit'])
+            label = label[48:-48, 48:-48]
+            return label
+        
+        fg = jax.vmap(lambda y,k: y[..., k])(preds['fg_pred'], tissue_type)
+        fg = jax.nn.tanh(fg)
+        fg2 = _max_merge(preds)
+        loss = 1. - jax.nn.tanh(fg2) * fg
+        loss = loss.mean(axis=(1,2))
+ 
+        return loss
+
+def _to_mask(img, pred):
+    label = jnp.zeros(img.shape[:-1])
+    label = jnp.pad(label, [[48,48],[48,48]])
+    yc, xc = pred['instance_yc'], pred['instance_xc']
+    label = label.at[yc+48, xc+48].max(pred['instance_output'])
+    label = label[48:-48, 48:-48]
+    return label
+
+class LOIMaskPredLoss(tx.Loss):
+    def call(self, inputs, preds, tissue_type):
+
+        mask_from_instances = jax.vmap(_to_mask)(inputs['image'], preds) >= 0.5
+        mask_from_instances = jax.lax.stop_gradient(mask_from_instances)
+
+        fg = jax.vmap(lambda y,k: y[..., k])(preds['fg_pred'], tissue_type)
+
+        p_t = mask_from_instances * (-fg) + (1 - mask_from_instances) * (fg)
+        p_t = jnp.exp(p_t) + 1.
+        bce = jnp.log(p_t).mean(axis=(1,2))
+
+        return bce
+    
 class LOILacss(tx.Module):
-    def __init__(self, lacss_module, **kwargs):
+    def __init__(self, lacss_module, fg_module, **kwargs):
         super().__init__(**kwargs)
         self.lacss_module = lacss_module
-    
-    @tx.compact
+        self.fg_module = fg_module
+        
+        assert lacss_module.initialized
+        assert fg_module.initialized
+
+        self._initialized=True
+        
     def __call__(self, image, gt_locations=None):
         preds = self.lacss_module(image, gt_locations)
         preds.update(dict(
-            fg_pred = ForegroundPredict()(image)
+            fg_pred = self.fg_module(image)
         ))
         return preds
-
-def pad_to(x, multiple=256):
-    x = np.asarray(x)
-    s = x.shape[0]
-    ns = ((s - 1) // multiple + 1) * multiple
-    padding = ns - s
-    return np.pad(x, [[0,padding],[0,0]], constant_values=-1.0)
-
-def train_dataset(data_path):
-    X = np.load(join(data_path, 'train', 'X.npy'), mmap_mode='r+')
-    Y = np.load(join(data_path, 'train', 'y.npy'), mmap_mode='r+')
-    S = np.arange(len(X))
-    np.random.shuffle(S)
-    for k in S:
-        image = X[k].astype('float32')
-        label = Y[k][..., 0]
-        locs = np.asarray([prop['centroid'] for prop in regionprops(label)])
-        mask = np.zeros(image.shape[:-1])
-
-        # tf pipeline
-        image = tf.image.random_contrast(image, 0.6, 1.4)
-        image = tf.image.random_brightness(image, 0.3)
-        if tf.random.uniform([]) >= .5:
-            image = tf.image.transpose(image)
-            locs = locs[..., ::-1]        
-        augmented = lacss.data.parse_train_data_func(dict(
-            image = image,
-            locations = locs,
-            binary_mask = mask,
-        ), size_jitter=[.85, 1.15])
-
-        # back to numpy
-        image = augmented['image'].numpy()
-        locs = augmented['locations'].numpy()
-
-        data = (
-            dict(image = image,gt_locations = pad_to(locs),),
-            dict(mask_labels = label),
-        )
-        data = jax.tree_map(lambda v: jnp.asarray(v)[None,...], data)        
-
-        yield data
-
-def val_dataset(data_path):
-    X = np.load(join(data_path, 'val', 'X.npy'), mmap_mode='r+')
-    Y = np.load(join(data_path, 'val', 'y.npy'), mmap_mode='r+')
-    for k in range(len(X)):
-        image = X[k].astype('float32')
-        label = Y[k][..., 0]
-        props = regionprops(label)
-        locs = np.asarray([prop['centroid'] for prop in props])
-        bboxes = np.asarray([prop['bbox'] for prop in props])
-        data = (
-            dict(image = image),
-            dict(gt_boxes = pad_to(bboxes), gt_locations = pad_to(locs)),
-            )
-        data = jax.tree_map(lambda v: jnp.asarray(v)[None,...], data)        
-
-        yield data
 
 @app.command()
 def run_training(
@@ -154,6 +135,8 @@ def run_training(
     logpath:str='./', 
     n_epochs:int=30,
     init_epoch:int=0,
+    size_loss:float=1e-3,
+    lr:float = 1e-3,
     seed:int=42
 ):
     with open(checkpoint, 'rb') as f:
@@ -161,18 +144,19 @@ def run_training(
     if isinstance(cp, tx.Module):
         lacss_module = cp
         lacss_module.detector._config_dict['test_max_output'] = 1024
+        fg_module = ForegroundPredict().init(key=1323, inputs=(jnp.zeros([1,512,512,2])))
+        loi_model = LOILacss(lacss_module, fg_module)
 
-        loi_model = LOILacss(lacss_module)
         trainer = lacss.train.Trainer(
             model = loi_model,
             losses = [
-                lacss.losses.DetectionLoss(),
-                lacss.losses.LocalizationLoss(),
-                SizeLoss(1e-3),
-                LOIMaskPredLoss(),
-                LOIInstanceLoss(),
+                lacss.losses.LPNLoss(),
+                SizeLoss(size_loss),
+                lacss.losses.InstanceOverlapLoss(),
+                lacss.losses.InstanceEdgeLoss(),
+                AuxSegLoss(),
             ],
-            optimizer = optax.adamw(0.001),
+            optimizer = optax.adamw(lr),
             seed=seed,
         )
     else:
@@ -180,12 +164,18 @@ def run_training(
 
     assert isinstance(trainer, lacss.train.Trainer)
 
-    ds_train = partial(train_dataset, data_path = datapath)
+    ds_train = partial(train_dataset, data_path = datapath, supervised=False)
     ds_val = partial(val_dataset, data_path = datapath)
     test_metrics = tx.metrics.Metrics([
         lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
         lacss.metrics.BoxAP([0.5, 0.75])
     ])
+
+    file_writer = tf.summary.create_file_writer(join(logpath, 'train'))
+    with file_writer.as_default():
+        tf.summary.image("inputs", sample_images(datapath), step=0, max_outputs=8)
+
+    trainer.model.unfreeze(inplace=True)
     for epoch in range(init_epoch+1, n_epochs+1):
         print(f'epoch-{epoch}')
         for logs in tqdm(trainer(ds_train)):
@@ -197,6 +187,13 @@ def run_training(
         val_logs = trainer.test_and_compute(ds_val, test_metrics, lacss.train.Core)
         for k,v in val_logs.items():
             print(f'{k}: {v}')
+
+        preds = sample_prediction(datapath, trainer.model.train())
+        label = to_label(preds)[...,None]
+        label = label / label.max()
+        with file_writer.as_default():
+            tf.summary.image("fg_pred", preds['fg_pred'], step=epoch, max_outputs=8)
+            tf.summary.image("label_pred", label, step=epoch, max_outputs=8)
 
 if __name__ == "__main__":
     app()

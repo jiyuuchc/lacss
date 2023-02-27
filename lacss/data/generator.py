@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import json
 import imageio
+import glob
 try:
     from pycocotools.coco import COCO
 except:
@@ -36,7 +37,10 @@ def _coco_generator(annotation_file, image_path):
         mis = np.concatenate(mis, dtype='int64')
         rls = np.array(rls, dtype='int64')
 
-        image = imageio.imread(join(image_path, imginfo['filename']))
+        filepath = glob.glob(join(image_path, '**', imginfo['file_name']))
+        assert len(filepath) == 1
+
+        image = imageio.imread(filepath[0])
         if len(image.shape) == 2:
             image = image[:,:,None]
         image = (image / 255.0).astype('float32')
@@ -53,6 +57,7 @@ def _coco_generator(annotation_file, image_path):
             'locations': locs,
             'binary_mask': binary_mask,
             'bboxes': bboxes,
+            'filename': imginfo['file_name'],
         }
 
 def dataset_from_coco_annotations(annotation_file, image_path, image_shape=[None, None, 3]):
@@ -65,6 +70,7 @@ def dataset_from_coco_annotations(annotation_file, image_path, image_shape=[None
             'locations': tf.TensorSpec([None,2], dtype=tf.float32),
             'binary_mask': tf.TensorSpec([None,None], dtype=tf.float32),
             'bboxes': tf.TensorSpec([None,4], dtype=tf.float32),
+            'filename': tf.TensorSpec([], dtype=tf.string)
         }
     )
 
