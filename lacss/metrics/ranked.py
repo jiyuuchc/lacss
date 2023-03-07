@@ -1,10 +1,9 @@
-import numpy as np
 import jax
-import treex as tx
-import jax.experimental.host_callback as hcb
-from ..ops import *
+import jax.numpy as jnp
+import numpy as np
 
-jnp = jax.numpy
+from .metric import Metric
+from ..ops import *
 
 '''
 metrics classes for computing coco-style AP metrics.
@@ -56,8 +55,8 @@ def np_compute_ap(similarity_matrix, thresholds):
 
     return np.array(apmks, np.float32)
 
-class MeanAP():
-    ''' compute mAP based on similarity_matrix and score.
+class AP(Metric):
+    ''' compute AP based on similarity_matrix and score.
       These are numpy functions
       Usage:
         m = MeanAP([threshold_1, threshold_2,...])
@@ -68,9 +67,10 @@ class MeanAP():
     def __init__(self,thresholds=[0.5], coco_style=False):
         self.thresholds = thresholds
         self.coco_style=coco_style
+        self.name = 'AP'
         self.reset()
 
-    def update_state(self, sm, scores):
+    def update(self, sm, scores):
         self.cell_counts += sm.shape[1]
         self.scores.append(scores)
         for th, indicators in zip(self.thresholds, self.indicator_list):
@@ -79,7 +79,7 @@ class MeanAP():
 
         self._result = None
 
-    def result(self):
+    def compute(self):
         if self._result is not None:
             return self._result
 
@@ -104,20 +104,13 @@ class MeanAP():
         self.indicator_list = [[] for _ in range(len(self.thresholds))]
         self._result = np.array([-1.0] * len(self.thresholds))
 
-class LoiAP(tx.Metric):
-    ap: MeanAP = tx.field(node=False, opaque=True)
-    needs_reset = tx.MetricState.node()
+class LoiAP(AP):
 
-    def __init__(self, thresholds = [.5], coco_style=False, **kwargs):
-        super().__init__(**kwargs)
-        self.ap = MeanAP([th * th for th in thresholds])
-        self.needs_reset = jnp.array(True)
+    def __init__(self, thresholds = [.5], **kwargs):
+        super().__init__([th * th for th in thresholds], **kwargs)
+        self.name = 'LoiAP'
     
-    def update(self, preds, gt_locations):
-        if self.needs_reset:
-            self.ap.reset()
-            self.needs_reset = jnp.array(False)
-
+    def update(self, preds, gt_locations, **kwargs):
         scores = preds['pred_scores']
         pred_locations = preds['pred_locations']
         n_batch = gt_locations.shape[0]
@@ -133,17 +126,14 @@ class LoiAP(tx.Metric):
             dist2 = dist2[row_mask][:, col_mask]
             score = np.asarray(score)[row_mask]
             
-            self.ap.update_state(dist2, score)
+            super().update(dist2, score)
 
-    def compute(self):
-        return self.ap.result()
+class BoxAP(AP):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = 'BoxAP'
 
-class BoxAP(LoiAP):
-    def update(self, preds, gt_boxes):
-        if self.needs_reset:
-            self.ap.reset()
-            self.needs_reset = jnp.array(False)
-
+    def update(self, preds, gt_boxes, **kwargs):
         pred_boxes = jax.vmap(bboxes_of_patches)(preds)
         box_sms = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
         scores = preds['pred_scores']
@@ -158,4 +148,4 @@ class BoxAP(LoiAP):
             score = np.asarray(score)[row_mask]
             sm = np.asarray(sm)[row_mask][:, col_mask]
 
-            self.ap.update_state(sm, score)
+            super().update(sm, score)

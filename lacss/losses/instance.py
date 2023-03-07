@@ -1,14 +1,15 @@
 from functools import partial
 import jax
-from treex.losses import Loss
+from ..train.loss import Loss
 
 jnp = jax.numpy
 EPS = jnp.finfo("float32").eps
 
-def instance_overlap_losses(instances, yc, xc, mask, seg, ignore_seg_loss=False):
+def instance_overlap_losses(instances, instance_logit, yc, xc, mask, seg, ignore_seg_loss=False):
     '''
     Args: 
         instances: [N, H, W]
+        instances_logit: [N, H, W]
         yc: [N, H, W]
         xc: [N, H, W]
         mask: [N, 1, 1]
@@ -24,20 +25,19 @@ def instance_overlap_losses(instances, yc, xc, mask, seg, ignore_seg_loss=False)
     yc += padding_size
     xc += padding_size
 
-    seg = jnp.pad(seg, padding_size).astype(float)
-    log_yi_sum = (1.0 - seg) * (-2.0)
-    # else:
-    #     h = pred['height']
-    #     w = pred['width']
-    #     log_yi_sum = jnp.zeros([h + padding_size * 2, w + padding_size * 2])
+    seg = jnp.pad(seg, padding_size).astype(instances.dtype)
+    if not ignore_seg_loss:
+        loss = (seg.sum() - instances.sum()) / patch_size / patch_size / (n_instances+EPS)
+        log_yi_sum = (1.0 - seg) * (-2.0)
+    else:
+        loss = 0.
+        log_yi_sum = jnp.zeros_like(seg)
 
-    log_yi = jnp.log(jnp.clip(1.0 - instances, EPS, 1.0))
+    log_yi = -jnp.log(1 + jnp.exp(-instance_logit))
     log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
     log_yi = log_yi_sum[yc, xc] - log_yi
 
-    loss = -(instances * log_yi).mean(axis=(1,2), keepdims=True).sum(where=mask) / (n_instances+1e-8)
-    if not ignore_seg_loss:
-        loss += (seg.sum() - instances.sum()) / patch_size / patch_size / (n_instances+1e-8)
+    loss = loss - (instances * log_yi).mean(axis=(1,2), keepdims=True).sum(where=mask) / (n_instances+EPS)
 
     return loss
 
@@ -61,7 +61,7 @@ def supervised_segmentation_losses(instances, yc, xc, mask, gt_label):
     p_t = gt_patches * instances + (1 - gt_patches) * (1.0 - instances)
     bce = - jnp.log(jnp.clip(p_t, EPS, 1.0))
 
-    loss = bce.mean(axis=(1,2), keepdims=True).sum(where=mask) / (mask.sum() + 1e-8)
+    loss = bce.mean(axis=(1,2), keepdims=True).sum(where=mask) / (mask.sum() + EPS)
 
     return loss
 
@@ -69,12 +69,14 @@ class InstanceLoss(Loss):
     def call(
         self,
         binary_mask: jnp.ndarray,
-        preds: dict, 
+        preds: dict,
+        **kwargs
     ):
         if not 'training_locations' in preds:
             return 0.0
         return jax.vmap(instance_overlap_losses)(
             instances = preds['instance_output'],
+            instance_logit = preds['instance_logit'],
             yc = preds['instance_yc'],
             xc = preds['instance_xc'],
             mask = preds['instance_mask'],
@@ -85,7 +87,8 @@ class InstanceOverlapLoss(Loss):
     def call(
         self,
         inputs: dict,
-        preds: dict, 
+        preds: dict,
+        **kwargs
     ):
         if not 'training_locations' in preds:
             return 0.0
@@ -93,6 +96,7 @@ class InstanceOverlapLoss(Loss):
         op = partial(instance_overlap_losses, ignore_seg_loss=True)
         return jax.vmap(op)(
             instances = preds['instance_output'],
+            instance_logit = preds['instance_logit'],
             yc = preds['instance_yc'],
             xc = preds['instance_xc'],
             mask = preds['instance_mask'],
@@ -104,6 +108,7 @@ class SupervisedInstanceLoss(Loss):
         self,
         mask_labels: jnp.ndarray,
         preds: dict,
+        **kwargs
     ):
         if not 'training_locations' in preds:
             return 0.0

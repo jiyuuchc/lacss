@@ -1,63 +1,49 @@
-from typing import Tuple
 from functools import partial
+from typing import Optional, Sequence, Union, List, Tuple
+
 import jax
-import treex as tx
-jnp = jax.numpy
+import jax.numpy as jnp
+import flax.linen as nn
 
-from .se_net import ChannelAttention
+from .common import ChannelAttention
 from ..ops import locations_to_labels
-from .types import ModuleConfig
 
-class LPN(tx.Module, ModuleConfig):
+class LPN(nn.Module):
+    """
+        Args:
+        in_channels: number of channels in input feature
+        feature_level: input feature level default 3
+        conv_layers: conv layer spec
+        with_channel_attention: whether include channel attention
+    """
+    feature_levels: Sequence[int] = (4,3,2)
+    conv_spec: Tuple[Sequence[int], Sequence[int]] = ((256,256,256,256),())
+    detection_roi: float = 8.0
 
-    def __init__(
-        self,
-        feature_levels: Tuple[int] = (4,3,2),
-        conv_spec: Tuple[Tuple[int], Tuple[int]] = ((256,256,256,256),()),
-        detection_roi: float = 8.0,
-    ):
-        """
-          Args:
-            in_channels: number of channels in input feature
-            feature_level: input feature level default 3
-            conv_layers: conv layer spec
-            with_channel_attention: whether include channel attention
-        """
-
-        super().__init__()
-
-        self._config_dict = dict(
-            feature_levels = feature_levels,
-            conv_spec = conv_spec,
-            detection_roi = detection_roi,
-            )
-    
-    @tx.compact
+    @nn.compact
     def _process_feature(self, feature: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        conv_spec = self._config_dict['conv_spec']
+        conv_spec = self.conv_spec
 
         x = feature
 
         for n_ch in conv_spec[0]:
-            x = tx.Conv(n_ch, (3,3), use_bias=False)(x)
-            # x = tx.BatchNorm()(x, use_running_average=False)
-            x = tx.GroupNorm(num_groups=n_ch)(x)
+            x = nn.Conv(n_ch, (3,3), use_bias=False)(x)
+            x = nn.GroupNorm(num_groups=n_ch)(x)
             x = jax.nn.relu(x)
 
         for n_ch in conv_spec[1]:
-            x = tx.Conv(n_ch, (1,1), use_bias=False)(x)
-            # x = tx.BatchNorm()(x, use_running_average=False)
-            x = tx.GroupNorm(num_groups=n_ch)(x)
+            x = nn.Conv(n_ch, (1,1), use_bias=False)(x)
+            x = nn.GroupNorm(num_groups=n_ch)(x)
             x = jax.nn.relu(x)
 
-        scores_out = tx.Conv(1, (1,1))(x)
+        scores_out = nn.Conv(1, (1,1))(x)
         scores_out = jax.nn.sigmoid(scores_out)
 
-        regression_out = tx.Conv(2, (1,1))(x)
+        regression_out = nn.Conv(2, (1,1))(x)
 
         return scores_out, regression_out
 
-    def __call__(self, inputs: dict, scaled_gt_locations: jnp.ndarray = None) -> dict:
+    def __call__(self, inputs: dict, scaled_gt_locations: jnp.ndarray = None, *, training=None) -> dict:
         '''
         Args:
             inputs: feature dict: {'lvl': [B, H, W, C]}
@@ -84,7 +70,7 @@ class LPN(tx.Module, ModuleConfig):
             all_scores[str(lvl)] = score
             all_regrs[str(lvl)] = regression
 
-            if self.training and scaled_gt_locations is not None:
+            if training and scaled_gt_locations is not None:
                 op = partial(
                     locations_to_labels, 
                     target_shape = feature.shape[-3:-1],
@@ -97,11 +83,8 @@ class LPN(tx.Module, ModuleConfig):
         outputs = dict(
             lpn_scores = all_scores,
             lpn_regressions = all_regrs,
+            lpn_gt_scores = all_gt_scores,
+            lpn_gt_regressions = all_gt_regrs
         )
-        if self.training and scaled_gt_locations is not None:
-            outputs.update(dict(
-                lpn_gt_scores = all_gt_scores,
-                lpn_gt_regressions = all_gt_regrs
-            ))
 
         return outputs

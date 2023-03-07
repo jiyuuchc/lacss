@@ -1,41 +1,28 @@
+from functools import partial
 from typing import Optional, Sequence, Union, List, Tuple
 import jax
-import treex as tx
+import jax.numpy as jnp
+import flax.linen as nn
 from ..ops import location_matching, sorted_non_max_suppression
-from .types import *
 
 jnp = jax.numpy
 
-class Detector(tx.Module, ModuleConfig):
+class Detector(nn.Module):
     ''' A weightless layer that conver LPN output to a list of locations
     '''
 
-    def __init__(
-        self,
-        train_nms_threshold: float = 8.0,
-        train_pre_nms_topk: int = -1,
-        train_max_output: int = 768,
-        train_min_score: float = 0.2,
-        max_proposal_offset: float = 12,
-        test_nms_threshold: float = 8.0,
-        test_pre_nms_topk: int = -1,
-        test_max_output: int = 768,
-        test_min_score:float = 0.25,
-    ):
-        super().__init__()
-        self._config_dict = dict(
-            train_nms_threshold = train_nms_threshold,
-            train_pre_nms_topk = train_pre_nms_topk,
-            train_max_output = train_max_output,
-            train_min_score = train_min_score,
-            max_proposal_offset = max_proposal_offset,
-            test_nms_threshold = test_nms_threshold,
-            test_pre_nms_topk = test_pre_nms_topk,
-            test_max_output =test_max_output,
-            test_min_score = test_min_score,
-        )
-    
-    def _proposal_locations(self, lpn_scores, lpn_regression):
+    train_nms_threshold: float = 8.0
+    train_pre_nms_topk: int = -1
+    train_max_output: int = 768
+    train_min_score: float = 0.2
+    max_proposal_offset: float = 12
+    test_nms_threshold: float = 8.0
+    test_pre_nms_topk: int = -1
+    test_max_output: int = 768
+    test_min_score:float = 0.25
+    training: bool = True
+
+    def _proposal_locations(self, lpn_scores, lpn_regression, training:bool = None):
         '''
         Produce a list of proposal locations based on predication map, remove redundency with non_max_suppression
         Args:
@@ -45,7 +32,7 @@ class Detector(tx.Module, ModuleConfig):
             scores: [N], sorted scores
             locations: [N, 2], proposed location
         '''
-        if self.training:
+        if training:
             distance_threshold = self.train_nms_threshold
             output_size = self.train_max_output
             topk = self.train_pre_nms_topk
@@ -134,7 +121,9 @@ class Detector(tx.Module, ModuleConfig):
         self, 
         scores: jnp.ndarray,
         regressions: jnp.ndarray, 
-        gt_locations: jnp.ndarray = None
+        gt_locations: jnp.ndarray = None,
+        *,
+        training: bool = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         '''
         Args:
@@ -156,20 +145,20 @@ class Detector(tx.Module, ModuleConfig):
         scores = jax.lax.stop_gradient(scores)
         regressions = jax.lax.stop_gradient(regressions)
 
-        if self.training and self.max_proposal_offset <= 0:
+        if training and self.max_proposal_offset <= 0:
             return dict(
                 training_locations = gt_locations,
             )
-
-        proposed_scores, proposed_locations = jax.vmap(self._proposal_locations)(
+        proposed_scores, proposed_locations = jax.vmap(self._proposal_locations, in_axes=(0,0,None))(
             scores, 
             regressions,
+            training
         )
         outputs = dict(
                 pred_locations = proposed_locations,
                 pred_scores = proposed_scores,
             )
-        if self.training:
+        if training:
             outputs.update(dict(
                 training_locations = jax.vmap(self._gen_train_locations)(
                     gt_locations,

@@ -192,7 +192,7 @@ def has_batch_size(
     batch_elems: tp.Tuple[tp.Any, tp.Any, tp.Any], batch_size: int
 ) -> bool:
 
-    sizes: tp.Set[int] = set(x.shape[0] for x in jax.tree_leaves(batch_elems))
+    sizes: tp.Set[int] = set(x.shape[0] for x in jax.tree_util.tree_leaves(batch_elems))
 
     if len(sizes) == 0:
         return True

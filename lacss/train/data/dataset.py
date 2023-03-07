@@ -254,7 +254,7 @@ class MultiProcessIterator:
         samples = async_map_result.get(timeout)
         batch = get_batch_fn(self.ds)(samples)
         # make sure the batch is transferred to the device
-        batch = jax.tree_map(jnp.asarray, batch)
+        batch = jax.tree_util.tree_map(jnp.asarray, batch)
         return batch
 
 

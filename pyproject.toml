@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "lacss"
+version = "0.1.0"
+description = "Cell segmentation and tracking"
+authors = ["Ji Yu <jyu@uchc.edu>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.8, <3.11"
+flax = "^0.6.6"
+tensorflow-cpu = "^2.8.0"
+tqdm = "^4.65.0"
+numpy = "^1.24.1"
+imageio = "^2.26.0"
+scikit-image = "^0.20.0"
+cloudpickle = "^2.2.1"
+
+[tool.poetry.dev-dependencies]
+jax = "0.4.2"
+jaxlib = "0.4.1+cuda11.cudnn82"
+typer = ">=0.4.0"
+tensorflow-cpu = "^2.8.0"
+
+[[tool.poetry.source]]
+name = "jax"
+url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
+default = false
+secondary = false
+
+
+[tool.poetry.group.dev.dependencies]
+setuptools = "67.4.0"
+pycocotools = "^2.0.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

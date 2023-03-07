@@ -1,4 +1,3 @@
-from operator import gt
 import jax
 jnp = jax.numpy
 

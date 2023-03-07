@@ -2,14 +2,16 @@ from functools import partial
 from typing import Optional
 import jax
 import optax
-from treex.losses import Loss
+from ..train.loss import Loss
 jnp = jax.numpy
+
+EPS = jnp.finfo("float32").eps
 
 def _binary_focal_crossentropy(pred, gt, gamma=2.0):
     p_t = gt * pred + (1 - gt) * (1.0 - pred)
     focal_factor = (1.0 - p_t) ** gamma
 
-    bce = - jnp.log(jnp.clip(p_t, jnp.finfo(float).eps, 1.0))
+    bce = - jnp.log(jnp.clip(p_t, EPS, 1.0))
 
     return focal_factor * bce
 
@@ -21,6 +23,7 @@ class DetectionLoss(Loss):
     def call(
         self, 
         preds: dict,
+        **kwargs
     ) -> jnp.ndarray:
         def _inner(scores, gt_scores):
             score_loss = 0.0
@@ -44,6 +47,7 @@ class LocalizationLoss(Loss):
     def call(
         self, 
         preds: dict,
+        **kwrags
     ) -> jnp.ndarray:
 
         def _inner(regrs, gt_regrs, gt_scores):
@@ -68,6 +72,7 @@ class LocalizationLossAlt(Loss):
     def call(
         self, 
         preds: dict,
+        **kwargs
     ) -> jnp.ndarray:
 
         def _inner(regrs, gt_regrs, gt_scores):
@@ -89,5 +94,5 @@ class LPNLoss(Loss):
         self.det_loss = DetectionLoss(gamma=gamma)
         self.loc_loss = LocalizationLoss(delta=delta)
     
-    def call(self, preds:dict):
+    def call(self, preds:dict, **kwargs):
         return self.det_loss.call(preds=preds) + self.loc_loss(preds=preds)
