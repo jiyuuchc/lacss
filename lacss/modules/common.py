@@ -1,14 +1,16 @@
-from typing import Optional, Sequence, Optional
+from typing import Optional, Sequence
+
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
+
 
 class ChannelAttention(nn.Module):
     squeeze_factor: int = 16
 
     @nn.compact
     def __call__(
-        self, 
+        self,
         x: jnp.ndarray,
     ) -> jnp.ndarray:
 
@@ -32,13 +34,14 @@ class ChannelAttention(nn.Module):
 
         return x
 
+
 class SpatialAttention(nn.Module):
-    filter_size: int = 7,
+    filter_size: int = 7
 
     @nn.compact
     def __call__(
-        self, 
-        x: jnp.ndarray, 
+        self,
+        x: jnp.ndarray,
     ) -> jnp.ndarray:
 
         y = jnp.stack([x.max(axis=-1), x.mean(axis=-1)], axis=-1)
@@ -48,6 +51,7 @@ class SpatialAttention(nn.Module):
         y = x * y
 
         return y
+
 
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
@@ -62,27 +66,32 @@ class DropPath(nn.Module):
         if deterministic:
             return inputs
         else:
-            shape = (inputs.shape[0],) + (1,) * (inputs.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+            shape = (inputs.shape[0],) + (1,) * (
+                inputs.ndim - 1
+            )  # work with diff dim tensors, not just 2D ConvNets
             rng = self.make_rng("droppath")
-            random_tensor = keep_prob + jax.random.uniform(rng, shape=shape, dtype=inputs.dtype)
+            random_tensor = keep_prob + jax.random.uniform(
+                rng, shape=shape, dtype=inputs.dtype
+            )
             binary_tensor = jnp.floor(random_tensor)
             output = inputs / keep_prob * binary_tensor
             return output
+
 
 class FPN(nn.Module):
     out_channels: int = 256
 
     @nn.compact
-    def __call__(self, inputs: Sequence[jnp.ndarray]) -> Sequence[jnp.ndarray] :
+    def __call__(self, inputs: Sequence[jnp.ndarray]) -> Sequence[jnp.ndarray]:
         out_channels = self.out_channels
 
         outputs = [jax.nn.relu(nn.Dense(out_channels)(x)) for x in inputs]
 
-        for k in range(len(outputs)-1, 0, -1):
-            x = jax.image.resize(outputs[k], outputs[k-1].shape, 'nearest')
-            x += outputs[k-1]
-            x = nn.Conv(out_channels, (3,3))(x)
+        for k in range(len(outputs) - 1, 0, -1):
+            x = jax.image.resize(outputs[k], outputs[k - 1].shape, "nearest")
+            x += outputs[k - 1]
+            x = nn.Conv(out_channels, (3, 3))(x)
             x = jax.nn.relu(x)
-            outputs[k-1] = x
+            outputs[k - 1] = x
 
         return outputs

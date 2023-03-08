@@ -5,6 +5,7 @@
 import abc
 import typing as tp
 
+
 class DataAdapter(object, metaclass=abc.ABCMeta):
     """Base class for input data adapter.
     In order to simplify the training code path, all the input data

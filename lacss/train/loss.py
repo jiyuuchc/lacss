@@ -16,6 +16,7 @@ IndexLike = tp.Union[str, int, tp.Sequence[tp.Union[str, int]]]
 PathLike = tp.Tuple[IndexLike, ...]
 ScalarLike = tp.Union[float, np.ndarray, jnp.ndarray]
 
+
 class Reduction(Enum):
     """
     Types of loss reduction.
@@ -158,4 +159,3 @@ def reduce_loss(
         raise ValueError(f"Invalid reduction '{reduction}'")
 
     return loss * weight
-

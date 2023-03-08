@@ -1,5 +1,7 @@
 import jax
+
 jnp = jax.numpy
+
 
 def box_area(box):
     """Computes area of boxes.
@@ -11,6 +13,7 @@ def box_area(box):
     """
     y_min, x_min, y_max, x_max = jnp.split(box, 4, axis=-1)
     return jnp.squeeze((y_max - y_min) * (x_max - x_min), axis=-1)
+
 
 def box_intersection(gt_boxes, boxes):
     """Compute pairwise intersection areas between boxes.
@@ -38,6 +41,7 @@ def box_intersection(gt_boxes, boxes):
 
     return intersect_heights * intersect_widths
 
+
 def box_iou_similarity(gt_boxes, boxes):
     """Computes pairwise intersection-over-union between box collections.
 
@@ -57,4 +61,3 @@ def box_iou_similarity(gt_boxes, boxes):
     ious = intersections / (unions + 1e-8)
 
     return ious
-    

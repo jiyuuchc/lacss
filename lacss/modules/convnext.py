@@ -1,41 +1,45 @@
-from typing import Union,List,Sequence
+from typing import List, Sequence, Union
+
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import flax.linen as nn
 
 from .common import *
 
-''' Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
+""" Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
 Original implementation: https://github.com/facebookresearch/ConvNeXt
-'''
+"""
+
 
 class _Block(nn.Module):
-    """ ConvNeXt Block.
+    """ConvNeXt Block.
     Args:
         drop_path (float): Stochastic depth rate. Default: 0.0
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
 
-    drop_rate: int = 0.
+    drop_rate: int = 0.0
     layer_scale_init_value: float = 1e-6
-    kernel_size:int = 7
+    kernel_size: int = 7
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training=None)->jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, *, training=None) -> jnp.ndarray:
         dim = x.shape[-1]
         ks = self.kernel_size
         scale = self.layer_scale_init_value
 
         shortcut = x
 
-        x = nn.Conv(dim, (ks,ks), feature_group_count=dim)(x)
+        x = nn.Conv(dim, (ks, ks), feature_group_count=dim)(x)
         x = nn.LayerNorm(epsilon=1e-6)(x)
         x = nn.Dense(dim * 4)(x)
         x = jax.nn.gelu(x)
         x = nn.Dense(dim)(x)
 
         if scale > 0:
-            gamma = self.param('gamma', lambda rng, shape: scale * jnp.ones(shape), (x.shape[-1]))
+            gamma = self.param(
+                "gamma", lambda rng, shape: scale * jnp.ones(shape), (x.shape[-1])
+            )
             x = x * gamma
 
         deterministic = training is None or not training
@@ -45,8 +49,9 @@ class _Block(nn.Module):
 
         return x
 
+
 class ConvNeXt(nn.Module):
-    """ ConvNeXt
+    """ConvNeXt
     Args:
         patch_size: for stem default 4
         depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
@@ -56,15 +61,15 @@ class ConvNeXt(nn.Module):
         out_channels (int): FPN output channels. Default: 256
     """
 
-    patch_size:int = 4
+    patch_size: int = 4
     depths: Sequence[int] = (3, 3, 9, 3)
     dims: Sequence[int] = (96, 192, 384, 768)
-    drop_path_rate: float = 0.
+    drop_path_rate: float = 0.0
     layer_scale_init_value: float = 1e-6
     out_channels: int = 256
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training:bool = None)->jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, *, training: bool = None) -> jnp.ndarray:
         dp_rate = 0
         outputs = []
         for k in range(len(self.depths)):
@@ -74,7 +79,7 @@ class ConvNeXt(nn.Module):
                 x = nn.LayerNorm(epsilon=1e-6)(x)
             else:
                 x = nn.LayerNorm(epsilon=1e-6)(x)
-                x = nn.Conv(self.dims[k], (2,2), strides=(2,2))(x)
+                x = nn.Conv(self.dims[k], (2, 2), strides=(2, 2))(x)
 
             for _ in range(self.depths[k]):
                 x = _Block(dp_rate, self.layer_scale_init_value)(x, training=training)

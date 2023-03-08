@@ -2,18 +2,19 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .metric import Metric
 from ..ops import *
+from .metric import Metric
 
-'''
+"""
 metrics classes for computing coco-style AP metrics.
 
 BE CAREFUL making changes here. Very easy to make a mistake and resulting mismatch with
 coco algorithm. Be sure to validate against coco-evaluation before commit changes.
-'''
+"""
+
 
 def _unique_location_matching(similarity_matrix, threshold):
-    ''' Perform matching based on similarity_matrix.
+    """Perform matching based on similarity_matrix.
     This is different from the matchre functions in ops/*.py in that the matching
     will be unique: each column will match at most one row
     Args:
@@ -22,7 +23,7 @@ def _unique_location_matching(similarity_matrix, threshold):
     Returns:
       matches: [N,] indices[0..K)  of the match for each row
       indicators: [N,] indicator (1/0) value for each match
-    '''
+    """
 
     matches = []
     indicators = []
@@ -41,6 +42,7 @@ def _unique_location_matching(similarity_matrix, threshold):
 
     return np.array(matches, np.int32), np.array(indicators, np.int32)
 
+
 def np_compute_ap(similarity_matrix, thresholds):
     # avoid edge cases
     _, k = similarity_matrix.shape
@@ -50,24 +52,26 @@ def np_compute_ap(similarity_matrix, thresholds):
     apmks = []
     for th in thresholds:
         _, indicators = _unique_location_matching(similarity_matrix, th)
-        p_k = np.cumsum(indicators) / (np.arange(len(indicators))+1)
+        p_k = np.cumsum(indicators) / (np.arange(len(indicators)) + 1)
         apmks.append(np.sum(p_k * indicators) / k)
 
     return np.array(apmks, np.float32)
 
+
 class AP(Metric):
-    ''' compute AP based on similarity_matrix and score.
-      These are numpy functions
-      Usage:
-        m = MeanAP([threshold_1, threshold_2,...])
-        m.update_states(similarity_matrix, scores)
-        ...
-        m.result()
-    '''
-    def __init__(self,thresholds=[0.5], coco_style=False):
+    """compute AP based on similarity_matrix and score.
+    These are numpy functions
+    Usage:
+      m = MeanAP([threshold_1, threshold_2,...])
+      m.update_states(similarity_matrix, scores)
+      ...
+      m.result()
+    """
+
+    def __init__(self, thresholds=[0.5], coco_style=False):
         self.thresholds = thresholds
-        self.coco_style=coco_style
-        self.name = 'AP'
+        self.coco_style = coco_style
+        self.name = "AP"
         self.reset()
 
     def update(self, sm, scores):
@@ -89,10 +93,10 @@ class AP(Metric):
         for indicators in self.indicator_list:
             indicators = np.concatenate(indicators)
             indicators = indicators[indices[::-1]]
-            p_k = np.cumsum(indicators) / (np.arange(len(indicators))+1)
+            p_k = np.cumsum(indicators) / (np.arange(len(indicators)) + 1)
             if self.coco_style:
                 p_k = np.maximum.accumulate(p_k[::-1])[::-1]
-            aps.append(np.sum(p_k[indicators==1]) / self.cell_counts)
+            aps.append(np.sum(p_k[indicators == 1]) / self.cell_counts)
 
         self._result = np.array(aps, dtype=float)
 
@@ -104,15 +108,15 @@ class AP(Metric):
         self.indicator_list = [[] for _ in range(len(self.thresholds))]
         self._result = np.array([-1.0] * len(self.thresholds))
 
-class LoiAP(AP):
 
-    def __init__(self, thresholds = [.5], **kwargs):
+class LoiAP(AP):
+    def __init__(self, thresholds=[0.5], **kwargs):
         super().__init__([th * th for th in thresholds], **kwargs)
-        self.name = 'LoiAP'
-    
+        self.name = "LoiAP"
+
     def update(self, preds, gt_locations, **kwargs):
-        scores = preds['pred_scores']
-        pred_locations = preds['pred_locations']
+        scores = preds["pred_scores"]
+        pred_locations = preds["pred_locations"]
         n_batch = gt_locations.shape[0]
         for k in range(n_batch):
             score = scores[k]
@@ -120,23 +124,24 @@ class LoiAP(AP):
             gt = gt_locations[k]
             row_mask = score > 0
             col_mask = (gt >= 0).all(axis=-1)
-            dist2 = ((pred[:,None,:] - gt[:,:]) ** 2).sum(axis=-1)
+            dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
 
             dist2 = np.asarray(1.0 / dist2)
             dist2 = dist2[row_mask][:, col_mask]
             score = np.asarray(score)[row_mask]
-            
+
             super().update(dist2, score)
+
 
 class BoxAP(AP):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.name = 'BoxAP'
+        self.name = "BoxAP"
 
     def update(self, preds, gt_boxes, **kwargs):
         pred_boxes = jax.vmap(bboxes_of_patches)(preds)
         box_sms = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
-        scores = preds['pred_scores']
+        scores = preds["pred_scores"]
         n_batch = gt_boxes.shape[0]
         for k in range(n_batch):
             sm = box_sms[k]

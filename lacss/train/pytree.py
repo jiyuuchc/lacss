@@ -4,9 +4,11 @@ import dataclasses
 import typing as tp
 from abc import ABCMeta
 from copy import copy
+
 import jax
 
 P = tp.TypeVar("P", bound="Pytree")
+
 
 def field(
     default: tp.Any = dataclasses.MISSING,

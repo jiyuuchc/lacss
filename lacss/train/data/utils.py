@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import typing_extensions as tpe
 
+
 class Multimap(tpe.Protocol):
     def __call__(self, *args: np.ndarray):
         ...

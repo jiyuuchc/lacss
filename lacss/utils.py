@@ -1,7 +1,8 @@
-import typing as tp
 import re
+import typing as tp
 
 InputLike = tp.Union[tp.Any, tp.Tuple[tp.Any, ...], tp.Dict[str, tp.Any], "Inputs"]
+
 
 def _unique_name(
     names: tp.Set[str],
@@ -63,6 +64,7 @@ def _get_name(obj) -> str:
         return _lower_snake_case(obj.__class__.__name__)
     else:
         raise ValueError(f"Could not get name for: {obj}")
+
 
 class Inputs:
     args: tp.Tuple[tp.Any, ...]

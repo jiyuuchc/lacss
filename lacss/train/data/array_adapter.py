@@ -38,7 +38,7 @@ class ArrayDataAdapter(DataAdapter):
     def __init__(
         self,
         x,
-        y = None,
+        y=None,
         sample_weights: tp.Union[jnp.ndarray, np.ndarray, None] = None,
         batch_size: tp.Optional[int] = None,
         epochs: int = 1,

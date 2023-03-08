@@ -1,38 +1,45 @@
 import typing as tp
 from functools import partial
+
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
 from ..utils import Inputs
-from .wrapper import WrappedGT, WrappedModule
 from .pytree import Pytree
+from .wrapper import WrappedGT, WrappedModule
+
 
 class Eager:
     @classmethod
     def predict(cls, trainer, inputs):  # only if model is immutable
         print("JIT Predict")
         inputs_obj = Inputs.from_value(inputs)
-        preds = trainer.model(*inputs_obj.args, **inputs_obj.kwargs) 
+        preds = trainer.model(*inputs_obj.args, **inputs_obj.kwargs)
         return preds
 
     @classmethod
     def _loss_fn(
-        cls, params,
+        cls,
+        params,
         trainer: Pytree,
         inputs: tp.Any,
         labels: tp.Any,
         rngs: tp.Optional[dict],
     ) -> tp.Tuple[jnp.ndarray, tp.Tuple[Pytree, dict, tp.Any]]:
-        trainer.model.update_variables(dict(params = params)) # so the compiler can track the effect of params
+        trainer.model.update_variables(
+            dict(params=params)
+        )  # so the compiler can track the effect of params
 
         # don't call predict() because model might be mutable
         inputs_obj = Inputs.from_value(inputs)
-        preds = trainer.model(*inputs_obj.args, **inputs_obj.kwargs, training=True, rngs=rngs)
+        preds = trainer.model(
+            *inputs_obj.args, **inputs_obj.kwargs, training=True, rngs=rngs
+        )
 
         args = dict(
-            inputs = inputs,
-            preds = preds,
+            inputs=inputs,
+            preds=preds,
             **labels,
         )
 
@@ -71,22 +78,29 @@ class Eager:
         if labels is None:
             labels = {}
         elif not isinstance(labels, dict):
-            labels = dict(target = labels)
+            labels = dict(target=labels)
 
         grads, (trainer, preds) = jax.grad(cls._loss_fn, has_aux=True)(
-            params, trainer, inputs, labels, rngs,
+            params,
+            trainer,
+            inputs,
+            labels,
+            rngs,
         )
         params = trainer.optimizer.update(grads, params)
-        trainer.model.update_variables(dict(params = params))
+        trainer.model.update_variables(dict(params=params))
 
         return trainer, preds
+
 
 class Core(Eager):
     predict = jax.jit(Eager.predict)
 
+
 class JIT(Core):
     train_step = jax.jit(Core.train_step)
     # test_step = jax.jit(Core.test_step)
+
 
 # class Distributed(Core):
 #     @classmethod
@@ -154,7 +168,7 @@ class JIT(Core):
 # Distributed.train_step = jax.pmap(
 #     Distributed._train_step,
 #     in_axes =(None, None, None, 0, 0),
-#     out_axes=None, 
+#     out_axes=None,
 #     axis_name="device"
 #     )
 

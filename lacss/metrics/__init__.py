@@ -1,2 +1,2 @@
-from .ranked import *
 from .metric import Metric
+from .ranked import *

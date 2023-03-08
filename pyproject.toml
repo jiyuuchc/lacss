@@ -16,22 +16,21 @@ imageio = "^2.26.0"
 scikit-image = "^0.20.0"
 cloudpickle = "^2.2.1"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 jax = "0.4.2"
 jaxlib = "0.4.1+cuda11.cudnn82"
 typer = ">=0.4.0"
 tensorflow-cpu = "^2.8.0"
+setuptools = "67.4.0"
+pycocotools = "^2.0.6"
+pytest = "^7.2.2"
+jupyterlab = "^3.6.1"
 
 [[tool.poetry.source]]
 name = "jax"
 url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
 default = false
 secondary = false
-
-
-[tool.poetry.group.dev.dependencies]
-setuptools = "67.4.0"
-pycocotools = "^2.0.6"
 
 [build-system]
 requires = ["poetry-core"]

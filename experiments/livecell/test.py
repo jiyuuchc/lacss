@@ -2,16 +2,19 @@
 
 import json
 from os.path import join
+
+import jax
+import numpy as np
 from tqdm import tqdm
 
-import numpy as np
 # import elegy as eg
 import lacss
-import jax
-jnp =jax.numpy
+
+jnp = jax.numpy
 
 import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU')
+
+tf.config.set_visible_devices([], "GPU")
 
 try:
     from . import data
@@ -19,12 +22,15 @@ except:
     import data
 
 import typer
+
 app = typer.Typer(pretty_exceptions_enable=False)
 
+
 def format_array(arr):
-    s = [f'{v:.4f}' for v in arr]
-    s = ',\t'.join(s)
+    s = [f"{v:.4f}" for v in arr]
+    s = ",\t".join(s)
     return s
+
 
 @app.command()
 def run_test(
@@ -32,13 +38,13 @@ def run_test(
     checkpoint: str,
 ):
 
-    print('evaluating...')
-    ds_test = data.livecell_dataset_from_tfrecord(datapath, 'test.tfrecord')
+    print("evaluating...")
+    ds_test = data.livecell_dataset_from_tfrecord(datapath, "test.tfrecord")
 
     model = lacss.trainer.Trainer.from_checkpoint(checkpoint).model
-    print(f'model loaded from {checkpoint}')
+    print(f"model loaded from {checkpoint}")
 
-    thresholds = [.5, .55, .6, .65, .7, .75, .8, .85, .9, .95]
+    thresholds = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     mask_APs = {}
     for c in range(8):
         mask_APs[c] = lacss.metrics.MeanAP(thresholds)
@@ -53,14 +59,14 @@ def run_test(
     predictor = jax.jit(model.eval())
 
     for inputs in tqdm(ds_test):
-        c = inputs['cell_type'].numpy()
+        c = inputs["cell_type"].numpy()
         inputs = lacss.data.parse_test_data_func(inputs)
-        image = jnp.repeat(inputs['image'].numpy(), 1, axis=-1)
-        label = jnp.array(inputs['mask_labels'])
+        image = jnp.repeat(inputs["image"].numpy(), 1, axis=-1)
+        label = jnp.array(inputs["mask_labels"])
 
         preds = predictor(image[None, ...])
         preds = jax.tree_map(lambda x: x[0], preds)
-        scores = np.array(preds['pred_scores'])
+        scores = np.array(preds["pred_scores"])
         valid = scores >= 0
         valid_scores = scores[valid]
 
@@ -69,30 +75,31 @@ def run_test(
         mask_APs[c].update_state(jnp.array(ious)[valid], valid_scores)
         mask_mAP.update_state(jnp.array(ious)[valid], valid_scores)
 
-        gt_locs = inputs['locations'].numpy()
-        pred_locs = np.array(preds['pred_locations'])[valid]
-        dist2 = ((pred_locs[:,None,:] - gt_locs) ** 2).sum(axis=-1)
+        gt_locs = inputs["locations"].numpy()
+        pred_locs = np.array(preds["pred_locations"])[valid]
+        dist2 = ((pred_locs[:, None, :] - gt_locs) ** 2).sum(axis=-1)
         sm = 1.0 / np.sqrt(dist2)
         loi_APs[c].update_state(sm, valid_scores)
         loi_mAP.update_state(sm, valid_scores)
 
-    print('LOI APs...')
+    print("LOI APs...")
     for c in range(8):
         result = loi_APs[c].result()
         result_str = format_array(result)
-        print(f'{c}: {result_str}')
+        print(f"{c}: {result_str}")
     all_result = loi_mAP.result()
     result_str = format_array(all_result)
-    print(f'all: {result_str}')
+    print(f"all: {result_str}")
 
-    print('Mask APs...')
+    print("Mask APs...")
     for c in range(8):
         result = mask_APs[c].result()
         result_str = format_array(result)
-        print(f'{c}: {result_str}')
+        print(f"{c}: {result_str}")
     all_result = mask_mAP.result()
     result_str = format_array(all_result)
-    print(f'all: {result_str}')
+    print(f"all: {result_str}")
 
-if __name__ =="__main__":
+
+if __name__ == "__main__":
     app()

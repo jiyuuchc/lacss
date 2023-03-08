@@ -1,16 +1,20 @@
-from functools import partial
-import pathlib, cloudpickle, jax
+import pathlib
 import typing as tp
-from optax import GradientTransformation
-import jax.numpy as jnp
-import flax.linen as nn
+from functools import partial
 
-from .loss import Loss
+import cloudpickle
+import flax.linen as nn
+import jax
+import jax.numpy as jnp
+from optax import GradientTransformation
+
+from ..utils import _get_name
+from . import strategy
 from .data import *
+from .loss import Loss
 from .pytree import Pytree, static_field
 from .wrapper import *
-from . import strategy
-from ..utils import _get_name
+
 
 class Trainer(Pytree, mutable=True):
     _strategy: type = static_field()
@@ -55,12 +59,13 @@ class Trainer(Pytree, mutable=True):
 
         self.initialize(dataset, strategy)
 
+        self.seed, seed = jax.random.split(self.seed)
         for step, data in enumerate(dataset()):
             inputs, labels, _ = unpack_x_y_sample_weight(data)
             if rng_cols is not None:
-                key = jax.random.fold_in(self.seed, step)
+                key = jax.random.fold_in(seed, step)
                 keys = jax.random.split(key, len(rng_cols))
-                rngs = {name:k for name, k in zip(rng_cols,  keys)}
+                rngs = {name: k for name, k in zip(rng_cols, keys)}
             else:
                 rngs = None
             train_fn = strategy.train_step
@@ -108,8 +113,8 @@ class Trainer(Pytree, mutable=True):
             predict_fn = strategy.predict
             preds = predict_fn(self, inputs)
             kwargs = dict(
-                inputs = inputs,
-                preds = preds,
+                inputs=inputs,
+                preds=preds,
                 **labels,
             )
             for m in metrics:
