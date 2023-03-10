@@ -140,17 +140,9 @@ class BoxAP(AP):
 
     def update(self, preds, gt_boxes, **kwargs):
         pred_boxes = jax.vmap(bboxes_of_patches)(preds)
-        box_sms = jax.vmap(box_iou_similarity)(pred_boxes, gt_boxes)
+        box_ious = box_iou_similarity(pred_boxes, gt_boxes)
         scores = preds["pred_scores"]
-        n_batch = gt_boxes.shape[0]
-        for k in range(n_batch):
-            sm = box_sms[k]
-            score = scores[k]
-            mask = sm > 0
-            row_mask = mask.any(axis=1)
-            col_mask = mask.any(axis=0)
 
-            score = np.asarray(score)[row_mask]
-            sm = np.asarray(sm)[row_mask][:, col_mask]
-
-            super().update(sm, score)
+        for score, gt_box, iou in zip(scores, gt_boxes, box_ious):
+            iou = iou[score >= 0][:, (gt_box >= 0).all(axis=-1)]
+            super().update(iou, score[score >= 0])

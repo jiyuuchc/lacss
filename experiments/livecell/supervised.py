@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import dataclasses
 import json
 import os
 from functools import partial
@@ -129,10 +130,11 @@ def get_model(cmd, config, batchsize, seed):
 
         trainer = lacss.train.Trainer(
             model=model,
-            optimizer=optax.adamw(lr),
             losses=loss,
+            optimizer=optax.adamw(lr),
             seed=seed,
         )
+
         init_epoch = 0
 
     return trainer, init_epoch, n_epochs, steps_per_epoch
@@ -166,12 +168,16 @@ def run_training(
     trainer, init_epoch, n_epochs, steps_per_epoch = get_model(
         cmd, config, batchsize, seed
     )
-    print(json.dumps(trainer.model.get_config(), indent=2, sort_keys=True))
+    print(json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True))
 
     epoch = init_epoch
     train_gen = lacss.train.TFDatasetAdapter(ds_train, steps=-1).get_dataset()
     val_gen = lacss.train.TFDatasetAdapter(ds_val).get_dataset()
-    for steps, logs in enumerate(trainer(train_gen, rng_cols=["droppath"])):
+
+    if not trainer.initialized:
+        trainer.initialize(train_gen)
+
+    for steps, logs in enumerate(trainer.train(train_gen, rng_cols=["droppath"])):
         if (steps + 1) % steps_per_epoch == 0:
             epoch += 1
             print(f"epoch - {epoch}")

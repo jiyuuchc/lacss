@@ -33,6 +33,17 @@ class Eager:
         return total_loss, (state, loss_log, preds)
 
     @classmethod
+    def init_fn(cls, key, model, inputs, tx):
+        inputs_obj = Inputs.from_value(inputs)
+        variables = model.init(key, *inputs_obj.args, **inputs_obj.kwargs)
+        state = TrainState.create(
+            apply_fn=model.apply,
+            params=variables["params"],
+            tx=tx,
+        )
+        return state
+
+    @classmethod
     def predict(cls, state, inputs):  # only if model is immutable
         # print("JIT Predict")
         inputs_obj = Inputs.from_value(inputs)
@@ -90,8 +101,8 @@ class Distributed(Eager):
     ) -> tp.Tuple[TrainState, Pytree, tp.Any]:
         # print("JITTTTING")
         axis_index = jax.lax.axis_index("device")
-        rng = jax.tree_util.tree_map(
-            lambda key: jax.random.fold_in(key, axis_index), rng
+        rngs = jax.tree_util.tree_map(
+            lambda key: jax.random.fold_in(key, axis_index), rngs
         )
 
         if labels is None:
@@ -121,12 +132,19 @@ class Distributed(Eager):
 
     predict = jax.pmap(
         Eager.predict,
+        axis_name="device",
         in_axes=(None, 0),
     )
+
+    @classmethod
+    def init_fn(cls, key, model, inputs, tx):
+        inputs = inputs[0]
+        return Eager.init_fn(key, model, inputs, tx)
 
 
 Distributed.train_step = jax.pmap(
     Distributed._train_step,
+    axis_name="device",
     in_axes=(None, None, 0, 0, None),
     out_axes=(None, None, 0),
 )

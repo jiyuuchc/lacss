@@ -6,10 +6,10 @@ jnp = jax.numpy
 def box_area(box):
     """Computes area of boxes.
     Args:
-      box: a float Tensor with [N, 4], or [B, N, 4].
+      box: a float Tensor with [..., N, 4].
 
     Returns:
-      a float Tensor with [N], or [B, N]
+      a float Tensor with [..., N]
     """
     y_min, x_min, y_max, x_max = jnp.split(box, 4, axis=-1)
     return jnp.squeeze((y_max - y_min) * (x_max - x_min), axis=-1)
@@ -46,18 +46,17 @@ def box_iou_similarity(gt_boxes, boxes):
     """Computes pairwise intersection-over-union between box collections.
 
     Args:
-      gt_boxes: a float Tensor with [N, 4].
-      boxes: a float Tensor with [M, 4].
+      gt_boxes: a float Tensor with [..., N, 4].
+      boxes: a float Tensor with [..., M, 4].
 
     Returns:
-      a Tensor with shape [N, M] representing pairwise iou scores.
+      a Tensor with shape [..., N, M] representing pairwise iou scores.
     """
     intersections = box_intersection(gt_boxes, boxes)
     gt_boxes_areas = box_area(gt_boxes)
     boxes_areas = box_area(boxes)
-    unions = gt_boxes_areas[:, None] + boxes_areas
-    unions = unions - intersections
+    unions = gt_boxes_areas[:, None] + boxes_areas - intersections
 
-    ious = intersections / (unions + 1e-8)
+    ious = intersections / (unions + 1e-6)
 
     return ious

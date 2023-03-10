@@ -6,7 +6,6 @@ import cloudpickle
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import orbax
 from flax.training.train_state import TrainState
 from optax import GradientTransformation
 
@@ -23,12 +22,14 @@ class Trainer:
         self,
         model: nn.Module,
         losses: tp.Optional[tp.Union[tp.Sequence[Loss], Loss]] = None,
+        optimizer: GradientTransformation = None,
         seed: int = 42,
         train_strategy: type = strategy.JIT,
     ):
         self.model = model
         self.loss_log = LossLog(losses)
         self.seed = seed if isinstance(seed, jnp.ndarray) else jax.random.PRNGKey(seed)
+        self.optimizer = optimizer
 
         self._strategy = train_strategy
         self._initialized = False
@@ -40,20 +41,17 @@ class Trainer:
     def initialized(self):
         return self._initialized
 
-    def initialize(self, dataset, tx: GradientTransformation):
+    def initialize(self, dataset, tx: GradientTransformation = None):
+
+        if tx is None:
+            tx = self.optimizer
 
         if not self._initialized:
             peek = next(dataset())
             inputs, _, _ = unpack_x_y_sample_weight(peek)
 
             self.seed, key = jax.random.split(self.seed)
-            inputs_obj = Inputs.from_value(inputs)
-            variables = self.model.init(key, *inputs_obj.args, **inputs_obj.kwargs)
-            self.state = TrainState.create(
-                apply_fn=self.model.apply,
-                params=variables["params"],
-                tx=tx,
-            )
+            self.state = self._strategy.init_fn(key, self.model, inputs, tx)
 
         self.reset()
         self._initialized = True
