@@ -30,12 +30,12 @@ class LPN(nn.Module):
 
         for n_ch in conv_spec[0]:
             x = nn.Conv(n_ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=n_ch)(x)
+            x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
         for n_ch in conv_spec[1]:
             x = nn.Conv(n_ch, (1, 1), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=n_ch)(x)
+            x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
         scores_out = nn.Conv(1, (1, 1))(x)
@@ -50,15 +50,15 @@ class LPN(nn.Module):
     ) -> dict:
         """
         Args:
-            inputs: feature dict: {'lvl': [B, H, W, C]}
-            scaled_gt_locations: scaled 0..1 [B, N, 2], only valid in training
+            inputs: feature dict: {'lvl': [H, W, C]}
+            scaled_gt_locations: scaled 0..1 [N, 2], only valid in training
         Returns:
             outputs:
             {
-                lpn_scores: dict: {'lvl': [B, H, W, 1]}
-                lpn_regressions: dict {'lvl': [B, H, W, 2]}
-                gt_lpn_scores: dict {'lvl': [B, H, W, 1]}, only if training
-                gt_lpn_regressions: dict {'lvl': [B, H, W, 2]}, only if training
+                lpn_scores: dict: {'lvl': [H, W, 1]}
+                lpn_regressions: dict {'lvl': [H, W, 2]}
+                gt_lpn_scores: dict {'lvl': [H, W, 1]}, only if training
+                gt_lpn_regressions: dict {'lvl': [H, W, 2]}, only if training
             }
         """
 
@@ -75,12 +75,11 @@ class LPN(nn.Module):
             all_regrs[str(lvl)] = regression
 
             if training and scaled_gt_locations is not None:
-                op = partial(
-                    locations_to_labels,
+                score_target, regression_target = locations_to_labels(
+                    scaled_gt_locations,
                     target_shape=feature.shape[-3:-1],
                     threshold=self.detection_roi / (2**lvl),
                 )
-                score_target, regression_target = jax.vmap(op)(scaled_gt_locations)
                 all_gt_scores[str(lvl)] = score_target
                 all_gt_regrs[str(lvl)] = regression_target
 

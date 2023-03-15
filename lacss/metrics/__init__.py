@@ -1,2 +1,2 @@
-from .metric import Metric
+from ..train.metric import Metric
 from .ranked import *

@@ -133,6 +133,7 @@ def get_model(cmd, config, batchsize, seed):
             losses=loss,
             optimizer=optax.adamw(lr),
             seed=seed,
+            strategy=lacss.train.strategy.VMapped,
         )
 
         init_epoch = 0
@@ -177,7 +178,9 @@ def run_training(
     if not trainer.initialized:
         trainer.initialize(train_gen)
 
-    for steps, logs in enumerate(trainer.train(train_gen, rng_cols=["droppath"])):
+    for steps, logs in enumerate(
+        trainer.train(train_gen, rng_cols=["droppath"], training=True)
+    ):
         if (steps + 1) % steps_per_epoch == 0:
             epoch += 1
             print(f"epoch - {epoch}")

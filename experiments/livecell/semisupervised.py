@@ -124,6 +124,7 @@ def get_model(cmd, config, batchsize, seed):
             optimizer=optimizer,
             losses=loss,
             seed=seed,
+            strategy=lacss.train.strategy.VMapped,
         )
         init_epoch = 0
 
@@ -162,7 +163,9 @@ def run_training(
         lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
         lacss.metrics.BoxAP([0.5, 0.75]),
     ]
-    for steps, logs in enumerate(trainer(train_gen)):
+    for steps, logs in enumerate(
+        trainer(train_gen, rng_cols=["droppath"], training=True)
+    ):
         if (steps + 1) % steps_per_epoch == 0:
             epoch += 1
             print(f"epoch - {epoch}")

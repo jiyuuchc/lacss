@@ -1,10 +1,10 @@
 from typing import Dict, Sequence, Tuple, Union
 
 import jax
+import jax.numpy as jnp
+import numpy as np
 
 from .boxes import box_iou_similarity
-
-jnp = jax.numpy
 
 """ Various functions deals with segmentation pathces
     All functions here takes unbatched input. Use vmap to convert to batched data
@@ -184,25 +184,34 @@ def patches_to_segmentations(pred, input_size, threshold=0.5):
     return (segms >= threshold).astype(int)
 
 
-def patches_to_label(pred, input_size, score_threshold=0.5, threshold=0.5):
-    """convert patches to the image label
+def patches_to_label(
+    pred, input_size, mask=None, score_threshold=0.5, threshold=0.5, min_cell_area=0.0
+):
+    """convert patch output to the image label
     Args:
         pred: model output (unbatched):
-        threshold: float
+        input_size: a int tuple of [heght, width]
+        mask: boolean indicators of which cell to display, default is None (all cells)
+        score_threshold: otional, min_score to be plotted, default .5
+        threshold: optional, output threshold,  default .5
+        min_cell_area: optional min cell area to be plotted, default 0.
     Returns:
         label: [height, width]
     """
     label = jnp.zeros(input_size)
+    pr = pred["instance_output"] > threshold
+    n_patches, patch_size, _ = pr.shape
 
-    if "training_locations" in pred:
-        mask = pred["instance_mask"]
-    else:
-        mask = pred["pred_scores"] >= score_threshold
+    if mask is None:
+        mask = jnp.ones([n_patches], dtype=bool)
+    mask &= pred["instance_mask"].squeeze(axis=(1, 2))
+    mask &= pred["pred_scores"] >= score_threshold
+    mask &= np.count_nonzero(pr, axis=(1, 2)) > min_cell_area
 
     n = jnp.count_nonzero(mask)
-    pr = pred["instance_output"]
-    seq = jnp.arange(pr.shape[0])
-    seq = n - jnp.where(seq < n, seq, n)
+    seq = jnp.zeros([n_patches], dtype=int)
+    seq = seq.at[mask].set(jnp.arange(1, n + 1)[::-1])
+
     pr = (pr > threshold) * (seq[:, None, None])
     yc = pred["instance_yc"]
     xc = pred["instance_xc"]
@@ -210,3 +219,72 @@ def patches_to_label(pred, input_size, score_threshold=0.5, threshold=0.5):
     label = label.at[yc, xc].max(pr)
 
     return label
+
+
+def ious_of_patches_from_same_image(pred, threshold=0.5):
+    """
+    Args:
+        pred: model output without batch dim
+        threshold: output threshold, default to 0.5
+    Returns:
+        ious: upper triagle matrix. mask ious of cells indicated by yc and xc
+    """
+    bboxes = bboxes_of_patches(pred)
+    box_ious = box_iou_similarity(bboxes, bboxes)
+    box_ious = np.triu(box_ious, 1)
+    # n_detections = jnp.count_nonzero(pred['instance_mask'])
+    # box_ious = box_ious[:n_detections, :n_detections]
+
+    cy, cx = np.where(box_ious > 0)
+    pad_size = pred["instance_output"].shape[-1]
+
+    patches = np.asarray(pred["instance_output"]) >= threshold
+    patches_y = patches[cy]
+    patches_x = patches[cx]
+    plt_to = np.zeros([len(cy), pad_size * 3, pad_size * 3], dtype=bool)
+    dy = (
+        np.asarray(pred["instance_yc"])[cy, 0, 0]
+        - np.asarray(pred["instance_yc"])[cx, 0, 0]
+        + pad_size
+    )
+    dx = (
+        np.asarray(pred["instance_xc"])[cy, 0, 0]
+        - np.asarray(pred["instance_xc"])[cx, 0, 0]
+        + pad_size
+    )
+
+    for k in range(len(cy)):
+        plt_to[k, dy[k] : dy[k] + pad_size, dx[k] : dx[k] + pad_size] = patches_y[k]
+    plt_to = plt_to[:, pad_size : pad_size * 2, pad_size : pad_size * 2]
+    unions = np.count_nonzero(plt_to & patches_x, axis=(1, 2))
+
+    areas_y = np.count_nonzero(patches_y, axis=(1, 2))
+    areas_x = np.count_nonzero(patches_x, axis=(1, 2))
+
+    ious = unions / (areas_x + areas_y - unions + 1e-8)
+
+    mask_ious = box_ious
+    mask_ious[(cy, cx)] = ious
+
+    return mask_ious
+
+
+def non_max_suppress_predictions(pred, iou_threshold=0.6):
+    """
+    Args:
+        pred: model output without batch dim
+        ious_threshold: default 0.6
+    Returns:
+        mask: boolean mask of cells not supressed
+    """
+    ious = ious_of_patches_from_same_image(pred)
+    mask = ious > iou_threshold
+
+    cnt = 0
+    while np.count_nonzero(mask) != cnt:
+        cnt = jnp.count_nonzero(mask)
+        can_suppress_others = ~mask.any(axis=0)
+        suppressed = (mask & can_suppress_others[:, None]).any(axis=0)
+        mask = mask & ~suppressed[:, None]
+
+    return ~mask.any(axis=0)

@@ -66,15 +66,11 @@ class DropPath(nn.Module):
         if deterministic:
             return inputs
         else:
-            shape = (inputs.shape[0],) + (1,) * (
-                inputs.ndim - 1
-            )  # work with diff dim tensors, not just 2D ConvNets
             rng = self.make_rng("droppath")
-            random_tensor = keep_prob + jax.random.uniform(
-                rng, shape=shape, dtype=inputs.dtype
+            binary_factor = jnp.floor(
+                keep_prob + jax.random.uniform(rng, dtype=inputs.dtype)
             )
-            binary_tensor = jnp.floor(random_tensor)
-            output = inputs / keep_prob * binary_tensor
+            output = inputs / keep_prob * binary_factor
             return output
 
 

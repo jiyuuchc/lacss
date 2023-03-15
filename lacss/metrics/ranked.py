@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..ops import *
-from .metric import Metric
+from ..train.metric import Metric
 
 """
 metrics classes for computing coco-style AP metrics.

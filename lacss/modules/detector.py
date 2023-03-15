@@ -143,18 +143,14 @@ class Detector(nn.Module):
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         Args:
-            score: {'lvl', [B, H, W, 1]) output from LPN
-            regression: ('lvl': [B, H, W, 2]) output from LPN
-            gt_locations: [B, N, 2] during training or None during inference. Maybe padded with -1
+            score: {'lvl', [H, W, 1]) output from LPN
+            regression: ('lvl': [H, W, 2]) output from LPN
+            gt_locations: [N, 2] during training or None during inference. Maybe padded with -1
         Outputs:
-            if training:
             dict {
-                training_locations: [B, N, 2]
-            }
-            if interfernce:
-            dict {
-                pred_locations: [B, M, 2] sorted based on scores; M == test_max_output; padded with -1
-                pred_scores: [B, M] sorted, padded with -1
+                training_locations: [N, 2] only during training
+                pred_locations: [M, 2] sorted based on scores; M == test_max_output; padded with -1
+                pred_scores: [M] sorted, padded with -1
             }
         """
 
@@ -165,9 +161,9 @@ class Detector(nn.Module):
             return dict(
                 training_locations=gt_locations,
             )
-        proposed_scores, proposed_locations = jax.vmap(
-            self._proposal_locations, in_axes=(0, 0, None)
-        )(scores, regressions, training)
+        proposed_scores, proposed_locations = self._proposal_locations(
+            scores, regressions, training
+        )
         outputs = dict(
             pred_locations=proposed_locations,
             pred_scores=proposed_scores,
@@ -175,7 +171,7 @@ class Detector(nn.Module):
         if training:
             outputs.update(
                 dict(
-                    training_locations=jax.vmap(self._gen_train_locations)(
+                    training_locations=self._gen_train_locations(
                         gt_locations,
                         proposed_locations,
                     )

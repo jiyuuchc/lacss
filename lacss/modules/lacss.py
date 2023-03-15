@@ -38,12 +38,12 @@ class Lacss(nn.Module):
     ) -> dict:
         """
         Args:
-            image: [N, H, W, C]
-            gt_locations: [N, M, 2] if training, otherwise None
+            image: [H, W, C]
+            gt_locations: [M, 2] if training, otherwise None
         Returns:
             a dict of model outputs
         """
-        n_batches, orig_height, orig_width, ch = image.shape
+        orig_height, orig_width, ch = image.shape
         if ch == 1:
             image = jnp.repeat(image, 3, axis=-1)
         elif ch == 2:
@@ -55,7 +55,7 @@ class Lacss(nn.Module):
         height = ((orig_height - 1) // 32 + 1) * 32
         width = ((orig_width - 1) // 32 + 1) * 32
         image = jnp.pad(
-            image, [[0, 0], [0, height - orig_height], [0, width - orig_width], [0, 0]]
+            image, [[0, height - orig_height], [0, width - orig_width], [0, 0]]
         )
 
         # backbone

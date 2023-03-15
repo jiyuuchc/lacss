@@ -100,24 +100,26 @@ class AuxSizeLoss(Loss):
         self.a = alpha
 
     def call(self, inputs, preds, **kwargs):
-        _, height, width, _ = inputs["image"].shape
+        height, width, _ = inputs["image"].shape
         valid_locs = (
             (preds["instance_yc"] >= 0)
             & (preds["instance_yc"] < height)
             & (preds["instance_xc"] >= 0)
             & (preds["instance_xc"] < width)
         )
-        _, _, crop_size, _ = preds["instance_output"].shape
+        _, crop_size, _ = preds["instance_output"].shape
         areas = (
             jnp.sum(
-                preds["instance_output"], axis=(2, 3), where=valid_locs, keepdims=True
+                preds["instance_output"], axis=(1, 2), where=valid_locs, keepdims=True
             )
-            / preds["instance_output"][0, 0].size
+            / crop_size
+            / crop_size
         )
         areas = jnp.clip(areas, EPS, 1.0)
+
         loss = self.a * jnp.clip(jax.lax.rsqrt(areas), 0.0, 1.0e8)
-        loss = jnp.sum(loss, axis=1, where=preds["instance_mask"]) / (
-            jnp.count_nonzero(preds["instance_mask"], axis=(1, 2, 3)) + EPS
+        loss = jnp.sum(loss, axis=0, where=preds["instance_mask"]) / (
+            jnp.count_nonzero(preds["instance_mask"]) + EPS
         )
 
         return loss
@@ -125,17 +127,15 @@ class AuxSizeLoss(Loss):
 
 class AuxSegLoss(Loss):
     def call(self, inputs, preds, **kwargs):
-        _, height, width, _ = inputs["image"].shape
-        _, _, ps, _ = preds["instance_yc"].shape
+        height, width, _ = inputs["image"].shape
+        _, ps, _ = preds["instance_yc"].shape
 
-        @jax.vmap
-        def _to_patch(img, yc, xc):
-            _, ps, _ = yc.shape
-            padding = [[ps // 2, ps // 2], [ps // 2, ps // 2]]
-            img = jnp.pad(img, padding, constant_values=-1.0)
-            return img[yc + ps // 2, xc + ps // 2]
+        # def _to_patch(img, yc, xc):
+        #     _, ps, _ = yc.shape
+        #     padding = [[ps // 2, ps // 2], [ps // 2, ps // 2]]
+        #     img = jnp.pad(img, padding, constant_values=-1.0)
+        #     return img[yc + ps // 2, xc + ps // 2]
 
-        @jax.vmap
         def _max_merge(pred):
             label = jnp.zeros([height + ps, width + ps]) - 1.0e8
             yc, xc = pred["instance_yc"], pred["instance_xc"]

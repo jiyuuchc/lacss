@@ -67,12 +67,12 @@ class Segmentor(nn.Module):
     def __call__(self, features: dict, locations: jnp.ndarray) -> tuple:
         """
         Args:
-            features: {'lvl' [B, H, W, C]} feature dictionary
-            locations: [B, N, 2]  scaled 0..1
+            features: {'lvl' [H, W, C]} feature dictionary
+            locations: [N, 2]  scaled 0..1
         outputs:
-            instance_output: [B, N, crop_size, crop_size, 1]
-            yc: [B, N, crop_size, crop_size]
-            xc: [B, N, crop_size, crop_size]
+            instance_output: [N, crop_size, crop_size, 1]
+            yc: [N, crop_size, crop_size]
+            xc: [N, crop_size, crop_size]
         """
         crop_size = self.instance_crop_size
         lvl = self.feature_level
@@ -81,19 +81,18 @@ class Segmentor(nn.Module):
         patch_size = crop_size // scale
 
         x = features[str(lvl)]
-        _, h, w, _ = x.shape
+        # h, w, _ = x.shape
 
         # feature convs
         for n_ch in conv_spec[0]:
             x = nn.Conv(n_ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=n_ch)(x)
+            x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
         # mixing features with pos_encodings
         n_ch = conv_spec[1][0]
         x = nn.Conv(n_ch, (3, 3), use_bias=False)(x)
-        gather_op = partial(gather_patches, patch_size=patch_size)
-        patches, y0, x0, _ = jax.vmap(gather_op)(x, locations)
+        patches, y0, x0, _ = gather_patches(x, locations, patch_size=patch_size)
 
         if not self.learned_encoding:
             encodings = (
@@ -101,11 +100,9 @@ class Segmentor(nn.Module):
             ).transpose(1, 2, 0)
             encodings = nn.Conv(n_ch, (1, 1), use_bias=False)(encodings)
         else:
-            encodings = jax.vmap(_Encoder(n_ch, patch_size))(
-                features[str(lvl)], locations
-            )
+            encodings = _Encoder(n_ch, patch_size)(features[str(lvl)], locations)
         patches += encodings
-        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (2, 3))
+        mask = jnp.expand_dims((locations >= 0).any(axis=-1), (1, 2))
         patches = jax.nn.relu(patches)
 
         if self.use_attention:
@@ -113,17 +110,17 @@ class Segmentor(nn.Module):
 
         # patche convs
         for n_ch in conv_spec[1][1:]:
-            patches = jax.vmap(nn.Conv(n_ch, (3, 3)))(patches)
+            patches = nn.Conv(n_ch, (3, 3))(patches)
             patches = jax.nn.relu(patches)
 
         # outputs
         if scale == 1:
-            logits = jax.vmap(nn.Conv(1, (3, 3)))(patches)
+            logits = nn.Conv(1, (3, 3))(patches)
         else:
-            logits = jax.vmap(nn.ConvTranspose(1, (2, 2), strides=(2, 2)))(patches)
+            logits = nn.ConvTranspose(1, (2, 2), strides=(2, 2))(patches)
             if scale == 4:
                 logits = jax.image.resize(
-                    logits, patches.shape[:2] + (crop_size, crop_size, 1), "linear"
+                    logits, patches.shape[:1] + (crop_size, crop_size, 1), "linear"
                 )
 
         logits = logits.squeeze(-1)
@@ -131,8 +128,8 @@ class Segmentor(nn.Module):
 
         # indicies
         yc, xc = jnp.mgrid[:crop_size, :crop_size]
-        yc = yc + y0[:, :, None, None] * scale
-        xc = xc + x0[:, :, None, None] * scale
+        yc = yc + y0[:, None, None] * scale
+        xc = xc + x0[:, None, None] * scale
 
         # clear invalid locations
         outputs = jnp.where(mask, outputs, 0)

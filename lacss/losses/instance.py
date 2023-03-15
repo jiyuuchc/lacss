@@ -83,7 +83,7 @@ class InstanceLoss(Loss):
     def call(self, binary_mask: jnp.ndarray, preds: dict, **kwargs):
         if not "training_locations" in preds:
             return 0.0
-        return jax.vmap(instance_overlap_losses)(
+        return instance_overlap_losses(
             instances=preds["instance_output"],
             instance_logit=preds["instance_logit"],
             yc=preds["instance_yc"],
@@ -99,7 +99,7 @@ class InstanceOverlapLoss(Loss):
             return 0.0
         segs = jnp.ones(inputs["image"].shape[:-1])
         op = partial(instance_overlap_losses, ignore_seg_loss=True)
-        return jax.vmap(op)(
+        return op(
             instances=preds["instance_output"],
             instance_logit=preds["instance_logit"],
             yc=preds["instance_yc"],
@@ -114,7 +114,7 @@ class SupervisedInstanceLoss(Loss):
         if not "training_locations" in preds:
             return 0.0
 
-        return jax.vmap(supervised_segmentation_losses)(
+        return supervised_segmentation_losses(
             instances=preds["instance_output"],
             yc=preds["instance_yc"],
             xc=preds["instance_xc"],
