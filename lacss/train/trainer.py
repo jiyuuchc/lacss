@@ -1,6 +1,6 @@
 import pathlib
 import typing as tp
-from functools import partial
+from functools import lru_cache, partial
 
 import cloudpickle
 import flax.linen as nn
@@ -13,6 +13,10 @@ from ..utils import Inputs, _get_name
 from . import strategy
 from .data import *
 from .loss import Loss, LossLog
+
+# so that multiple calls return the same obj
+# this avoids JIT when supplying partial func as args
+_cached_partial = lru_cache(partial)
 
 
 class Trainer:
@@ -56,12 +60,17 @@ class Trainer:
         self.reset()
         self._initialized = True
 
-    def __call__(self, inputs, *, strategy=None):
+    def __call__(self, inputs, *, strategy=None, **kwargs):
         if strategy is None:
             strategy = self._strategy
 
         predict_fn = strategy.predict
-        preds = predict_fn(self.state, inputs)
+
+        state = self.state.replace(
+            apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
+        )
+        preds = predict_fn(state, inputs)
+
         return preds
 
     def compute_loss_log(self):
@@ -88,8 +97,12 @@ class Trainer:
                 rngs = {name: k for name, k in zip(rng_cols, keys)}
             else:
                 rngs = None
+
             train_fn = strategy.train_step
-            state = self.state.replace(apply_fn=partial(self.state.apply_fn, **kwargs))
+
+            state = self.state.replace(
+                apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
+            )
             state, self.loss_logs, preds = train_fn(
                 state, self.loss_logs, inputs, labels, rngs
             )

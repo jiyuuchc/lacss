@@ -205,14 +205,14 @@ def patches_to_label(
     if mask is None:
         mask = jnp.ones([n_patches], dtype=bool)
     mask &= pred["instance_mask"].squeeze(axis=(1, 2))
-    mask &= pred["pred_scores"] >= score_threshold
-    mask &= np.count_nonzero(pr, axis=(1, 2)) > min_cell_area
+    if score_threshold > 0 and not "training_locations" in pred:
+        mask &= pred["pred_scores"] >= score_threshold
+    mask &= jnp.count_nonzero(pr, axis=(1, 2)) > min_cell_area
 
-    n = jnp.count_nonzero(mask)
-    seq = jnp.zeros([n_patches], dtype=int)
-    seq = seq.at[mask].set(jnp.arange(1, n + 1)[::-1])
+    pr = (pr > threshold).astype(int) * jnp.arange(1, pr.shape[0] + 1)[:, None, None]
+    pr = jnp.where(mask[:, None, None], pr, 0)
+    pr = jnp.where(pr == 0, 0, pr.max() + 1 - pr)
 
-    pr = (pr > threshold) * (seq[:, None, None])
     yc = pred["instance_yc"]
     xc = pred["instance_xc"]
 

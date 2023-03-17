@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 import os
 from functools import partial
 from logging.config import valid_ident
@@ -105,7 +106,7 @@ def get_model(cmd, config, batchsize, seed):
         cp = lacss.trainer.Trainer.from_checkpoint(config)
         assert isinstance(cp, lacss.trainer.Trainer)
         trainer = cp
-        print(f"Loaded checkpoint {config}")
+        logging.info(f"Loaded checkpoint {config}")
         try:
             init_epoch = int(config.split("-")[-1])
         except:
@@ -161,15 +162,17 @@ def run_training(
         os.makedirs(logpath)
     except:
         pass
-    print(f"Logging to {logpath}")
+    logging.info(f"Logging to {logpath}")
 
     ds_train, ds_val = prepare_data(datapath, celltype, batchsize)
-    print(ds_train.element_spec)
+    logging.info(ds_train.element_spec)
 
     trainer, init_epoch, n_epochs, steps_per_epoch = get_model(
         cmd, config, batchsize, seed
     )
-    print(json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True))
+    logging.info(
+        json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True)
+    )
 
     epoch = init_epoch
     train_gen = lacss.train.TFDatasetAdapter(ds_train, steps=-1).get_dataset()

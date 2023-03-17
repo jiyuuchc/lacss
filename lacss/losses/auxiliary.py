@@ -91,7 +91,7 @@ class AuxEdgeLoss(Loss):
         if not "training_locations" in preds:
             return 0.0
 
-        return jax.vmap(self_supervised_edge_losses)(preds, inputs)
+        return self_supervised_edge_losses(preds, inputs)
 
 
 class AuxSizeLoss(Loss):

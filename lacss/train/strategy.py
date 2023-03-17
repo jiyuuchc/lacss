@@ -56,11 +56,11 @@ class Eager:
     def train_step(
         cls,
         state: TrainState,
-        loss_logs: tp.Dict[str, LossLog],
+        loss_logs: tp.Sequence[LossLog],
         inputs: tp.Any,
         labels: tp.Any,
         rngs: tp.Optional[dict],
-    ) -> tp.Tuple[TrainState, dict, tp.Any]:
+    ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print('JIT train_step')
 
         if labels is None:
@@ -94,11 +94,11 @@ class _Distributed(Eager):
     def _train_step(
         cls,
         state: TrainState,
-        loss_logs: tp.Dict[str, LossLog],
+        loss_logs: tp.Sequence[LossLog],
         inputs: tp.Any,
         labels: tp.Any,
         rngs: tp.Optional[dict],
-    ) -> tp.Tuple[TrainState, tp.Dict[str, LossLog], tp.Any]:
+    ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print("JITTTTING")
         axis_index = jax.lax.axis_index("mapped")
         rngs = jax.tree_util.tree_map(
