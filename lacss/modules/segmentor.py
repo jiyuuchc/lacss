@@ -10,8 +10,8 @@ from .common import SpatialAttention
 
 
 class _Encoder(nn.Module):
-    n_ch: int = 16
-    patch_size: int = 48
+    n_ch: int
+    patch_size: int
     resolution: int = 8
     encoding_ch: int = 4
 

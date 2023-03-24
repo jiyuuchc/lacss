@@ -2,6 +2,7 @@
 # which is itself based on Tensorflow Keras:
 # https://github.com/tensorflow/tensorflow/blob/v2.2.0/tensorflow/python/keras/losses.py#L44-L201
 
+import functools
 import typing as tp
 from abc import abstractmethod
 from enum import Enum
@@ -161,9 +162,9 @@ def reduce_loss(
 
 class LossLog(struct.PyTreeNode):
     loss_fn: Loss = struct.field(pytree_node=False)
-    weight: float = 1.0
-    cnt: jnp.ndarray = jnp.array(0.0)
-    sum: jnp.ndarray = jnp.array(0.0)
+    weight: jnp.ndarray = 1.0
+    cnt: jnp.ndarray = 0.0
+    sum: jnp.ndarray = 0.0
 
     def update(self, **kwargs):
         loss = self.loss_fn(**kwargs) * self.weight
@@ -172,3 +173,38 @@ class LossLog(struct.PyTreeNode):
 
     def compute(self):
         return self.sum / self.cnt
+
+
+def reduce(func, reduction=Reduction.SUM_OVER_BATCH_SIZE):
+    @functools.wraps(func)
+    def wrapper(**kwargs):
+        values = jnp.asarray(func(**kwargs))
+
+        if reduction == Reduction.NONE:
+            loss = values
+        elif reduction == Reduction.SUM:
+            loss = jnp.sum(values)
+        elif reduction == Reduction.SUM_OVER_BATCH_SIZE:
+            loss = jnp.sum(values) / jnp.prod(jnp.array(values.shape[1:]))
+        else:
+            raise ValueError(f"Invalid reduction '{reduction}'")
+
+        return loss
+
+    return wrapper
+
+
+def on(func, filters: dict):
+    @functools.wraps(func)
+    def wrapper(**kwargs):
+        if "labels" in kwargs and kwargs["labels"] is not None:
+            for index in filters:
+                kwargs["labels"] = kwargs["labels"][index]
+
+        if "preds" in kwargs and kwargs["preds"] is not None:
+            for index in filter:
+                kwargs["preds"] = kwargs["preds"][index]
+
+        return func(**kwargs)
+
+    return wrapper

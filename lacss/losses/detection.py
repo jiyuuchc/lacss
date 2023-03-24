@@ -36,6 +36,7 @@ class DetectionLoss(Loss):
                     self.gamma,
                 ).sum()
                 cnt += preds["lpn_scores"][k].size
+
             return score_loss / cnt
 
         return _inner(preds["lpn_scores"], preds["lpn_gt_scores"])
@@ -58,7 +59,8 @@ class LocalizationLoss(Loss):
                 mask = gt_scores[k] > 0
                 regr_loss += jnp.sum(h, where=mask)
                 cnt += jnp.count_nonzero(mask)
-            return regr_loss / cnt
+
+            return regr_loss / (cnt + EPS)
 
         return _inner(
             preds["lpn_regressions"],

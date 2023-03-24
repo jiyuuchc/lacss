@@ -1,3 +1,4 @@
+import dataclasses
 import pathlib
 import typing as tp
 from functools import lru_cache, partial
@@ -6,6 +7,7 @@ import cloudpickle
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 from optax import GradientTransformation
 
@@ -28,18 +30,46 @@ class Trainer:
         seed: int = 42,
         strategy: type = strategy.JIT,
     ):
+
         self.model = model
-        self.losses = (losses,) if isinstance(losses, Loss) else losses
+        self.losses = losses
+        self._loss_weights = None
+
         self.seed = seed if isinstance(seed, jnp.ndarray) else jax.random.PRNGKey(seed)
-        self.optimizer = optimizer
+        self._optimizer = optimizer
 
         self._strategy = strategy
         self._initialized = False
 
-        self.reset()
+        # self.reset()
 
-    def reset(self):
-        self.loss_logs = tuple(LossLog(loss) for loss in self.losses)
+    def reset(self, loss_weights=None):
+
+        if self.losses is None:
+            raise ValueError(f"No loss functions provided")
+
+        losses = self.losses
+        try:
+            iter(losses)
+        except:
+            losses = (losses,)
+
+        if loss_weights is not None:
+            self._loss_weights = loss_weights
+        else:
+            loss_weights = self._loss_weights
+
+        if loss_weights is None:
+            loss_weights = (1.0,) * len(losses)
+
+        if len(loss_weights) != len(self.losses):
+            raise ValueError(
+                f"Loss weights supplied {loss_weights} does not match the number of loss functions ({len(losses)})"
+            )
+
+        self.loss_logs = tuple(
+            LossLog(loss, w) for loss, w in zip(self.losses, loss_weights)
+        )
 
     @property
     def initialized(self):
@@ -51,13 +81,29 @@ class Trainer:
             tx = self.optimizer
 
         if not self._initialized:
-            peek = next(dataset())
-            inputs, _, _ = unpack_x_y_sample_weight(peek)
 
-            self.seed, key = jax.random.split(self.seed)
-            self.state = self._strategy.init_fn(key, self.model, inputs, tx)
+            if self.model.scope is None:
 
-        self.reset()
+                peek = next(dataset())
+                inputs, _, _ = unpack_x_y_sample_weight(peek)
+
+                self.seed, key = jax.random.split(self.seed)
+                variables = self._strategy.init_fn(key, self.model, inputs)
+
+            else:
+
+                self.model, variables = self.model.unbind()
+
+            self.state = TrainState.create(
+                apply_fn=self.model.apply,
+                params=variables["params"],
+                tx=tx,
+            )
+
+        else:
+
+            raise ValueError("Calling initialize() on already initialized Trainer")
+
         self._initialized = True
 
     def __call__(self, inputs, *, strategy=None, **kwargs):
@@ -66,16 +112,19 @@ class Trainer:
 
         predict_fn = strategy.predict
 
-        state = self.state.replace(
-            apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
-        )
+        state = self.state
+        if len(kwargs) > 0:
+            state = state.replace(
+                apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
+            )
         preds = predict_fn(state, inputs)
 
         return preds
 
     def compute_loss_log(self):
         return {
-            loss_log.loss_fn.name: loss_log.compute() for loss_log in self.loss_logs
+            _get_name(loss_log.loss_fn): loss_log.compute()
+            for loss_log in self.loss_logs
         }
 
     def train(self, dataset, strategy=None, rng_cols=None, **kwargs):
@@ -112,6 +161,25 @@ class Trainer:
 
             yield batch_logs
 
+    def save_model(self, path, sub_module: tp.Optional[str] = None):
+        module = self.model
+        params = self.params
+
+        if sub_module is not None:
+            module = module.bind(dict(params=params))
+            module = module[sub_module]
+            module, params = module.unbind()
+            params = params["params"]
+
+        if isinstance(path, str):
+            path = pathlib.Path(path)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            cfg = dataclasses.asdict(module)
+            params = unfreeze(params)
+            cloudpickle.dump((cfg, params), f)
+
     def checkpoint(self, path):
         if isinstance(path, str):
             path = pathlib.Path(path)
@@ -131,7 +199,12 @@ class Trainer:
         except BaseException as e:
             raise OSError(f"Could not load the checkpoint. Got exception: {e}")
 
-        return cloudpickle.loads(_bytes)
+        trainer = cloudpickle.loads(_bytes)
+
+        if not isinstance(trainer, Trainer):
+            raise TypeError("The saved obj is not a Trainer checkpoint")
+
+        return trainer
 
     def test(self, dataset, metrics, strategy=None):
         if strategy is None:
@@ -166,3 +239,20 @@ class Trainer:
     @property
     def params(self):
         return self.state.params
+
+    @property
+    def optimizer(self):
+        return self._optimizer
+
+    @optimizer.setter
+    def optimizer(self, tx):
+
+        self._optimizer = tx
+
+        if self._initialized:
+
+            self.state = TrainState.create(
+                apply_fn=self.model.apply,
+                params=self.params,
+                tx=tx,
+            )

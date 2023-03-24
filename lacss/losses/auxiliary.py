@@ -95,57 +95,86 @@ class AuxEdgeLoss(Loss):
 
 
 class AuxSizeLoss(Loss):
-    def __init__(self, alpha):
+    def __init__(self, alpha=1e-2):
         super().__init__()
         self.a = alpha
 
     def call(self, inputs, preds, **kwargs):
+
         height, width, _ = inputs["image"].shape
+
         valid_locs = (
             (preds["instance_yc"] >= 0)
             & (preds["instance_yc"] < height)
             & (preds["instance_xc"] >= 0)
             & (preds["instance_xc"] < width)
         )
-        _, crop_size, _ = preds["instance_output"].shape
-        areas = (
-            jnp.sum(
-                preds["instance_output"], axis=(1, 2), where=valid_locs, keepdims=True
-            )
-            / crop_size
-            / crop_size
-        )
-        areas = jnp.clip(areas, EPS, 1.0)
 
-        loss = self.a * jnp.clip(jax.lax.rsqrt(areas), 0.0, 1.0e8)
-        loss = jnp.sum(loss, axis=0, where=preds["instance_mask"]) / (
-            jnp.count_nonzero(preds["instance_mask"]) + EPS
+        areas = jnp.sum(
+            preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
         )
+        areas = jnp.clip(areas, EPS, 1e6)
+        loss = jax.lax.rsqrt(areas) * self.a
+
+        mask = preds["instance_mask"]
+        n_instances = jnp.count_nonzero(mask) + EPS
+        loss = loss.sum(where=mask) / n_instances
 
         return loss
 
 
 class AuxSegLoss(Loss):
+    def __init__(self, offset_sigma=10.0, offset_scale=5.0, **kwargs):
+        super().__init__(**kwargs)
+        try:
+            offset_sigma[0]
+        except:
+            offset_sigma = (offset_sigma,)
+
+        try:
+            offset_scale[0]
+        except:
+            offset_scale = (offset_scale,)
+
+        self.offset_scale = jnp.array(offset_scale)
+        self.offset_sigma = jnp.array(offset_sigma)
+
     def call(self, inputs, preds, **kwargs):
         height, width, _ = inputs["image"].shape
         _, ps, _ = preds["instance_yc"].shape
 
-        # def _to_patch(img, yc, xc):
-        #     _, ps, _ = yc.shape
-        #     padding = [[ps // 2, ps // 2], [ps // 2, ps // 2]]
-        #     img = jnp.pad(img, padding, constant_values=-1.0)
-        #     return img[yc + ps // 2, xc + ps // 2]
-
         def _max_merge(pred):
-            label = jnp.zeros([height + ps, width + ps]) - 1.0e8
+            label = jnp.zeros([height + ps, width + ps]) - 1.0e6
             yc, xc = pred["instance_yc"], pred["instance_xc"]
-            label = label.at[yc + ps // 2, xc + ps // 2].max(pred["instance_logit"])
+            logit = pred["instance_logit"]
+
+            if "category" in inputs and inputs["category"] is not None:
+                c = inputs["category"].astype(int).squeeze()
+            else:
+                c = 0
+
+            sigma = self.offset_sigma[c]
+            scale = self.offset_scale[c]
+            offset = (jnp.mgrid[:ps, :ps] - (ps - 1) / 2) ** 2 / (2 * sigma * sigma)
+            offset = jnp.exp(-offset.sum(axis=0)) * scale
+            logit += offset
+
+            label = label.at[yc + ps // 2, xc + ps // 2].max(logit)
             label = label[ps // 2 : -ps // 2, ps // 2 : -ps // 2]
+
             return label
 
         fg_pred = jax.nn.tanh(preds["fg_pred"])
-        fg = jax.nn.tanh(_max_merge(preds))
-        loss = 1.0 - fg_pred * fg
-        loss = loss.mean(axis=(1, 2))
+        fg_label = jax.nn.tanh(_max_merge(preds))
+
+        locs = jnp.floor(inputs["gt_locations"] + 0.5)
+        locs = locs.astype(int)
+        fg_label = fg_label.at[locs[:, 0], locs[:, 1]].set(1.0)
+
+        assert fg_pred.shape == fg_label.shape
+
+        loss = 1.0 - fg_pred * jax.lax.stop_gradient(fg_label)
+
+        loss = loss.mean()
 
         return loss

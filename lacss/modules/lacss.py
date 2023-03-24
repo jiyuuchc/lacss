@@ -75,7 +75,6 @@ class Lacss(nn.Module):
             self._lpn(
                 inputs=features,
                 scaled_gt_locations=scaled_gt_locations,
-                training=training,
             )
         )
         model_output.update(
@@ -112,15 +111,18 @@ class LacssWithHelper(nn.Module):
         if self.aux_fg_cfg is not None:
             self._aux_fg_module = AuxForeground(**self.aux_fg_cfg)
 
-    def __call__(self, image, gt_locations=None, category=None, *, training=None):
+    def __call__(self, image, gt_locations=None, category=None, *, training=False):
 
         preds = self._lacss(image, gt_locations, training=training)
 
         if self.aux_edge_cfg is not None:
-            preds.update(
-                dict(edge_pred=self._aux_edge_module(image, category=category))
-            )
+
+            preds.update(self._aux_edge_module(image, category=category))
+
         if self.aux_fg_cfg is not None:
-            preds.update(dict(fg_pred=self._aux_fg_module(image, category=category)))
+
+            preds.update(
+                self._aux_fg_module(image, category=category, augment=training)
+            )
 
         return preds

@@ -22,9 +22,9 @@ class Eager:
         )
 
         args = dict(
-            inputs=inputs,
             preds=preds,
-            **labels,
+            labels=labels,
+            inputs=inputs,
         )
 
         losses, loss_logs = zip(*[loss_fn.update(**args) for loss_fn in loss_logs])
@@ -33,14 +33,11 @@ class Eager:
         return total_loss, (state, loss_logs, preds)
 
     @classmethod
-    def init_fn(cls, key, model, inputs, tx):
+    def init_fn(cls, key, model, inputs):
         inputs_obj = Inputs.from_value(inputs)
-        variables = model.init(key, *inputs_obj.args, **inputs_obj.kwargs)
-        state = TrainState.create(
-            apply_fn=model.apply,
-            params=variables["params"],
-            tx=tx,
-        )
+
+        state = model.init(key, *inputs_obj.args, **inputs_obj.kwargs)
+
         return state
 
     @classmethod
@@ -62,11 +59,6 @@ class Eager:
         rngs: tp.Optional[dict],
     ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print('JIT train_step')
-
-        if labels is None:
-            labels = {}
-        elif not isinstance(labels, dict):
-            labels = dict(target=labels)
 
         grads, (state, loss_logs, preds) = jax.grad(cls.loss_fn, has_aux=True)(
             state.params,
@@ -105,11 +97,6 @@ class _Distributed(Eager):
             lambda key: jax.random.fold_in(key, axis_index), rngs
         )
 
-        if labels is None:
-            labels = {}
-        elif not isinstance(labels, dict):
-            labels = dict(target=labels)
-
         grads, (state, loss_logs, preds) = jax.grad(cls.loss_fn, has_aux=True)(
             state.params,
             state,
@@ -131,9 +118,9 @@ class _Distributed(Eager):
         return state, loss_logs, preds
 
     @classmethod
-    def init_fn(cls, key, model, inputs, tx):
+    def init_fn(cls, key, model, inputs):
         inputs = jax.tree_map(lambda v: v[0], inputs)
-        return Eager.init_fn(key, model, inputs, tx)
+        return Eager.init_fn(key, model, inputs)
 
 
 class Distributed(_Distributed):

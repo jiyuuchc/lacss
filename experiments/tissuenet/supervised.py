@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 
-import tensorflow as tf
-
-tf.config.set_visible_devices([], "GPU")
-
 import dataclasses
 import json
 import logging
@@ -28,6 +24,10 @@ except:
 import typer
 
 app = typer.Typer(pretty_exceptions_enable=False)
+
+import tensorflow as tf
+
+tf.config.set_visible_devices([], "GPU")
 
 
 def get_model(cmd, config, seed):
@@ -79,49 +79,30 @@ def get_model(cmd, config, seed):
 def run_training(
     cmd: str,
     config: str,
-    datapath: str = "../../livecell_dataset",
-    logpath: str = "",
-    celltype: int = -1,
+    datapath: str = "../../../tissue_net/",
+    logpath: str = "./",
     seed: int = 42,
-    batchsize: int = 1,
-    n_epochs: int = 10,
-    steps_per_epoch: int = 3500 * 5,
-    init_epoch: int = 0,
-    lr: float = 0.002,
-    coco: bool = False,
     n_buckets: int = 4,
+    batchsize: int = 1,
+    init_epoch: int = 0,
+    n_epochs: int = 10,
+    steps_per_epoch: int = 10000,
+    lr: float = 0.002,
 ):
     tf.random.set_seed(seed)
+    np.random.seed(seed)
+    steps_per_epoch = steps_per_epoch // batchsize
 
-    if logpath == "":
-        import time
-
-        logpath = join(".", time.strftime("%Y%m%d-%H%M%S"))
     try:
         os.makedirs(logpath)
     except:
         pass
-    logging.info(f"Logging to {logpath}")
 
-    train_gen = data.train_data(
-        datapath,
-        n_buckets,
-        batchsize,
-        supervised=True,
-        cell_type=celltype,
-        coco=coco,
-    )
-    val_gen = data.val_data(
-        datapath,
-        supervised=True,
-        cell_type=celltype,
-        coco=coco,
-    )
+    train_gen = data.train_data_supervised(datapath, n_buckets, batchsize)
+    val_gen = data.val_data_supervised(datapath, n_buckets, 4)
 
     trainer = get_model(cmd, config, seed)
 
-    # initialize before calling asdict because the model may be bound
-    steps_per_epoch = steps_per_epoch // batchsize
     if not trainer.initialized:
         schedules = [
             optax.cosine_decay_schedule(lr * batchsize, steps_per_epoch)
@@ -130,6 +111,7 @@ def run_training(
         schedule = optax.join_schedules(schedules, boundaries)
 
         trainer.initialize(train_gen, optax.adam(schedule))
+        # trainer.initialize(train_gen, optax.adam(lr))
 
     logging.info(
         json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True)
@@ -139,8 +121,6 @@ def run_training(
     for steps, logs in enumerate(
         trainer.train(train_gen, rng_cols=["droppath"], training=True)
     ):
-        if epoch >= n_epochs:
-            break
 
         if (steps + 1) % steps_per_epoch == 0:
             epoch += 1
@@ -151,12 +131,15 @@ def run_training(
             trainer.reset()
 
             val_metrics = [
-                lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
+                lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
                 lacss.metrics.BoxAP([0.5, 0.75]),
             ]
             var_logs = trainer.test_and_compute(val_gen, metrics=val_metrics)
             for k, v in var_logs.items():
                 print(f"{k}: {v}")
+
+            if epoch >= n_epochs:
+                break
 
 
 if __name__ == "__main__":

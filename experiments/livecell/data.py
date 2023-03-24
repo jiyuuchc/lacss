@@ -1,11 +1,14 @@
 import random
 import zipfile
+from functools import partial
 from os.path import join
 
 import imageio
 import numpy as np
 import tensorflow as tf
 from pycocotools.coco import COCO
+
+from lacss.train import TFDatasetAdapter
 
 # import cv2
 
@@ -371,3 +374,233 @@ def livecell_dataset_from_tfrecord(tfrpath):
 
     ds = tf.data.TFRecordDataset(tfrpath).map(tfr_parse_record)
     return ds
+
+
+def train_parser_supervised(inputs):
+
+    from lacss.data import parse_train_data_func_full_annotation
+
+    inputs = parse_train_data_func_full_annotation(
+        inputs, target_height=544, target_width=544
+    )
+
+    image = inputs["image"]
+    gt_locations = inputs["locations"]
+    mask_labels = tf.cast(inputs["mask_labels"], tf.float32)
+
+    x_data = dict(
+        image=image,
+        gt_locations=gt_locations,
+    )
+    y_data = dict(
+        gt_labels=mask_labels,
+    )
+
+    return x_data, y_data
+
+
+def train_parser_semisupervised(inputs):
+
+    from lacss.data import parse_train_data_func
+
+    cell_type = tf.cast(inputs["cell_type"], tf.float32)
+    inputs = parse_train_data_func(
+        inputs, size_jitter=(0.85, 1.15), target_height=544, target_width=544
+    )
+
+    image = inputs["image"]
+    gt_locations = inputs["locations"]
+    mask = inputs["binary_mask"]
+
+    image = tf.image.random_contrast(image, 0.6, 1.4)
+    image = tf.image.random_brightness(image, 0.3)
+
+    x_data = dict(
+        image=image,
+        gt_locations=gt_locations,
+        category=tf.reshape(cell_type, [1]),
+    )
+    y_data = dict(
+        gt_mask=mask,
+    )
+
+    return x_data, y_data
+
+
+def train_data(
+    datapath, n_buckets, batchsize, *, supervised=False, cell_type=-1, coco=False
+):
+
+    if not coco:
+
+        ds_train = livecell_dataset_from_tfrecord(join(datapath, "train.tfrecord"))
+
+    else:
+
+        from lacss.data import dataset_from_coco_annotations
+
+        ds_train = dataset_from_coco_annotations(
+            join(datapath, "annotations", "LIVECell", "livecell_coco_train.json"),
+            join(datapath, "images", "livecell_train_val_images"),
+            [520, 704, 1],
+        ).cache(join(datapath, "cache_train"))
+
+    ds_train = ds_train.repeat()
+    if cell_type >= 0:
+        ds_train = ds_train.filter(lambda x: x["cell_type"] == cell_type)
+
+    if supervised:
+        ds_train = ds_train.map(train_parser_supervised)
+    else:
+        ds_train = ds_train.map(train_parser_semisupervised)
+
+    ds_train = ds_train.filter(lambda x, _: tf.size(x["gt_locations"]) > 0)
+
+    ds_train = ds_train.bucket_by_sequence_length(
+        element_length_func=lambda x, _: tf.shape(x["gt_locations"])[0],
+        bucket_boundaries=list(np.arange(1, n_buckets + 1) * (4096 // n_buckets) + 1),
+        bucket_batch_sizes=(max(batchsize, 1),) * (n_buckets + 1),
+        padding_values=-1.0,
+        pad_to_bucket_boundary=True,
+    )
+
+    if batchsize <= 0:
+
+        ds_train = ds_train.unbatch()
+
+    return TFDatasetAdapter(ds_train, steps=-1).get_dataset()
+
+
+def pad_to(x):
+    s = tf.shape(x)[0]
+    sp = (s - 1) // 1024 * 1024 + 1024
+    x = tf.pad(x, [[0, sp - s], [0, 0]], constant_values=-1.0)
+    return x
+
+
+def val_parser(inputs, supervised):
+    cell_type = tf.cast(inputs["cell_type"], tf.float32)
+    img = inputs["image"]
+    h = tf.shape(img)[0]
+    w = tf.shape(img)[1]
+    h1 = (h - 1) // 32 * 32 + 32 - h
+    w1 = (w - 1) // 32 * 32 + 32 - w
+    img = tf.pad(img, [[0, h1], [0, w1], [0, 0]])
+
+    masks = inputs["mask_indices"]
+    row_ids = masks.value_rowids() + 1
+    labels = tf.zeros([h + h1, w + w1], row_ids.dtype)
+    labels = tf.tensor_scatter_nd_update(labels, masks.values, row_ids)
+
+    if supervised:
+        x_data = dict(
+            image=img,
+        )
+    else:
+        x_data = dict(
+            image=img,
+            category=tf.reshape(cell_type, [1]),
+        )
+
+    y_data = dict(
+        gt_boxes=pad_to(inputs["bboxes"]),
+        gt_locations=pad_to(inputs["locations"]),
+        gt_labels=labels,
+    )
+
+    return x_data, y_data
+
+
+def val_data(
+    datapath, *, supervised=False, cell_type=-1, coco=False, split="val", batch=True
+):
+
+    if not coco:
+
+        tfr_name = split + ".tfrecord"
+        ds_val = livecell_dataset_from_tfrecord(join(datapath, tfr_name))
+
+    else:
+
+        from lacss.data import dataset_from_coco_annotations
+
+        json_file = f"livecell_coco_{split}.json"
+        img_path = (
+            "livecell_train_val_images" if split == "val" else "livecell_test_images"
+        )
+        ds_val = dataset_from_coco_annotations(
+            join(datapath, "annotations", "LIVECell", json_file),
+            join(datapath, "images", img_path),
+            [520, 704, 1],
+        ).cache(join(datapath, f"cache_{split}"))
+
+    if cell_type >= 0:
+        ds_val = ds_val.filter(lambda x: x["cell_type"] == cell_type)
+
+    ds_val = ds_val.map(partial(val_parser, supervised=supervised))
+
+    if batch:
+        ds_val = ds_val.batch(1)
+
+    return TFDatasetAdapter(ds_val).get_dataset()
+
+
+def test_parser(inputs, supervised):
+    cell_type = tf.cast(inputs["cell_type"], tf.float32)
+
+    img = inputs["image"]
+    gt_mask = inputs["binary_mask"]
+    h = tf.shape(img)[0]
+    w = tf.shape(img)[1]
+    h1 = (h - 1) // 32 * 32 + 32 - h
+    w1 = (w - 1) // 32 * 32 + 32 - w
+    img = tf.pad(img, [[0, h1], [0, w1], [0, 0]])
+    gt_mask = tf.pad(gt_mask, [[0, h1], [0, w1]])
+
+    mis = inputs["mask_indices"]
+    mi_ds = mis.value_rowids()[:, None]
+    mi_vs = tf.cast(mis.values, mi_ds.dtype)
+    mask_indices = tf.concat([mi_ds, mi_vs], axis=-1)
+
+    if supervised:
+        x_data = dict(
+            image=img,
+        )
+    else:
+        x_data = dict(
+            image=img,
+            category=tf.reshape(cell_type, [1]),
+        )
+
+    y_data = dict(
+        gt_boxes=inputs["bboxes"],
+        gt_locations=inputs["locations"],
+        gt_mask=gt_mask,
+        gt_mask_indices=mask_indices,
+    )
+
+    return x_data, y_data
+
+
+def test_data(datapath, *, supervised=False, cell_type=-1, coco=False):
+
+    if not coco:
+
+        ds_val = livecell_dataset_from_tfrecord(join(datapath, "test.tfrecord"))
+
+    else:
+
+        from lacss.data import dataset_from_coco_annotations
+
+        ds_test = dataset_from_coco_annotations(
+            join(datapath, "annotations", "LIVECell", "livecell_coco_test.json"),
+            join(datapath, "images", "livecell_test_images"),
+            [520, 704, 1],
+        ).cache(join(datapath, f"cache_test"))
+
+    if cell_type >= 0:
+        ds_val = ds_val.filter(lambda x: x["cell_type"] == cell_type)
+
+    ds_val = ds_val.map(partial(test_parser, supervised=supervised))
+
+    return TFDatasetAdapter(ds_val).get_dataset()

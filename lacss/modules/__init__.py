@@ -5,3 +5,4 @@ from .lacss import Lacss
 from .lpn import LPN
 from .resnet import ResNet
 from .segmentor import Segmentor
+from .unet import UNet

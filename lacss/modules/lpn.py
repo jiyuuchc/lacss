@@ -46,7 +46,9 @@ class LPN(nn.Module):
         return scores_out, regression_out
 
     def __call__(
-        self, inputs: dict, scaled_gt_locations: jnp.ndarray = None, *, training=None
+        self,
+        inputs: dict,
+        scaled_gt_locations: jnp.ndarray = None,
     ) -> dict:
         """
         Args:
@@ -74,7 +76,7 @@ class LPN(nn.Module):
             all_scores[str(lvl)] = score
             all_regrs[str(lvl)] = regression
 
-            if training and scaled_gt_locations is not None:
+            if scaled_gt_locations is not None:
                 score_target, regression_target = locations_to_labels(
                     scaled_gt_locations,
                     target_shape=feature.shape[-3:-1],

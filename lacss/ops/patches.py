@@ -129,22 +129,24 @@ def indices_of_patches(
     return jnp.stack([yy, xx, rowids], axis=-1)
 
 
-def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128):
-    """Compute iou between two sets of segmentations.
-    The first set is defined by patches; the second by image labels
+def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128, threshold=0.5):
+    """Compute iou between prediction and label.
     Args:
         pred: model output (unbatched):
-        threshold: float
+        labels: image label bg_label = 0
+        threshold: float, default 0.5
     Returns:
         [n, m] iou values.
     """
     patches, yc, xc = _get_patch_data(pred)
-    patches = patches >= 0.5
+    patches = patches >= threshold
     pred_areas = jnp.count_nonzero(patches, axis=(-1, -2))
+    labels = labels.astype(int)
 
-    # this rely on JAX's out-of-bound indexing behavior
-    padded_labels = jnp.pad(labels, [[1, 1], [1, 1]], constant_values=-1)
-    gt_patches = padded_labels[yc + 1, xc + 1]
+    pads = yc.shape[-1] // 2
+    padded_labels = jnp.pad(labels, pads, constant_values=0)
+    gt_patches = padded_labels[yc + pads, xc + pads]
+
     max_indices = ((labels.max() - 1) // BLOCK_SIZE + 1) * BLOCK_SIZE
     all_gt_areas = jnp.count_nonzero(
         labels[:, :, None] == jnp.arange(max_indices) + 1, axis=(0, 1)
@@ -161,7 +163,8 @@ def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128):
         ious.append(intersect / (pred_areas + gt_areas[:, None] - intersect + 1.0e-8))
 
     ious = jnp.concatenate(ious, axis=0).transpose()  # [N, B * b]
-    ious = ious[:, : labels.max()]
+    ious = ious[:, : labels.max()]  # this breaks JIT
+
     return ious
 
 

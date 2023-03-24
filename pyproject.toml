@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lacss"
-version = "0.2.1"
+version = "0.2.2"
 description = "Cell segmentation and tracking"
 authors = ["Ji Yu <jyu@uchc.edu>"]
 license = "MIT"
@@ -9,7 +9,6 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.8, <3.11"
 flax = ">=0.4.1"
-tensorflow-cpu = "^2.8.0"
 tqdm = "^4.65.0"
 numpy = ">=1.18.0"
 imageio = "^2.9.0"
@@ -25,6 +24,7 @@ setuptools = "67.4.0"
 pycocotools = "^2.0.6"
 pytest = "^7.2.2"
 jupyterlab = "^3.6.1"
+imagecodecs = "^2023.3.16"
 
 [[tool.poetry.source]]
 name = "jax"

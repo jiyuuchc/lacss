@@ -4,6 +4,7 @@ import numpy as np
 
 from ..ops import *
 from ..train.metric import Metric
+from ..utils import _get_name
 
 """
 metrics classes for computing coco-style AP metrics.
@@ -68,10 +69,13 @@ class AP(Metric):
       m.result()
     """
 
-    def __init__(self, thresholds=[0.5], coco_style=False):
+    def __init__(self, thresholds=[0.5], coco_style=False, name=None):
         self.thresholds = thresholds
         self.coco_style = coco_style
-        self.name = "AP"
+        if name is None:
+            self.name = _get_name(self)
+        else:
+            self.name = name
         self.reset()
 
     def update(self, sm, scores):
@@ -112,7 +116,6 @@ class AP(Metric):
 class LoiAP(AP):
     def __init__(self, thresholds=[0.5], **kwargs):
         super().__init__([th * th for th in thresholds], **kwargs)
-        self.name = "LoiAP"
 
     def update(self, preds, gt_locations, **kwargs):
         scores = preds["pred_scores"]
@@ -134,15 +137,35 @@ class LoiAP(AP):
 
 
 class BoxAP(AP):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.name = "BoxAP"
-
     def update(self, preds, gt_boxes, **kwargs):
         pred_boxes = jax.vmap(bboxes_of_patches)(preds)
-        box_ious = box_iou_similarity(pred_boxes, gt_boxes)
-        scores = preds["pred_scores"]
+        box_ious = np.asarray(box_iou_similarity(pred_boxes, gt_boxes))
+        scores = np.asarray(preds["pred_scores"])
+        valid_gt_boxes = np.asarray((gt_boxes >= 0).all(axis=-1))
 
-        for score, gt_box, iou in zip(scores, gt_boxes, box_ious):
-            iou = iou[score >= 0][:, (gt_box >= 0).all(axis=-1)]
-            super().update(iou, score[score >= 0])
+        for score, iou, gt_is_valid in zip(scores, box_ious, valid_gt_boxes):
+            valid_preds = score >= 0
+            iou = iou[valid_preds][:, gt_is_valid]
+            score = score[valid_preds]
+            super().update(iou, score)
+
+
+class MaskAP(AP):
+    def _update(self, pred, gt_label):
+        scores = np.asarray(pred["pred_scores"])
+        ious = np.asarray(iou_patches_and_labels(pred, gt_label))
+
+        valid = scores >= 0
+        valid_scores = scores[valid]
+        valid_ious = ious[valid]
+        super().update(valid_ious, valid_scores)
+
+    def update(self, preds, gt_labels, **kwargs):
+
+        for k in range(len(gt_labels)):
+            self._update(
+                *jax.tree_util.tree_map(
+                    lambda v: v[k],
+                    (preds, gt_labels),
+                )
+            )

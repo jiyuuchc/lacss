@@ -65,13 +65,27 @@ class ResNet(nn.Module):
     min_feature_level: int = 1
     stochastic_drop_rate = 0.0
     out_channels: int = 256
+    patch_size: int = 2
+
+    def __post_init__(self):
+
+        if self.patch_size != 2 and self.patch_size != 4:
+            raise ValueError(
+                "Invalud patch_size {self.patch_size}. It shoule be either 2 or 4."
+            )
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, *, training: bool = None) -> dict:
 
-        x = jax.nn.relu(nn.Conv(24, (3, 3))(x))
-        x = jax.nn.relu(nn.Conv(64, (3, 3))(x))
-        encoder_out = [x]
+        if self.patch_size == 2:
+            x = jax.nn.relu(nn.Conv(24, (3, 3))(x))
+            x = jax.nn.relu(nn.Conv(64, (3, 3))(x))
+            encoder_out = [x]
+        else:
+            encoder_out = [x]
+            x = jax.nn.relu(nn.Conv(24, (3, 3), strides=(2, 2))(x))
+            x = jax.nn.relu(nn.Conv(64, (3, 3))(x))
+            encoder_out.append(x)
 
         model_spec = self.model_spec
         if isinstance(model_spec, str):
