@@ -1,14 +1,28 @@
-# LACSS
+## LACSS
 
-LACSS is a model for single-cell segmentation and cell-lineage tracking
+_LACSS is a deep-learning model for single-cell segmentation from microscopy images._ 
 
 Ref: https://www.nature.com/articles/s42003-023-04608-5
 
-As a segmentation model, it can work similar to other instance segmentation models such as MaskRCNN. However, it also support end-to-end training with very weak supervisions: e.g (a) image-level segmentation, and (b) location-of-interests (LOIs). These annotatins are chosen because they can often be produced progammably using simple unsupervised algorithms from experimental data. Our goal is to build a streamlined annotation-training pipeline that requires no manual input from humans.
+### Why LACSS?
+LACSS is designed to utilize point labels for model training. You have three options:
 
-The segmentation model is used for down-stream cell-tracking task. The tracking logic is based on SMC (sequential Monte Carlo).
+| Method | Data(left) / Label(right)|
+| --- | --- |
+| Point | <img src=".github/images/label_scheme_1.png" width="300"> |
+| Point + Mask | <img src=".github/images/label_scheme_2.png" width="300"> |
+| Segmentation | <img src=".github/images/label_scheme_3.png" width="300"> |
 
-This particular version of LACSS is build on [Jax](https://github.com/google/jax) framework. Both the segmentation model and the tracking logic heavily utilize the composable transformation facility provided by JAX.
+You can of course also combined these labels in any way you want.
 
+### What is included?
 
+- A library for training LACSS model and performing inference
+- A few pretrained models as transfer learning starting point
+- SMC-based cell tracking utility for people interested in cell tracking
 
+### How to generate point label?
+
+If your data include nuclei counter-stain, the easist way to generate point label for your image is to use a [blob detection](https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_blob.html) algorithm on the nuclei images:
+
+![](.github/images/blob_detection.png)
