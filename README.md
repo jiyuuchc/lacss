@@ -1,4 +1,16 @@
-# LACSS (Location assisted cell segmentation system)
+# Deprecation Notice
+
+This library was an early experimental version and has been replaced by
+
+https://github.com/jiyuuchc/lacss_jax
+
+You are recommned to use the new repository instead of this one. 
+
+
+------------------------------------------------------------------
+
+
+## LACSS (Location assisted cell segmentation system)
 
 _LACSS is a deep-learning model for single-cell segmentation built on weakly-supervised end-to-end learning._
 
