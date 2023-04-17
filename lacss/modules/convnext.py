@@ -109,55 +109,67 @@ model_urls = {
     "convnext_xlarge_22k": "https://dl.fbaipublicfiles.com/convnext/convnext_xlarge_22k_224.pth",
 }
 
-# def load_weight(jax_model, url):
-#     ''' Load pretrained convnext models
-#     specs for pretrained models are:
-#         tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
-#         small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
-#         base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
-#         large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
-#         X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
-#     '''
-#     import torch
 
-#     def t(m, k, new_value):
-#         new_value = jnp.array(new_value)
-#         assert vars(m)[k].shape == new_value.shape
-#         vars(m)[k] = new_value
+def load_weight(jax_model, jax_params, url):
+    """Load pretrained convnext models
+    specs for pretrained models are:
+        tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
+        small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
+        base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
+        large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
+        X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
+    """
+    import torch
+    from flax.core.frozen_dict import freeze, unfreeze
 
-#     checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu")
-#     params = checkpoint['model']
+    def t(m, new_value):
+        new_value = jnp.array(new_value)
+        assert m.shape == new_value.shape
+        m = new_value
 
-#     cnt = 1
-#     for i in range(4):
-#         for k in range(jax_model.depths[i]):
-#             block = vars(jax_model)[f'block{cnt}' if cnt > 1 else 'block']
-#             t(block, 'gamma', params[f'stages.{i}.{k}.gamma'])
-#             t(block.conv, 'bias', params[f'stages.{i}.{k}.dwconv.bias'])
-#             t(block.conv, 'kernel', params[f'stages.{i}.{k}.dwconv.weight'].permute(2,3,1,0))
-#             t(block.layer_norm, 'bias', params[f'stages.{i}.{k}.norm.bias'])
-#             t(block.layer_norm, 'scale', params[f'stages.{i}.{k}.norm.weight'])
-#             t(block.linear, 'bias', params[f'stages.{i}.{k}.pwconv1.bias'])
-#             t(block.linear, 'kernel', params[f'stages.{i}.{k}.pwconv1.weight'].transpose(0,1))
-#             t(block.linear2, 'bias', params[f'stages.{i}.{k}.pwconv2.bias'])
-#             t(block.linear2, 'kernel', params[f'stages.{i}.{k}.pwconv2.weight'].transpose(0,1))
+    checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu")
+    params = checkpoint["model"]
+    jax_params = unfreeze(jax_params)
 
-#             cnt += 1
+    cnt = 0
+    for i in range(4):
+        for k in range(jax_model.depths[i]):
+            block = jax_params[f"_Block_{cnt}"]
+            t(block["gamma"], params[f"stages.{i}.{k}.gamma"])
+            t(block["Conv_0"]["bias"], params[f"stages.{i}.{k}.dwconv.bias"])
+            t(
+                block["Conv_0"]["kernel"],
+                params[f"stages.{i}.{k}.dwconv.weight"].permute(2, 3, 1, 0),
+            )
+            t(block["LayerNorm_0"]["bias"], params[f"stages.{i}.{k}.norm.bias"])
+            t(block["LayerNorm_0"]["scale"], params[f"stages.{i}.{k}.norm.weight"])
+            t(block["Dense_0"]["bias"], params[f"stages.{i}.{k}.pwconv1.bias"])
+            t(
+                block["Dense_0"]["kernel"],
+                params[f"stages.{i}.{k}.pwconv1.weight"].transpose(0, 1),
+            )
+            t(block["Dense_1"]["bias"], params[f"stages.{i}.{k}.pwconv2.bias"])
+            t(
+                block["Dense_1"]["kernel"],
+                params[f"stages.{i}.{k}.pwconv2.weight"].transpose(0, 1),
+            )
 
-#     norm = jax_model.layer_norm
-#     t(norm, 'bias', params['downsample_layers.0.1.bias'])
-#     t(norm, 'scale', params['downsample_layers.0.1.weight'])
+            cnt += 1
 
-#     conv = jax_model.conv
-#     t(conv, 'bias', params['downsample_layers.0.0.bias'])
-#     t(conv, 'kernel', params['downsample_layers.0.0.weight'].permute(2,3,1,0))
+    norm = jax_params[f"LayerNorm_0"]
+    t(norm["bias"], params["downsample_layers.0.1.bias"])
+    t(norm["scale"], params["downsample_layers.0.1.weight"])
 
-#     for i in range(1,4):
-#         norm = vars(jax_model)[f'layer_norm{i+1}']
-#         t(norm, 'bias', params[f'downsample_layers.{i}.0.bias'])
-#         t(norm, 'scale', params[f'downsample_layers.{i}.0.weight'])
-#         conv = vars(jax_model)[f'conv{i+1}']
-#         t(conv, 'bias', params[f'downsample_layers.{i}.1.bias'])
-#         t(conv, 'kernel', params[f'downsample_layers.{i}.1.weight'].permute(2,3,1,0))
+    conv = jax_params[f"Conv_0"]
+    t(conv["bias"], params["downsample_layers.0.0.bias"])
+    t(conv["kernel"], params["downsample_layers.0.0.weight"].permute(2, 3, 1, 0))
 
-#     return jax_model
+    for i in range(1, 4):
+        norm = jax_params[f"LayerNorm_{i}"]
+        t(norm["bias"], params[f"downsample_layers.{i}.0.bias"])
+        t(norm["scale"], params[f"downsample_layers.{i}.0.weight"])
+        conv = jax_params[f"Conv_{i}"]
+        t(conv["bias"], params[f"downsample_layers.{i}.1.bias"])
+        t(conv["kernel"], params[f"downsample_layers.{i}.1.weight"].permute(2, 3, 1, 0))
+
+    return freeze(jax_params)

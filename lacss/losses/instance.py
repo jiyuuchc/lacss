@@ -160,7 +160,11 @@ class SupervisedInstanceLoss(Loss):
         instance_logit = preds["instance_logit"]
         yc = preds["instance_yc"]
         xc = preds["instance_xc"]
-        gt_labels = labels["gt_labels"].astype("int32")
+
+        if isinstance(labels, dict):
+            gt_labels = labels["gt_labels"].astype("int32")
+        else:
+            gt_labels = labels.astype("int32")
 
         n_patches, ps, _ = yc.shape
 
@@ -176,10 +180,15 @@ class SupervisedInstanceLoss(Loss):
 
 
 class SelfSupervisedInstanceLoss(Loss):
+    def __init__(self, soft_label: bool = True, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.soft_label = soft_label
+
     def call(self, preds: dict, **kwargs):
 
         instance_mask = preds["instance_mask"]
         instances = preds["instance_output"]
+        instance_logit = preds["instance_logit"]
         yc = preds["instance_yc"]
         xc = preds["instance_xc"]
 
@@ -189,16 +198,34 @@ class SelfSupervisedInstanceLoss(Loss):
         xc += padding_size
 
         binary_mask = jax.lax.stop_gradient(jax.nn.sigmoid(preds["fg_pred"]))
+        # binary_mask = jax.lax.stop_gradient(preds["fg_pred"])
         seg = jnp.pad(binary_mask, padding_size)
 
-        seg_patch = seg[yc, xc]
-        loss = (1.0 - seg_patch) * instances + seg_patch * (1.0 - instances)
+        if self.soft_label:
 
-        instance_sum = jnp.zeros_like(seg)
-        instance_sum = instance_sum.at[yc, xc].add(instances)
-        instance_sum_i = instance_sum[yc, xc] - instances
+            seg_patch = seg[yc, xc]
 
-        loss = loss + instances * instance_sum_i
+            loss = (1.0 - seg_patch) * instances + seg_patch * (1.0 - instances)
+
+            instance_sum = jnp.zeros_like(seg)
+            instance_sum = instance_sum.at[yc, xc].add(instances)
+            instance_sum_i = instance_sum[yc, xc] - instances
+
+            loss = loss + instances * instance_sum_i
+
+        else:
+
+            seg = (seg > 0.5).astype(instances.dtype)
+            seg_patch = seg[yc, xc]
+
+            loss = (1.0 - seg_patch) * instances + seg_patch * (1.0 - instances)
+
+            log_yi_sum = jnp.zeros_like(seg)
+            log_yi = -jax.nn.log_sigmoid(-instance_logit)
+            log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
+            log_yi = log_yi_sum[yc, xc] - log_yi
+
+            loss = loss + (instances * log_yi)
 
         return _mean_over_boolean_mask(loss, instance_mask)
 
@@ -226,23 +253,26 @@ class WeaklySupervisedInstanceLoss(Loss):
             seg = jnp.pad(seg, padding_size)
             loss = jnp.zeros_like(instances)
         else:
-            seg = labels["gt_mask"].astype("float32")
+            if isinstance(labels, dict):
+                seg = labels["gt_mask"].astype("float32")
+            else:
+                seg = labels.astype("float32")
             seg = jnp.pad(seg, padding_size)
             seg_patch = seg[yc, xc]
             loss = (1.0 - seg_patch) * instances + seg_patch * (1.0 - instances)
 
-        # log_yi_sum = jnp.zeros_like(seg)
+        log_yi_sum = jnp.zeros_like(seg)
 
-        # log_yi = - jax.nn.log_sigmoid( - instance_logit)
-        # log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
-        # log_yi = log_yi_sum[yc, xc] - log_yi
+        log_yi = -jax.nn.log_sigmoid(-instance_logit)
+        log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
+        log_yi = log_yi_sum[yc, xc] - log_yi
 
-        # loss = loss + (instances * log_yi)
+        loss = loss + (instances * log_yi)
 
-        instance_sum = jnp.zeros_like(seg)
-        instance_sum = instance_sum.at[yc, xc].add(instances)
-        instance_sum_i = instance_sum[yc, xc] - instances
+        # instance_sum = jnp.zeros_like(seg)
+        # instance_sum = instance_sum.at[yc, xc].add(instances)
+        # instance_sum_i = instance_sum[yc, xc] - instances
 
-        loss = loss + (instances * instance_sum_i)
+        # loss = loss + (instances * instance_sum_i)
 
         return _mean_over_boolean_mask(loss, instance_mask)

@@ -79,6 +79,11 @@ def load_from_pretrained(pretrained):
     return module, freeze(params)
 
 
+@partial(jax.jit, static_argnums=0)
+def _predict(apply_fn, params, image):
+    return apply_fn(dict(params=params), image)
+
+
 class Predictor:
     def __init__(self, url, precompile_shape=None):
 
@@ -97,28 +102,16 @@ class Predictor:
                 x = np.zeros(shape)
                 _ = self.predict(x)
 
-    def _predict(self, image, apply_fn, strategy):
-        _, params = self.model
-
-        predict_fn = strategy.predict
-
-        state = TrainState.create(
-            params=params,
-            apply_fn=apply_fn,
-        )
-
-        return predict_fn(state, image)
-
-    def predict(self, image, *, strategy=strategy.Core, **kwargs):
+    def predict(self, image, **kwargs):
 
         module, params = self.model
 
         if len(kwargs) > 0:
-            apply_fn = _cached_partial(module.apply_fn, **kwargs)
+            apply_fn = _cached_partial(module.apply, **kwargs)
         else:
-            apply_fn = module.apply_fn
+            apply_fn = module.apply
 
-        return self._predict(image, strategy, apply_fn)
+        return _predict(apply_fn, params, image)
 
     def predict_label(self, image, **kwargs):
 

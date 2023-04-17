@@ -60,19 +60,23 @@ class FgAcc:
         return self.acc / self.cnts
 
 
+edge_net_configs = (
+    (32, 32),
+    (32, 32, 32),
+    (64, 64, 128, 128),
+)
+
 net_configs = (
     (16, 32, 64),
     (16, 32, 64, 128),
-    (32, 64, 128),
-    (32, 64, 128, 256),
-    (32, 64),
+    (16, 32, 64, 128, 256),
 )
 
 
 @app.command()
 def run_training(
     datapath: str = "../../livecell_dataset/",
-    transfer: str = "../experiments/tissuenet/runs/supervised/cnsp2/cnsp2.pkl",
+    transfer: str = "../../cnsp4.pkl",
     logpath: str = ".",
     seed: int = 42,
     batchsize: int = 1,
@@ -81,14 +85,14 @@ def run_training(
     steps_per_epoch: int = 3500,
     lr: float = 0.001,
     init_epoch: int = 0,
-    size_loss: float = 1.0,
+    size_loss: float = 0.01,
     n_buckets: int = 4,
     cell_type: int = -1,
     offset_scale: float = 2.0,
     dp_rate: float = 0.2,
+    edge_net_config: int = 0,
     net_config: int = 0,
     share_weights: bool = False,
-    weighted_loss: bool = False,
 ):
     import lacss.deploy
 
@@ -121,12 +125,19 @@ def run_training(
             if "params" in params:
                 params = params["params"]
 
+            lacss_cfg = unfreeze(lacss_cfg)
             params = freeze(params)
+
             lacss_cfg["backbone_cfg"]["drop_path_rate"] = dp_rate
 
             cfg = dict(
                 cfg=lacss_cfg,
-                aux_edge_cfg=dict(n_groups=8) if not share_weights else None,
+                aux_edge_cfg=dict(
+                    conv_spec=edge_net_configs[edge_net_config],
+                    n_groups=8,
+                )
+                if not share_weights
+                else None,
                 aux_fg_cfg=dict(
                     n_groups=8,
                     conv_spec=net_configs[net_config],
@@ -161,7 +172,7 @@ def run_training(
             for k, v in logs.items():
                 tf.summary.scalar(k, v, epoch)
 
-        trainer.checkpoint(join(logpath, f"cp-{epoch}"))
+        trainer.save_model(join(logpath, f"weight-{epoch}.pkl"), "_lacss")
         trainer.reset()
 
         if eval:
@@ -200,8 +211,8 @@ def run_training(
 
         trainer.losses = [
             lacss.losses.LPNLoss(),
-            lacss.losses.WeaklySupervisedInstanceLoss(ignore_mask=True),
-            lacss.losses.AuxSizeLoss(2.0),
+            lacss.losses.SelfSupervisedInstanceLoss(False),
+            lacss.losses.AuxSizeLoss(0.02),
             lacss.losses.AuxEdgeLoss(),
             lacss.losses.AuxSegLoss(
                 offset_sigma=100.0,
@@ -235,10 +246,6 @@ def run_training(
                 offset_scale=offset_scale,
             ),
         ]
-
-        if weighted_loss:
-
-            trainer.reset([1.0, 1.0, 1.0, 2.0, 1.0])
 
         pb = tqdm(
             trainer.train(train_data, rng_cols=["droppath", "augment"], training=True)

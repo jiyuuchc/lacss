@@ -167,7 +167,7 @@ class Trainer:
 
         if sub_module is not None:
             module = module.bind(dict(params=params))
-            module = module[sub_module]
+            module = getattr(module, sub_module)
             module, params = module.unbind()
             params = params["params"]
 

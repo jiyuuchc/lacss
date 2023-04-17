@@ -114,7 +114,7 @@ class AuxSizeLoss(Loss):
             preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
         )
         areas = jnp.clip(areas, EPS, 1e6)
-        loss = jax.lax.rsqrt(areas) * self.a
+        loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1] * self.a
 
         mask = preds["instance_mask"]
         n_instances = jnp.count_nonzero(mask) + EPS
@@ -164,8 +164,10 @@ class AuxSegLoss(Loss):
 
             return label
 
-        fg_pred = jax.nn.tanh(preds["fg_pred"])
-        fg_label = jax.nn.tanh(_max_merge(preds))
+        # fg_pred = jax.nn.tanh(preds["fg_pred"] / 2)
+        # fg_label = jax.nn.tanh(_max_merge(preds) / 2)
+        fg_pred = jax.nn.sigmoid(preds["fg_pred"])
+        fg_label = jax.lax.stop_gradient(jax.nn.sigmoid(_max_merge(preds)))
 
         locs = jnp.floor(inputs["gt_locations"] + 0.5)
         locs = locs.astype(int)
@@ -173,7 +175,8 @@ class AuxSegLoss(Loss):
 
         assert fg_pred.shape == fg_label.shape
 
-        loss = 1.0 - fg_pred * jax.lax.stop_gradient(fg_label)
+        # loss = 1.0 - fg_pred * jax.lax.stop_gradient(fg_label)
+        loss = (1.0 - fg_label) * fg_pred + fg_label * (1.0 - fg_pred)
 
         loss = loss.mean()
 
