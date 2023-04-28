@@ -45,9 +45,9 @@ def get_model(cmd, config, seed):
 
     elif cmd == "transfer":
 
-        from lacss.deploy import _from_pretrained
+        from lacss.deploy import load_from_pretrained
 
-        module, params = _from_pretrained(config)
+        module, params = load_from_pretrained(config)
         model = module.bind(dict(params=params))
 
         trainer = lacss.train.Trainer(
