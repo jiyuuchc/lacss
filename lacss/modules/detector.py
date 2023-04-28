@@ -72,11 +72,13 @@ class Detector(nn.Module):
         # select topk
         if topk <= 0 or topk > scores.size:
             topk = scores.size
-        scores, selections = jax.lax.top_k(scores, topk)
-        locations = locations[selections]
 
         # refine
         if distance_threshold > 0:  # nms
+
+            scores, selections = jax.lax.top_k(scores, topk)
+            locations = locations[selections]
+
             threshold = 1 / distance_threshold / distance_threshold
             scores, locations = sorted_non_max_suppression(
                 scores,
@@ -85,10 +87,13 @@ class Detector(nn.Module):
                 threshold,
                 score_threshold,
             )
+
         else:
-            is_valid = scores >= score_threshold
-            scores = jnp.where(is_valid, scores, -1.0)
-            locations = jnp.where(is_valid[:, None], locations, -1.0)
+
+            sel = jnp.where(scores >= score_threshold, size=output_size, fill_value=-1)
+            sel = sel[0]
+            scores = jnp.where(sel >= 0, scores[sel], -1.0)
+            locations = jnp.where((sel >= 0)[:, None], locations[sel], -1.0)
 
         return scores, locations
 
@@ -157,24 +162,34 @@ class Detector(nn.Module):
         scores = jax.lax.stop_gradient(scores)
         regressions = jax.lax.stop_gradient(regressions)
 
-        if training and self.max_proposal_offset <= 0:
-            return dict(
-                training_locations=gt_locations,
-            )
-        proposed_scores, proposed_locations = self._proposal_locations(
-            scores, regressions, training
-        )
-        outputs = dict(
-            pred_locations=proposed_locations,
-            pred_scores=proposed_scores,
-        )
         if training:
-            outputs.update(
-                dict(
-                    training_locations=self._gen_train_locations(
-                        gt_locations,
-                        proposed_locations,
-                    )
+
+            if self.max_proposal_offset <= 0:
+                return dict(
+                    training_locations=gt_locations,
                 )
+
+            proposed_scores, proposed_locations = self._proposal_locations(
+                scores, regressions, True
             )
+
+            outputs = dict(
+                pred_locations=proposed_locations,
+                pred_scores=proposed_scores,
+                training_locations=self._gen_train_locations(
+                    gt_locations,
+                    proposed_locations,
+                ),
+            )
+
+        else:
+
+            proposed_scores, proposed_locations = self._proposal_locations(
+                scores, regressions, False
+            )
+            outputs = dict(
+                pred_locations=proposed_locations,
+                pred_scores=proposed_scores,
+            )
+
         return outputs
