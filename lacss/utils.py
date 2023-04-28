@@ -119,7 +119,7 @@ def format_predictions(pred, mask=None, threshold=0.5):
     bboxes = np.asarray(bboxes_of_patches(pred))
 
     is_valid = pred["instance_mask"].squeeze(axis=(-1, -2))
-    is_valid & patches.any(axis=(1, 2))  # no empty patches
+    is_valid &= patches.any(axis=(1, 2))  # no empty patches
     if mask is not None:
         is_valid &= mask
 

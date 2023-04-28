@@ -4,6 +4,9 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
+from tqdm import tqdm
+
+_to_logits = lambda x: -np.log((1 / x - 1))
 
 
 def sample_unselected(selected, p, p_miss, *, key):
@@ -426,5 +429,94 @@ def track_to_next_frame(key, history, nextframe, hyper_params):
     history["samples"] = jax.tree_map(lambda v: v[rs], history["samples"])
 
     history = post_process_step(history)
+
+    return history
+
+
+# def sample_first_frame(key, df, n_sample, starting_age):
+#     f0 = df.loc[df["frame"] == 1]
+#     scores = f0["score"]
+#     yxs = f0[["y", "x"]].to_numpy()
+#     ids = f0["index"].to_numpy()
+
+#     selected = jax.random.uniform(key, [n_sample, len(f0)]) < jnp.asarray(scores)
+
+#     history = dict(
+#         detections=[
+#             dict(
+#                 yx=jnp.asarray(yxs),
+#                 id=jnp.asarray(ids),
+#             )
+#         ],
+#         samples=[
+#             dict(
+#                 selected=selected.astype(int),
+#                 lifetime=np.zeros([n_sample, len(f0)]) + starting_age,
+#             )
+#         ],
+#     )
+
+#     return history
+
+
+def do_tracking(
+    key,
+    df,
+    n_sample,
+    hyper_parameters,
+    *,
+    first_frame=1,
+    last_frame=-1,
+    starting_n_cells=1
+):
+
+    ckey = jax.random.fold_in(key, 1)
+
+    f0 = df.loc[df["frame"] == first_frame]
+    scores = jax.nn.softmax(
+        _to_logits(f0["score"].to_numpy()) * hyper_parameters.logit_scale
+    )
+    yxs = f0[["y", "x"]].to_numpy()
+    ids = f0["index"].to_numpy()
+
+    ckey, key = jax.random.split(key)
+    selected = jax.random.choice(
+        ckey, len(scores), p=scores, shape=(starting_n_cells, n_sample)
+    )
+    selected = jax.nn.one_hot(selected, len(scores)).any(axis=0).astype(int)
+
+    ckey, key = jax.random.split(key)
+    ages = (
+        jax.random.uniform(ckey, shape=(n_sample, len(f0))) * hyper_parameters.div_avg
+    )
+    ages = ages.astype(int)
+
+    history = dict(
+        detections=[
+            dict(
+                yx=np.asarray(yxs),
+                id=np.asarray(ids),
+            )
+        ],
+        samples=[
+            dict(
+                selected=np.asarray(selected),
+                lifetime=np.asarray(ages),
+            )
+        ],
+    )
+
+    if last_frame <= 0:
+        last_frame = int(df["frame"].max())
+
+    for frame in tqdm(range(first_frame + 1, last_frame + 1)):
+        f1 = df.loc[df["frame"] == frame]
+        nextframe = dict(
+            yx=f1[["y", "x"]].to_numpy(),
+            id=f1["index"].to_numpy(),
+            logit=_to_logits(f1["score"]).to_numpy(),
+        )
+        ckey = jax.random.fold_in(key, frame)
+        history = track_to_next_frame(ckey, history, nextframe, hyper_parameters)
 
     return history

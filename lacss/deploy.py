@@ -19,6 +19,7 @@ from flax.training.train_state import TrainState
 import lacss.modules
 import lacss.train.strategy as strategy
 from lacss.ops import patches_to_label
+from lacss.train import Inputs
 
 _cached_partial = lru_cache(partial)
 
@@ -101,6 +102,12 @@ class Predictor:
             for shape in precompile_shape:
                 x = np.zeros(shape)
                 _ = self.predict(x)
+
+    def __call__(self, inputs, **kwargs):
+
+        inputs_obj = Inputs.from_value(inputs)
+
+        return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
 
     def predict(self, image, **kwargs):
 
