@@ -151,9 +151,9 @@ def train_parser_supervsied(inputs):
     return x_data, y_data
 
 
-def train_data(datapath, n_buckets, batchsize):
+def train_data(datapath, n_buckets, batchsize, ch=0):
 
-    ds_train = tfds_from_data_path(join(datapath, "train")).cache(
+    ds_train = tfds_from_data_path(join(datapath, "train"), ch=ch).cache(
         join(datapath, "train_cache")
     )
     ds_train = ds_train.repeat().map(train_parser)
@@ -170,9 +170,9 @@ def train_data(datapath, n_buckets, batchsize):
     return TFDatasetAdapter(ds_train, steps=-1).get_dataset()
 
 
-def train_data_supervised(datapath, n_buckets, batchsize):
+def train_data_supervised(datapath, n_buckets, batchsize, ch=0):
 
-    ds_train = tfds_from_data_path(join(datapath, "train")).cache(
+    ds_train = tfds_from_data_path(join(datapath, "train"), ch=ch).cache(
         join(datapath, "train_cache")
     )
     ds_train = ds_train.repeat().map(train_parser_supervsied)
@@ -188,10 +188,10 @@ def train_data_supervised(datapath, n_buckets, batchsize):
     return TFDatasetAdapter(ds_train, steps=-1).get_dataset()
 
 
-def val_data(datapath, n_buckets, batchsize):
-    ds_val = tfds_from_data_path(join(datapath, "val"), imgsize=[256, 256, 2]).cache(
-        join(datapath, "val_cache")
-    )
+def val_data(datapath, n_buckets, batchsize, ch=0):
+    ds_val = tfds_from_data_path(
+        join(datapath, "val"), imgsize=[256, 256, 2], ch=ch
+    ).cache(join(datapath, "val_cache"))
     ds_val = ds_val.map(val_parser)
     ds_val = ds_val.bucket_by_sequence_length(
         element_length_func=lambda _, y: tf.shape(y["gt_locations"])[0],
@@ -205,10 +205,10 @@ def val_data(datapath, n_buckets, batchsize):
     return TFDatasetAdapter(ds_val).get_dataset()
 
 
-def val_data_supervised(datapath, n_buckets, batchsize):
-    ds_val = tfds_from_data_path(join(datapath, "val"), imgsize=[256, 256, 2]).cache(
-        join(datapath, "val_cache")
-    )
+def val_data_supervised(datapath, n_buckets, batchsize, ch=0):
+    ds_val = tfds_from_data_path(
+        join(datapath, "val"), imgsize=[256, 256, 2], ch=ch
+    ).cache(join(datapath, "val_cache"))
     ds_val = ds_val.map(val_parser_supervised)
     ds_val = ds_val.bucket_by_sequence_length(
         element_length_func=lambda _, y: tf.shape(y["gt_locations"])[0],

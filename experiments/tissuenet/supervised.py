@@ -88,18 +88,20 @@ def run_training(
     n_epochs: int = 10,
     steps_per_epoch: int = 10000,
     lr: float = 0.002,
+    nucleus: bool = False,
 ):
     tf.random.set_seed(seed)
     np.random.seed(seed)
     steps_per_epoch = steps_per_epoch // batchsize
+    ch = 1 if nucleus else 0
 
     try:
         os.makedirs(logpath)
     except:
         pass
 
-    train_gen = data.train_data_supervised(datapath, n_buckets, batchsize)
-    val_gen = data.val_data_supervised(datapath, n_buckets, 4)
+    train_gen = data.train_data_supervised(datapath, n_buckets, batchsize, ch=ch)
+    val_gen = data.val_data_supervised(datapath, n_buckets, 4, ch=ch)
 
     trainer = get_model(cmd, config, seed)
 
