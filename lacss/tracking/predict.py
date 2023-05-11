@@ -37,7 +37,7 @@ def extract_frame(df, frame_no, img_height=512, img_width=512):
     return image
 
 
-def _data_generator(imgs, model, nms=True):
+def _data_generator(imgs, model, nms):
 
     from tqdm import tqdm
 
@@ -52,15 +52,27 @@ def _data_generator(imgs, model, nms=True):
             mask = non_max_suppress_predictions(pred)
         else:
             mask = None
+
         results = format_predictions(pred, mask)
 
-        for box, code, score, roi in zip(*results):
-            yield frame + 1, box[0], box[1], box[2] - box[0], box[3] - box[1], roi[
-                0
-            ], roi[1], score, code.count("1"), code,
+        for k in range(len(results["locations"])):
+            yield (
+                frame + 1,
+                results["locations"][k, 0],
+                results["locations"][k, 1],
+                results["scores"][k],
+                # results['centroids'][k, 0],
+                # results['centroids'][k, 1],
+                results["bboxes"][k, 0],
+                results["bboxes"][k, 1],
+                results["bboxes"][k, 2] - results["bboxes"][k, 0],
+                results["bboxes"][k, 3] - results["bboxes"][k, 1],
+                results["encodings"][k].count("1"),
+                results["encodings"][k],
+            )
 
 
-def generate_predictions(imgs, model, nms=True):
+def generate_predictions(imgs, model, nms=False):
     """segmentation predictions of a movie
     Args:
         imgs: an iterator of images sorted by frames
@@ -73,13 +85,13 @@ def generate_predictions(imgs, model, nms=True):
         _data_generator(imgs, model, nms),
         columns=[
             "frame",
-            "bbox_1",
-            "bbox_2",
-            "bbox_3",
-            "bbox_4",
             "y",
             "x",
             "score",
+            "bbox_y",
+            "bbox_x",
+            "bbox_h",
+            "bbox_w",
             "area",
             "image",
         ],

@@ -2,6 +2,7 @@ import dataclasses
 import re
 import typing as tp
 
+import jax.numpy as jnp
 import numpy as np
 from flax import struct
 
@@ -98,43 +99,23 @@ def _to_str(p):
     return "".join(p.astype(int).reshape(-1).astype(str).tolist())
 
 
-def format_predictions(pred, mask=None, threshold=0.5):
-    """
+def format_predictions(pred, mask=None, encode_patch=True, threshold=0.5):
+    """Produce more readable data from model predictions
     Args:
         pred: model output without batch dim
-            instance_output: [n, patch_size, patch_size] float
-            instance_yx, instance_xc: [n, patch_size, patch_size]
-            pred_scores: [n]
-            instance_mask: [n, 1, 1]
         mask: optional mask selecting cells
-        threshold: float
-    Returns:
-        bboxes: [n, 4] int64
-        encodings: [n] string
+        threshold: float patch threshold
+    Returns: dict(locations, scores, centroids, bboxes, encodings)
     """
-    patches = np.asarray(pred["instance_output"]) > threshold
-    yc = np.asarray(pred["instance_yc"])
-    xc = np.asarray(pred["instance_xc"])
-    scores = np.asarray(pred["pred_scores"])
-    bboxes = np.asarray(bboxes_of_patches(pred))
 
-    is_valid = pred["instance_mask"].squeeze(axis=(-1, -2))
-    is_valid &= patches.any(axis=(1, 2))  # no empty patches
-    if mask is not None:
-        is_valid &= mask
+    patches = pred["instance_output"] >= threshold
+    yc = pred["instance_yc"]
+    xc = pred["instance_xc"]
 
-    patches = patches[is_valid]
-    yc = yc[is_valid]
-    xc = xc[is_valid]
-    scores = scores[is_valid]
-
-    encodings = []
-    for (r0, c0, r1, c1), y0, x0, p in zip(bboxes, yc[:, 0, 0], xc[:, 0, 0], patches):
-        roi = p[r0 - y0 : r1 - y0, c0 - x0 : c1 - x0]
-        encodings.append(_to_str(roi))
+    bboxes = bboxes_of_patches(pred)
 
     n_pixels = np.count_nonzero(patches, axis=(1, 2))
-    yx = np.stack(
+    centroids = jnp.stack(
         [
             (patches * yc).sum(axis=(1, 2)) / n_pixels,
             (patches * xc).sum(axis=(1, 2)) / n_pixels,
@@ -142,7 +123,35 @@ def format_predictions(pred, mask=None, threshold=0.5):
         axis=-1,
     )  # centroid
 
-    return bboxes, encodings, scores, yx
+    outputs = dict(
+        locations=pred["pred_locations"],
+        scores=pred["pred_scores"],
+        centroids=centroids,
+        bboxes=bboxes,
+    )
+
+    is_valid = pred["instance_mask"].squeeze(axis=(-1, -2))
+    is_valid &= patches.any(axis=(1, 2))  # no empty patches
+    if mask is not None:
+        is_valid &= mask
+
+    outputs = {k: np.asarray(v)[is_valid] for k, v in outputs.items()}
+
+    if encode_patch:
+
+        encodings = []
+        patches = np.asarray(patches)[is_valid]
+        y0 = np.asarray(yc)[is_valid, 0, 0]
+        x0 = np.asarray(xc)[is_valid, 0, 0]
+        boxes = np.asarray(outputs["bboxes"]) - np.stack([y0, x0, y0, x0], axis=-1)
+
+        for box, patch in zip(boxes, patches):
+            roi = patch[box[0] : box[2], box[1] : box[3]]
+            encodings.append(_to_str(roi))
+
+        outputs["encodings"] = encodings
+
+    return outputs
 
 
 def show_images(imgs, locs=None, **kwargs):

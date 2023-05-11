@@ -161,7 +161,7 @@ def sample_first_frame(df, n_cells, hp, frame_no=1):
     yx0 = f0[["y", "x"]].to_numpy()[:n_locs]
 
     if len(yx0) < n_locs:
-        yx0 = np.pad(yx0, [[n_locs - len(yx0), 0], [0, 0]], constant_values=-1)
+        yx0 = np.pad(yx0, [[0, n_locs - len(yx0)], [0, 0]], constant_values=-1)
 
     tracked = np.zeros([n_chains, n_locs], dtype=bool)
     for k in range(n_chains):
@@ -189,7 +189,7 @@ def extend_chains(key, df, cur_chains, yx0, frame_no, hp):
     yx1 = f1[["y", "x"]].to_numpy()[:n_locs]
 
     if len(yx1) < n_locs:
-        yx1 = np.pad(yx1, [[n_locs - len(yx1), 0], [0, 0]], constant_values=-1)
+        yx1 = np.pad(yx1, [[0, n_locs - len(yx1)], [0, 0]], constant_values=-1)
 
     cur_frame = cur_chains[-1]
     key, key2 = jax.random.split(key, 2)
@@ -202,11 +202,12 @@ def extend_chains(key, df, cur_chains, yx0, frame_no, hp):
     cur_chains.append(next_frame)
 
     # resample all chains
-    logits = (
-        _to_logits(f1["score"].to_numpy()[:n_locs]) - hp.logit_offset
-    ) * hp.logit_scale
-    sel = next_frame["tracked"][:, : len(logits)]
-    target_logit = (logits * sel).sum(axis=-1)
+    logits = _to_logits(f1["score"].to_numpy()[:n_locs]) - hp.logit_offset
+    logits *= hp.logit_scale
+    if len(logits) < n_locs:
+        logits = np.pad(logits, [0, n_locs - len(logits)], constant_values=-100.0)
+
+    target_logit = (logits * next_frame["tracked"]).sum(axis=-1)
     weights = jax.nn.softmax(target_logit)
     rs = np.asarray(jax.random.choice(key, len(weights), [n_chains], p=weights))
     cur_chains = jax.tree_map(lambda v: v[rs], cur_chains)
