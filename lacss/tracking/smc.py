@@ -6,38 +6,38 @@ import jax.numpy as jnp
 import numpy as np
 from tqdm import tqdm
 
-_to_logits = lambda x: -np.log((1 / x - 1))
+_to_logits = lambda x: -jnp.log((1 / x - 1))
 _EPS = jnp.finfo("float32").eps
+_MIN = jnp.finfo("float32").min
 
 
 @dataclasses.dataclass(frozen=True)
 class HyperParams:
-    n_chains: int = 1024
+    n_chains: int = 4096
     n_locs: int = 512
     gamma: float = 0.1
-    div_avg: float = 30.0
+    logit_scale: float = 4.0
+    logit_offset: float = 1.0
+    div_avg: float = 50.0
     div_limit: float = 0.1
     div_scale: float = 0.9
-    w_miss: float = 0.1
-    logit_scale: float = 1.0
-    logit_offset: float = 0.0
-    miss_weight: float = 1.0
-    miss_logit: float = -0.5
-    n_sub_sample: int = 256
-    p_death: float = 0.02
+    # p_death: float = 0.001
 
 
-def _get_tracking_weights(yx0, yx1, gamma):
+def _get_tracking_weights(data, hp):
+
+    yx0, yx1, logits = data
+    gamma = hp.gamma
 
     delta = (yx1[None, :, :] - yx0[:, None, :]) ** 2
     delta = delta.sum(axis=-1)  # [n_source, n_target]
 
-    wts = jnp.exp(-delta / 2 * gamma * gamma) * gamma * gamma / 0.399
+    wts = -delta / 2 * gamma * gamma
+    wts = wts + logits * hp.logit_scale + hp.logit_offset
 
-    # remove invalid rows
-    wts = jnp.where(yx0[:, :1] >= 0, wts, 0)
-    # remove invalid cols
-    wts = jnp.where(yx1[:, 0] >= 0, wts, 0)
+    # remove invalid
+    wts = jnp.where(yx0[:, :1] >= 0, wts, _MIN)
+    wts = jnp.where(yx1[:, 0] >= 0, wts, _MIN)
 
     return wts
 
@@ -49,7 +49,7 @@ def _compute_div_p(age, hp):
 
 @partial(jax.jit, static_argnums=3)
 @partial(jax.vmap, in_axes=(0, 0, None, None))
-def track_to_next_frame(key, cur_frame, yxs, hp):
+def track_to_next_frame(key, cur_frame, data, hp):
     """
     Args
         key: rng x n_chains
@@ -57,96 +57,97 @@ def track_to_next_frame(key, cur_frame, yxs, hp):
             tracked: bool [n_chains, n_loc]
             age: int [n_chains, n_loc]
             parent: int [n_chains, n_loc]
-        yxs: a tuple of (yx0, yx1) float [n_loc, 2]
+        data: a tuple of (yx0, yx1, logits) float
         hp: parameters
     returns:
         next_frame: dict
+        sample_weight: float
     """
 
-    yx0, yx1 = yxs
-    n_loc = yx0.shape[0]
-    n_sample = hp.n_sub_sample
+    n_loc = hp.n_locs
 
     assert n_loc == cur_frame["tracked"].shape[-1]
     assert n_loc == cur_frame["age"].shape[-1]
     assert n_loc == cur_frame["parent"].shape[-1]
-    assert n_loc == yx1.shape[0]
 
-    tracking_weights = _get_tracking_weights(yx0, yx1, hp.gamma)
-    tracking_weights += _EPS
+    key, key2 = jax.random.split(key, 2)
 
-    choice_fn = jax.vmap(partial(jax.random.choice, a=n_loc))
+    prev_tracked = cur_frame["tracked"]
+    tracking_weights = _get_tracking_weights(data, hp)
 
-    def _vmapped_choice(k, state):
-        tracked, parents, log_sample_weight = state
-
-        w = tracking_weights[k] * (1 - tracked)
-        log_sample_weight += jnp.log(w.sum(axis=-1))
-
-        ckeys = jax.random.split(jax.random.fold_in(key, k), n_sample)
-        choices = choice_fn(ckeys, p=w / w.sum(axis=-1, keepdims=True))
-        tracked = tracked.at[jnp.arange(n_sample), choices].set(True)
-        parents = parents.at[jnp.arange(n_sample), choices].set(k)
-
-        return tracked, parents, log_sample_weight
-
-    def _for_inner_1(k, state):
-        return jax.lax.cond(
-            cur_frame["tracked"][k],
-            _vmapped_choice,
-            lambda _, state: state,
-            k,
-            state,
-        )
-
-    # track to next frame
-    log_sample_weight = jnp.zeros([n_sample])
-    tracked = jnp.zeros([n_sample, n_loc], dtype=bool)
-    parents = jnp.zeros([n_sample, n_loc], dtype=int) - 1
-
-    tracked, parents, log_sample_weight = jax.lax.fori_loop(
-        0,
-        n_loc,
-        _for_inner_1,
-        (tracked, parents, log_sample_weight),
-    )
-
-    # now handle cell div and add additioal track
+    # generate cell div states
+    shuffled = jax.random.permutation(key, n_loc)
     div_p = _compute_div_p(cur_frame["age"], hp)
-    key, ckey = jax.random.split(key, 2)
-    to_div = jax.random.uniform(ckey, [n_loc]) < div_p
+    div_p = jnp.where(prev_tracked, div_p, 0)
+    to_div = jax.random.uniform(key2, [n_loc]) < div_p
 
-    def _for_inner_2(k, state):
+    tracked = jnp.zeros([n_loc], dtype=bool)
+    parents = jnp.zeros([n_loc], dtype=int) - 1
+
+    def _get_next(k, tracked, parents):
+
+        # use -inf to ensure no duplicate selections
+        w = jnp.where(tracked, -jnp.inf, tracking_weights[k])
+        choice = jnp.argmax(w)
+
+        tracked = tracked.at[choice].set(True)
+        parents = parents.at[choice].set(k)
+
+        return tracked, parents
+
+    def _scan_inner_1(k, state):
+
+        tracked, parents = state
+        k = shuffled[k]
+
         return jax.lax.cond(
-            cur_frame["tracked"][k] & to_div[k],
-            _vmapped_choice,
-            lambda _, state: state,
+            prev_tracked[k],
+            _get_next,
+            lambda _, tracked, parents: (tracked, parents),
             k,
-            state,
+            tracked,
+            parents,
         )
 
-    tracked, parents, log_sample_weight = jax.lax.fori_loop(
+    def _scan_inner_2(k, state):
+
+        tracked, parents = state
+        k = shuffled[k]
+
+        return jax.lax.cond(
+            to_div[k],
+            _get_next,
+            lambda _, tracked, parents: (tracked, parents),
+            k,
+            tracked,
+            parents,
+        )
+
+    tracked, parents = jax.lax.fori_loop(
         0,
         n_loc,
-        _for_inner_2,
-        (tracked, parents, log_sample_weight),
+        _scan_inner_1,
+        (tracked, parents),
     )
-
-    # select one sample based on sample_weight
-    weight = jnp.exp(log_sample_weight - log_sample_weight.max())
-    rs = jax.random.choice(key, n_sample, p=weight / weight.sum())
-
-    next_frame = dict(
-        tracked=tracked[rs],
-        parent=parents[rs],
-        age=jnp.where(
-            to_div[parents[rs]] | (parents[rs] == -1),
-            0,
-            cur_frame["age"][parents[rs]] + 1,
-        ),
+    tracked, parents = jax.lax.fori_loop(
+        0,
+        n_loc,
+        _scan_inner_2,
+        (tracked, parents),
     )
+    age = jnp.where(
+        to_div[parents],
+        0,
+        cur_frame["age"][parents] + 1,
+    )
+    age = jnp.where(tracked, age, -1)
 
-    return next_frame
+    next_frame = dict(tracked=tracked, parent=parents, age=age)
+
+    sample_weight = tracking_weights[parents, np.arange(n_loc)]
+    sample_weight = sample_weight.sum(where=tracked)
+
+    return next_frame, sample_weight
 
 
 def sample_first_frame(df, n_cells, hp, frame_no=1):
@@ -155,7 +156,9 @@ def sample_first_frame(df, n_cells, hp, frame_no=1):
 
     f0 = df.loc[df["frame"] == frame_no]
     scores = jax.nn.softmax(
-        _to_logits(f0["score"].to_numpy()[:n_locs]) * hp.logit_scale
+        # _to_logits(f0["score"].to_numpy()[:n_locs]) * hp.logit_scale
+        _to_logits(f0["score"].to_numpy()[:n_locs])
+        * 10
     )
     scores = np.array(scores)
     yx0 = f0[["y", "x"]].to_numpy()[:n_locs]
@@ -170,7 +173,7 @@ def sample_first_frame(df, n_cells, hp, frame_no=1):
         )
         tracked[k, sel] = True
 
-    age = np.zeros([n_chains, n_locs], dtype=int) + hp.div_avg // 2
+    age = np.random.randint(0, hp.div_avg, size=[n_chains, n_locs])
     parent = np.zeros([n_chains, n_locs], dtype=int) - 1
     cur_frame = dict(
         tracked=jnp.asarray(tracked),
@@ -191,24 +194,23 @@ def extend_chains(key, df, cur_chains, yx0, frame_no, hp):
     if len(yx1) < n_locs:
         yx1 = np.pad(yx1, [[0, n_locs - len(yx1)], [0, 0]], constant_values=-1)
 
+    logits = _to_logits(f1["score"].to_numpy()[:n_locs])
+    if len(logits) < n_locs:
+        logits = np.pad(logits, [0, n_locs - len(logits)], constant_values=_MIN)
+
     cur_frame = cur_chains[-1]
     key, key2 = jax.random.split(key, 2)
-    next_frame = track_to_next_frame(
+    next_frame, weights = track_to_next_frame(
         jax.random.split(key2, n_chains),
         cur_frame,
-        (yx0, yx1),
+        (yx0, yx1, logits),
         hp,
     )
     cur_chains.append(next_frame)
 
     # resample all chains
-    logits = _to_logits(f1["score"].to_numpy()[:n_locs]) - hp.logit_offset
-    logits *= hp.logit_scale
-    if len(logits) < n_locs:
-        logits = np.pad(logits, [0, n_locs - len(logits)], constant_values=-100.0)
 
-    target_logit = (logits * next_frame["tracked"]).sum(axis=-1)
-    weights = jax.nn.softmax(target_logit)
+    weights = jax.nn.softmax(weights)
     rs = np.asarray(jax.random.choice(key, len(weights), [n_chains], p=weights))
     cur_chains = jax.tree_map(lambda v: v[rs], cur_chains)
 
