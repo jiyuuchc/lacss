@@ -81,12 +81,21 @@ def update_with_sample(df, chains, idx):
 
     df_tracking["child_1"] = -1
     df_tracking["child_2"] = -1
+    df_tracking["parent_cell_id"] = -1
+
     for cell_id in range(df_tracking["cell_id"].max() + 1):
+
         parent_id = df_tracking.loc[
             df_tracking["cell_id"] == cell_id, "parent"
         ].to_numpy()[0]
+
         if parent_id != -1:
             parent_cell_id = df_tracking.loc[parent_id, "cell_id"]
+
+            df_tracking.loc[
+                df_tracking["cell_id"] == cell_id, "parent_cell_id"
+            ] = parent_cell_id
+
             if (
                 df_tracking.loc[
                     df_tracking["cell_id"] == parent_cell_id, "child_1"
@@ -100,5 +109,8 @@ def update_with_sample(df, chains, idx):
                 df_tracking.loc[
                     df_tracking["cell_id"] == parent_cell_id, "child_2"
                 ] = cell_id
+
+    df_tracking = df_tracking.rename(columns={"parent": "parent_id"})
+    df_tracking = df_tracking.rename(columns={"parent_cell_id": "parent"})
 
     return df_tracking
