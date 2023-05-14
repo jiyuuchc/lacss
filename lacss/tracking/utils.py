@@ -5,15 +5,13 @@ import numpy as np
 
 def select_sample(chains):
     """a naive sample selection logic
-    find the mean cells-per-frame, and return the sample that has the most similar values
+    find the mean tracked_vector, and return the sample that has the most similar values
     """
 
-    cpf = np.count_nonzero(chains["tracked"], axis=-1)
-    m_cpf = cpf.mean(axis=1)
-    mse = ((cpf - m_cpf[:, None]) ** 2).sum(axis=0)
+    a = chains["tracked"] - chains["tracked"].mean(axis=1, keepdims=True)
+    a = (a**2).sum(axis=(0, 2))
 
-    idx = np.argmin(mse)
-    return idx
+    return np.argmin(a)
 
 
 def update_with_sample(df, chains, idx):
