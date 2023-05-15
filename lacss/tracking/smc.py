@@ -19,9 +19,11 @@ class HyperParams:
     logit_scale: float = 4.0
     logit_offset: float = 1.0
     div_avg: float = 50.0
-    div_limit: float = 0.1
+    div_limit: float = 0.9
     div_scale: float = 0.9
-    # p_death: float = 0.001
+    death_avg: float = 50.0
+    death_limit: float = 0
+    death_scale: float = 0.9
 
 
 def _get_tracking_weights(data, hp):
@@ -44,7 +46,12 @@ def _get_tracking_weights(data, hp):
 
 def _compute_div_p(age, hp):
 
-    return (1 - hp.div_limit) / (1 + hp.div_scale ** (age - hp.div_avg))
+    return hp.div_limit / (1 + hp.div_scale ** (age - hp.div_avg))
+
+
+def _compute_death_p(age, hp):
+
+    return hp.death_limit / (1 + hp.death_scale ** (age - hp.death_avg))
 
 
 @partial(jax.jit, static_argnums=3)
@@ -70,10 +77,15 @@ def track_to_next_frame(key, cur_frame, data, hp):
     assert n_loc == cur_frame["age"].shape[-1]
     assert n_loc == cur_frame["parent"].shape[-1]
 
-    key, key2 = jax.random.split(key, 2)
+    key, key1, key2 = jax.random.split(key, 3)
 
     prev_tracked = cur_frame["tracked"]
     tracking_weights = _get_tracking_weights(data, hp)
+
+    # death states
+    death_p = _compute_death_p(cur_frame["age"], hp)
+    death_p = jnp.where(prev_tracked, death_p, 1)
+    to_track = jax.random.uniform(key1, [n_loc]) >= death_p
 
     # generate cell div states
     shuffled = jax.random.permutation(key, n_loc)
@@ -101,7 +113,7 @@ def track_to_next_frame(key, cur_frame, data, hp):
         k = shuffled[k]
 
         return jax.lax.cond(
-            prev_tracked[k],
+            to_track[k],
             _get_next,
             lambda _, tracked, parents: (tracked, parents),
             k,
