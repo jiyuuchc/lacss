@@ -112,3 +112,73 @@ def update_with_sample(df, chains, idx):
     df_tracking = df_tracking.rename(columns={"parent_cell_id": "parent"})
 
     return df_tracking
+
+
+def _box_intersect(gt, pred):
+    start_frame = max(gt["frame"].min(), pred["frame"].min())
+    end_frame = min(gt["frame"].max(), pred["frame"].max())
+
+    gt = gt.loc[(gt["frame"] >= start_frame) & (gt["frame"] <= end_frame)]
+    pred = pred.loc[(pred["frame"] >= start_frame) & (pred["frame"] <= end_frame)]
+
+    gt_y0, gt_x0, gt_h, gt_w = (
+        gt[["bbox_y", "bbox_x", "bbox_h", "bbox_w"]].to_numpy().transpose()
+    )
+    gt_y1 = gt_y0 + gt_h
+    gt_x1 = gt_x0 + gt_w
+
+    pred_y0, pred_x0, pred_h, pred_w = (
+        pred[["bbox_y", "bbox_x", "bbox_h", "bbox_w"]].to_numpy().transpose()
+    )
+    pred_y1 = pred_y0 + pred_h
+    pred_x1 = pred_x0 + pred_w
+
+    y_min_max = np.minimum(gt_y1, pred_y1)
+    y_max_min = np.maximum(gt_y0, pred_y0)
+    x_min_max = np.minimum(gt_x1, pred_x1)
+    x_max_min = np.maximum(gt_x0, pred_x0)
+
+    intersect_heights = y_min_max - y_max_min
+    intersect_widths = x_min_max - x_max_min
+    intersect_heights = np.maximum(0, intersect_heights)
+    intersect_widths = np.maximum(0, intersect_widths)
+
+    return intersect_heights * intersect_widths
+
+
+def broi(gt, pred):
+    gt_area = (gt["bbox_h"] * gt["bbox_w"]).sum()
+    pred_area = (pred["bbox_h"] * pred["bbox_w"]).sum()
+    intersects = _box_intersect(gt, pred).sum()
+    roi = intersects / (gt_area + pred_area - intersects + 1e-8)
+    return roi
+
+
+def proi(gt, pred, g=30):
+    total_len = len(gt) + len(pred)
+
+    start_frame = max(gt["frame"].min(), pred["frame"].min())
+    end_frame = min(gt["frame"].max(), pred["frame"].max())
+
+    gt = gt.loc[(gt["frame"] >= start_frame) & (gt["frame"] <= end_frame)]
+    pred = pred.loc[(pred["frame"] >= start_frame) & (pred["frame"] <= end_frame)]
+
+    yofs = np.minimum(np.abs(gt["y"].to_numpy() - pred["y"].to_numpy()) / g, 1.0)
+    xofs = np.minimum(np.abs(gt["x"].to_numpy() - pred["x"].to_numpy()) / g, 1.0)
+    its = ((1 - yofs) * (1 - xofs)).sum()
+    proi = its / (total_len - its + 1e-8)
+    return proi
+
+
+def filter_ious(ious):
+
+    ious_out = np.zeros_like(ious)
+    ious = ious.copy()
+
+    for _ in range(len(ious)):
+        row, col = np.unravel_index(ious.argmax(), ious.shape)
+        ious_out[row, col] = ious[row, col]
+        ious[row, :] = -1
+        ious[:, col] = -1
+
+    return ious_out

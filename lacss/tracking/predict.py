@@ -23,10 +23,10 @@ def extract_frame(df, frame_no, img_height=512, img_width=512):
     #  outputs:
     #   image: 2d array of [image_height, image_width]
     df_1 = df.loc[df["frame"] == frame_no]
-    y0s = np.array(df_1["bbox_1"]).astype(int)
-    x0s = np.array(df_1["bbox_2"]).astype(int)
-    heights = np.array(df_1["bbox_3"]).astype(int)
-    widths = np.array(df_1["bbox_4"]).astype(int)
+    y0s = np.array(df_1["bbox_y"]).astype(int)
+    x0s = np.array(df_1["bbox_x"]).astype(int)
+    heights = np.array(df_1["bbox_h"]).astype(int)
+    widths = np.array(df_1["bbox_w"]).astype(int)
     patches = np.array(df_1["image"])
 
     image = np.zeros([img_height, img_width], dtype=int)
