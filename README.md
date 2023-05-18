@@ -9,9 +9,9 @@ LACSS is designed to utilize point labels for model training. You have three opt
 
 | Method | Data(left) / Label(right)|
 | --- | --- |
-| Point | <img src=".github/images/label_scheme_1.png" width="300"> |
-| Point + Mask | <img src=".github/images/label_scheme_2.png" width="300"> |
-| Segmentation | <img src=".github/images/label_scheme_3.png" width="300"> |
+| Point | <img src="https://github.com/jiyuuchc/lacss_jax/raw/main/.github/images/label_scheme_1.png" width="300"> |
+| Point + Mask | <img src="https://github.com/jiyuuchc/lacss_jax/raw/main/.github/images/label_scheme_2.png" width="300"> |
+| Segmentation | <img src="https://github.com/jiyuuchc/lacss_jax/raw/main/.github/images/label_scheme_3.png" width="300"> |
 
 You can of course also combined these labels in any way you want.
 
@@ -25,7 +25,7 @@ You can of course also combined these labels in any way you want.
 
 If your data include nuclei counter-stain, the easist way to generate point label for your image is to use a [blob detection](https://scikit-image.org/docs/stable/auto_examples/features_detection/plot_blob.html) algorithm on the nuclei images:
 
-![](.github/images/blob_detection.png)
+![](https://github.com/jiyuuchc/lacss_jax/raw/main/.github/images/blob_detection.png)
 
 ### Give it a try:
 * Model training
