@@ -20,26 +20,60 @@ def _binary_focal_crossentropy(pred, gt, gamma=2.0):
     return focal_factor * bce
 
 
+def detection_loss(preds, gamma=2.0, **kwargs):
+    """LPN detection loss"""
+
+    scores = preds["lpn_scores"]
+    gt_scores = preds["lpn_gt_scores"]
+
+    score_loss = 0.0
+    cnt = EPS
+    for k in scores:
+        score_loss += _binary_focal_crossentropy(
+            scores[k],
+            gt_scores[k],
+            gamma,
+        ).sum()
+        cnt += preds["lpn_scores"][k].size
+
+    return score_loss / cnt
+
+
+def localization_loss(preds, delta=1.0, **kwargs):
+    """LPN localization loss"""
+
+    regrs = preds["lpn_regressions"]
+    gt_regrs = preds["lpn_gt_regressions"]
+    gt_scores = preds["lpn_gt_scores"]
+
+    regr_loss = 0.0
+    cnt = 1e-8
+    for k in regrs:
+        # h = optax.l2_loss(regrs[k], gt_regrs[k])
+        h = optax.huber_loss(regrs[k], gt_regrs[k], delta=delta).mean(
+            axis=-1, keepdims=True
+        )
+        mask = gt_scores[k] > 0
+        regr_loss += jnp.sum(h, where=mask)
+        cnt += jnp.count_nonzero(mask)
+
+    return regr_loss / (cnt + EPS)
+
+
+def lpn_loss(preds, gamma=2.0, w1=1.0, w2=1.0, **kwargs):
+    """LPN loss"""
+
+    return detection_loss(preds, gamma=gamma) * w1 + localization_loss(preds) * w2
+
+
 class DetectionLoss(Loss):
     def __init__(self, gamma=2.0, **kwargs):
         super().__init__(**kwargs)
         self.gamma = gamma
 
     def call(self, preds: dict, **kwargs) -> jnp.ndarray:
-        def _inner(scores, gt_scores):
-            score_loss = 0.0
-            cnt = 1e-8
-            for k in scores:
-                score_loss += _binary_focal_crossentropy(
-                    scores[k],
-                    gt_scores[k],
-                    self.gamma,
-                ).sum()
-                cnt += preds["lpn_scores"][k].size
 
-            return score_loss / cnt
-
-        return _inner(preds["lpn_scores"], preds["lpn_gt_scores"])
+        return detection_loss(preds=preds, gamma=self.gamma)
 
 
 class LocalizationLoss(Loss):
@@ -48,52 +82,8 @@ class LocalizationLoss(Loss):
         self.delta = delta
 
     def call(self, preds: dict, **kwrags) -> jnp.ndarray:
-        def _inner(regrs, gt_regrs, gt_scores):
-            regr_loss = 0.0
-            cnt = 1e-8
-            for k in regrs:
-                # h = optax.l2_loss(regrs[k], gt_regrs[k])
-                h = optax.huber_loss(regrs[k], gt_regrs[k], delta=self.delta).mean(
-                    axis=-1, keepdims=True
-                )
-                mask = gt_scores[k] > 0
-                regr_loss += jnp.sum(h, where=mask)
-                cnt += jnp.count_nonzero(mask)
 
-            return regr_loss / (cnt + EPS)
-
-        return _inner(
-            preds["lpn_regressions"],
-            preds["lpn_gt_regressions"],
-            preds["lpn_gt_scores"],
-        )
-
-
-# class LocalizationLossAlt(Loss):
-#     def __init__(self, delta=1.0, sigma=2.0, **kwargs):
-#         super().__init__(**kwargs)
-#         self.delta = delta
-#         self.sigma_sq = sigma * sigma
-
-#     def call(self, preds: dict, **kwargs) -> jnp.ndarray:
-#         def _inner(regrs, gt_regrs, gt_scores):
-#             regr_loss = 0.0
-#             cnt = 1e-8
-#             for k in regrs:
-#                 # h = optax.l2_loss(regrs[k], gt_regrs[k])
-#                 h = optax.huber_loss(regrs[k], gt_regrs[k], delta=self.delta).mean(
-#                     axis=-1
-#                 )
-#                 w = jnp.exp(-(gt_regrs[k] ** 2).sum(axis=-1) / self.sigma_sq)
-#                 regr_loss += jnp.sum(h * w)
-#                 cnt += w.sum()
-#             return regr_loss / cnt
-
-#         return jax.vmap(_inner)(
-#             preds["lpn_regressions"],
-#             preds["lpn_gt_regressions"],
-#             preds["lpn_gt_scores"],
-#         )
+        return localization_loss(preds, delta=self.delta)
 
 
 class LPNLoss(Loss):

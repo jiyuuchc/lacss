@@ -1,5 +1,5 @@
+import typing as tp
 from functools import partial
-from typing import List, Optional, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
@@ -7,6 +7,8 @@ import jax.numpy as jnp
 
 from ..ops import locations_to_labels
 from .common import ChannelAttention
+
+# from typing import List, Optional, Sequence, Tuple, Union
 
 
 class LPN(nn.Module):
@@ -18,12 +20,14 @@ class LPN(nn.Module):
     with_channel_attention: whether include channel attention
     """
 
-    feature_levels: Sequence[int] = (4, 3, 2)
-    conv_spec: Tuple[Sequence[int], Sequence[int]] = ((256, 256, 256, 256), ())
+    feature_levels: tp.Sequence[int] = (4, 3, 2)
+    conv_spec: tp.Tuple[tp.Sequence[int], tp.Sequence[int]] = ((384, 384, 384, 384), ())
     detection_roi: float = 8.0
 
     @nn.compact
-    def _process_feature(self, feature: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _process_feature(
+        self, feature: jnp.ndarray
+    ) -> tp.Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         conv_spec = self.conv_spec
 
         x = feature
@@ -43,7 +47,7 @@ class LPN(nn.Module):
 
         regression_out = nn.Conv(2, (1, 1))(x)
 
-        return scores_out, regression_out
+        return scores_out, regression_out, x
 
     def __call__(
         self,
@@ -66,30 +70,44 @@ class LPN(nn.Module):
 
         all_scores = dict()
         all_regrs = dict()
-        all_gt_scores = dict()
-        all_gt_regrs = dict()
+        all_features = dict()
 
         for lvl in self.feature_levels:
 
             feature = inputs[str(lvl)]
-            score, regression = self._process_feature(feature)
+            score, regression, lpn_feature = self._process_feature(feature)
             all_scores[str(lvl)] = score
             all_regrs[str(lvl)] = regression
+            all_features[str(lvl)] = lpn_feature
 
-            if scaled_gt_locations is not None:
+        outputs = dict(
+            lpn_features=all_features,
+            lpn_scores=all_scores,
+            lpn_regressions=all_regrs,
+        )
+
+        if scaled_gt_locations is not None:
+
+            all_gt_scores = dict()
+            all_gt_regrs = dict()
+
+            for lvl in self.feature_levels:
+
+                feature_shape = inputs[str(lvl)].shape[-3:-1]
+
                 score_target, regression_target = locations_to_labels(
                     scaled_gt_locations,
-                    target_shape=feature.shape[-3:-1],
+                    target_shape=feature_shape,
                     threshold=self.detection_roi / (2**lvl),
                 )
                 all_gt_scores[str(lvl)] = score_target
                 all_gt_regrs[str(lvl)] = regression_target
 
-        outputs = dict(
-            lpn_scores=all_scores,
-            lpn_regressions=all_regrs,
-            lpn_gt_scores=all_gt_scores,
-            lpn_gt_regressions=all_gt_regrs,
-        )
+            outputs.update(
+                dict(
+                    lpn_gt_scores=all_gt_scores,
+                    lpn_gt_regressions=all_gt_regrs,
+                )
+            )
 
         return outputs

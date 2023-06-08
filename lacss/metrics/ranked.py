@@ -118,40 +118,67 @@ class LoiAP(AP):
         super().__init__([th * th for th in thresholds], **kwargs)
 
     def update(self, preds, gt_locations, **kwargs):
-        scores = preds["pred_scores"]
-        pred_locations = preds["pred_locations"]
-        n_batch = gt_locations.shape[0]
-        for k in range(n_batch):
-            score = scores[k]
-            pred = pred_locations[k]
-            gt = gt_locations[k]
-            row_mask = score > 0
-            col_mask = (gt >= 0).all(axis=-1)
-            dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
+        score = np.asarray(preds["pred_scores"])
+        pred = np.asarray(preds["pred_locations"])
+        gt = np.asarray(gt_locations)
 
-            dist2 = np.asarray(1.0 / dist2)
-            dist2 = dist2[row_mask][:, col_mask]
-            score = np.asarray(score)[row_mask]
+        row_mask = score > 0
+        col_mask = (gt >= 0).all(axis=-1)
+        dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
 
-            super().update(dist2, score)
+        dist2 = 1.0 / dist2
+        dist2 = dist2[row_mask][:, col_mask]
+        score = np.asarray(score)[row_mask]
+
+        super().update(dist2, score)
+
+    # def update(self, preds, gt_locations, **kwargs):
+    #     scores = preds["pred_scores"]
+    #     pred_locations = preds["pred_locations"]
+    #     n_batch = gt_locations.shape[0]
+    #     for k in range(n_batch):
+    #         score = scores[k]
+    #         pred = pred_locations[k]
+    #         gt = gt_locations[k]
+    #         row_mask = score > 0
+    #         col_mask = (gt >= 0).all(axis=-1)
+    #         dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
+
+    #         dist2 = np.asarray(1.0 / dist2)
+    #         dist2 = dist2[row_mask][:, col_mask]
+    #         score = np.asarray(score)[row_mask]
+
+    #         super().update(dist2, score)
 
 
 class BoxAP(AP):
-    def update(self, preds, gt_boxes, **kwargs):
-        pred_boxes = jax.vmap(bboxes_of_patches)(preds)
-        box_ious = np.asarray(box_iou_similarity(pred_boxes, gt_boxes))
-        scores = np.asarray(preds["pred_scores"])
-        valid_gt_boxes = np.asarray((gt_boxes >= 0).all(axis=-1))
+    # def update(self, preds, gt_boxes, **kwargs):
+    #     pred_boxes = jax.vmap(bboxes_of_patches)(preds)
+    #     box_ious = np.asarray(box_iou_similarity(pred_boxes, gt_boxes))
+    #     scores = np.asarray(preds["pred_scores"])
+    #     valid_gt_boxes = np.asarray((gt_boxes >= 0).all(axis=-1))
 
-        for score, iou, gt_is_valid in zip(scores, box_ious, valid_gt_boxes):
-            valid_preds = score >= 0
-            iou = iou[valid_preds][:, gt_is_valid]
-            score = score[valid_preds]
-            super().update(iou, score)
+    #     for score, iou, gt_is_valid in zip(scores, box_ious, valid_gt_boxes):
+    #         valid_preds = score >= 0
+    #         iou = iou[valid_preds][:, gt_is_valid]
+    #         score = score[valid_preds]
+    #         super().update(iou, score)
+
+    def update(self, preds, gt_boxes, **kwargs):
+        pred_boxes = np.asarray(bboxes_of_patches(preds))
+        gt_boxes = np.asarray(gt_boxes)
+        iou = box_iou_similarity(pred_boxes, gt_boxes)
+        score = np.asarray(preds["pred_scores"])
+        gt_is_valid = (gt_boxes >= 0).all(axis=-1)
+
+        valid_preds = score >= 0
+        iou = iou[valid_preds][:, gt_is_valid]
+        score = score[valid_preds]
+        super().update(iou, score)
 
 
 class MaskAP(AP):
-    def _update(self, pred, gt_label):
+    def update(self, pred, gt_label, **kwargs):
         scores = np.asarray(pred["pred_scores"])
         ious = np.asarray(iou_patches_and_labels(pred, gt_label))
 
@@ -160,12 +187,12 @@ class MaskAP(AP):
         valid_ious = ious[valid]
         super().update(valid_ious, valid_scores)
 
-    def update(self, preds, gt_labels, **kwargs):
+    # def update(self, preds, gt_labels, **kwargs):
 
-        for k in range(len(gt_labels)):
-            self._update(
-                *jax.tree_util.tree_map(
-                    lambda v: v[k],
-                    (preds, gt_labels),
-                )
-            )
+    #     for k in range(len(gt_labels)):
+    #         self._update(
+    #             *jax.tree_util.tree_map(
+    #                 lambda v: v[k],
+    #                 (preds, gt_labels),
+    #             )
+    #         )

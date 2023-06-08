@@ -1,4 +1,4 @@
-from typing import Optional, Sequence
+import typing as tp
 
 import flax.linen as nn
 import jax
@@ -59,7 +59,7 @@ class DropPath(nn.Module):
     rate: float
 
     @nn.module.compact
-    def __call__(self, inputs, deterministic: Optional[bool] = True):
+    def __call__(self, inputs, deterministic: tp.Optional[bool] = True):
         if self.rate == 0.0:
             return inputs
         keep_prob = 1.0 - self.rate
@@ -78,7 +78,7 @@ class FPN(nn.Module):
     out_channels: int = 256
 
     @nn.compact
-    def __call__(self, inputs: Sequence[jnp.ndarray]) -> Sequence[jnp.ndarray]:
+    def __call__(self, inputs: tp.Sequence[jnp.ndarray]) -> tp.Sequence[jnp.ndarray]:
         out_channels = self.out_channels
 
         outputs = [jax.nn.relu(nn.Dense(out_channels)(x)) for x in inputs]

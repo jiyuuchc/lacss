@@ -17,6 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from tqdm import tqdm
 
 import lacss
 
@@ -33,8 +34,9 @@ app = typer.Typer(pretty_exceptions_enable=False)
 def get_model(cmd, config, seed):
 
     losses = [
-        lacss.losses.LPNLoss(),
-        lacss.losses.SupervisedInstanceLoss(),
+        lacss.losses.detection_loss,
+        lacss.losses.localization_loss,
+        lacss.losses.supervised_instance_loss,
     ]
 
     if cmd == "resume":
@@ -60,7 +62,7 @@ def get_model(cmd, config, seed):
     elif cmd == "config":
         with open(config) as f:
             model_cfg = json.load(f)
-        model = lacss.modules.Lacss(**model_cfg)
+        model = lacss.modules.Lacss.from_config(model_cfg)
 
         trainer = lacss.train.Trainer(
             model=model,
@@ -101,6 +103,7 @@ def run_training(
         os.makedirs(logpath)
     except:
         pass
+
     logging.info(f"Logging to {logpath}")
 
     train_gen = data.train_data(
@@ -116,7 +119,8 @@ def run_training(
         supervised=True,
         cell_type=celltype,
         coco=coco,
-    )
+        batch=False,
+    )  # unbatched val data
 
     trainer = get_model(cmd, config, seed)
 
@@ -135,28 +139,29 @@ def run_training(
         json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True)
     )
 
-    epoch = init_epoch
-    for steps, logs in enumerate(
-        trainer.train(train_gen, rng_cols=["droppath"], training=True)
-    ):
-        if epoch >= n_epochs:
-            break
+    train_iter = trainer.train(train_gen, rng_cols=["droppath"], training=True)
+    for epoch in range(init_epoch, n_epochs):
 
-        if (steps + 1) % steps_per_epoch == 0:
-            epoch += 1
-            print(f"epoch - {epoch}")
-            print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
+        trainer.reset()
+        print(f"epoch - {epoch+1}")
 
-            trainer.checkpoint(join(logpath, f"cp-{epoch}"))
-            trainer.reset()
+        for _ in tqdm(range(steps_per_epoch)):
+            logs = next(train_iter)
 
-            val_metrics = [
-                lacss.metrics.LoiAP([0.1, 0.2, 0.5, 1.0]),
-                lacss.metrics.BoxAP([0.5, 0.75]),
-            ]
-            var_logs = trainer.test_and_compute(val_gen, metrics=val_metrics)
-            for k, v in var_logs.items():
-                print(f"{k}: {v}")
+        print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
+
+        trainer.checkpoint(join(logpath, f"cp-{epoch}"))
+
+        val_metrics = [
+            lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
+            lacss.metrics.BoxAP([0.5, 0.75]),
+        ]
+
+        var_logs = trainer.test_and_compute(
+            val_gen, metrics=val_metrics, strategy=lacss.train.JIT
+        )
+        for k, v in var_logs.items():
+            print(f"{k}: {v}")
 
 
 if __name__ == "__main__":

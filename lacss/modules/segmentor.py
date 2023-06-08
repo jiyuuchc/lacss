@@ -1,5 +1,6 @@
+import math
+import typing as tp
 from functools import partial
-from typing import Dict, List, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
@@ -12,8 +13,7 @@ from .common import SpatialAttention
 class _Encoder(nn.Module):
     n_ch: int
     patch_size: int
-    resolution: int = 8
-    encoding_ch: int = 4
+    latent_dims: tp.Sequence[int] = (8, 8, 4)
 
     @nn.compact
     def __call__(self, feature, loc):
@@ -21,17 +21,23 @@ class _Encoder(nn.Module):
         patch_center, _, _, _ = gather_patches(feature, loc, patch_size=2)
         encodings = patch_center.mean(axis=(-2, -3))
 
-        dim = self.encoding_ch * self.resolution * self.resolution
+        dim = encodings.shape[-1]
         encodings = nn.Dense(dim)(encodings)
         encodings = jax.nn.relu(encodings)
         encodings = nn.Dense(dim)(encodings)
         encodings = jax.nn.relu(encodings)
 
-        encoding_shape = (-1, self.resolution, self.resolution, self.encoding_ch)
-        encodings = nn.Dense(dim)(encodings).reshape(encoding_shape)
+        new_dim = math.prod(self.latent_dims)
+        encoding_shape = (-1,) + self.latent_dims
+        encodings = nn.Dense(new_dim)(encodings).reshape(encoding_shape)
         encodings = jax.image.resize(
             encodings,
-            [encodings.shape[0], self.patch_size, self.patch_size, self.encoding_ch],
+            (
+                encodings.shape[0],
+                self.patch_size,
+                self.patch_size,
+                self.latent_dims[-1],
+            ),
             "linear",
         )
 
@@ -45,34 +51,36 @@ class Segmentor(nn.Module):
     Args:
     conv_spec: conv_block definition, e.g. ((64, 64, 64), (16, 16))
     instance_crop_size: crop size, int
-    feature_scale_ratio: 1,2 or 4
+    feature_level: int
     with_attention: T/F whether use spatial attention layer
     learned_encoding: Use hard-coded position encoding or not
     """
 
-    feature_level: int = 1
-    conv_spec: Tuple[Sequence[int], Sequence[int]] = (
-        (64, 64, 64),
-        (16,),
+    feature_level: int = 2
+    conv_spec: tp.Tuple[tp.Sequence[int], tp.Sequence[int]] = (
+        (384, 384, 384),
+        (64,),
     )
     instance_crop_size: int = 96
     use_attention: bool = False
-    learned_encoding: bool = False
-    n_cls: int = -1
+    learned_encoding: bool = True
+    encoder_dims: tp.Sequence[int] = (8, 8, 4)
+    # n_cls: int = -1
 
     # if not feature_level in (0,1,2):
     #     raise ValueError('feature_level should be 1,2 or 0')
 
     @nn.compact
-    def __call__(self, features: dict, locations: jnp.ndarray) -> tuple:
+    def __call__(self, features: dict, locations: jnp.ndarray) -> dict:
         """
         Args:
             features: {'lvl' [H, W, C]} feature dictionary
             locations: [N, 2]  scaled 0..1
         outputs:
-            instance_output: [N, crop_size, crop_size, 1]
-            yc: [N, crop_size, crop_size]
-            xc: [N, crop_size, crop_size]
+            instance_output: [N, crop_size, crop_size]
+            instance_mask; [N, 1, 1] boolean mask indicating valid outputs
+            instance_yc: [N, crop_size, crop_size] meshgrid y coordinates
+            instance_xc: [N, crop_size, crop_size] meshgrid x coordinates
         """
         crop_size = self.instance_crop_size
         lvl = self.feature_level
@@ -100,12 +108,18 @@ class Segmentor(nn.Module):
             ).transpose(1, 2, 0)
             encodings = nn.Conv(n_ch, (1, 1), use_bias=False)(encodings)
         else:
-            encodings = _Encoder(n_ch, patch_size)(features[str(lvl)], locations)
+            encodings = _Encoder(
+                n_ch,
+                patch_size,
+                self.encoder_dims,
+            )(features[str(lvl)], locations)
+
         patches += encodings
         mask = jnp.expand_dims((locations >= 0).any(axis=-1), (1, 2))
         patches = jax.nn.relu(patches)
 
         if self.use_attention:
+
             patches = SpatialAttention()(patches)
 
         # patche convs

@@ -14,18 +14,28 @@ from optax import GradientTransformation
 from ..utils import Inputs, _get_name
 from . import strategy
 from .data import *
-from .loss import Loss, LossLog
+from .loss import LossLog
 
 # so that multiple calls return the same obj
 # this avoids JIT when supplying partial func as args
 _cached_partial = lru_cache(partial)
 
 
+def _get_iterator(g):
+
+    try:
+        it = iter(g)
+    except:
+        it = iter(g())
+
+    return it
+
+
 class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        losses: tp.Optional[tp.Union[tp.Sequence[Loss], Loss]] = None,
+        losses: tp.Callable,
         optimizer: GradientTransformation = None,
         seed: int = 42,
         strategy: type = strategy.JIT,
@@ -62,13 +72,13 @@ class Trainer:
         if loss_weights is None:
             loss_weights = (1.0,) * len(losses)
 
-        if len(loss_weights) != len(self.losses):
+        if len(loss_weights) != len(losses):
             raise ValueError(
                 f"Loss weights supplied {loss_weights} does not match the number of loss functions ({len(losses)})"
             )
 
         self.loss_logs = tuple(
-            LossLog(loss, w) for loss, w in zip(self.losses, loss_weights)
+            LossLog(loss, w) for loss, w in zip(losses, loss_weights)
         )
 
     @property
@@ -84,7 +94,7 @@ class Trainer:
 
             if self.model.scope is None:
 
-                peek = next(dataset())
+                peek = next(_get_iterator(dataset))
                 inputs, _, _ = unpack_x_y_sample_weight(peek)
 
                 self.seed, key = jax.random.split(self.seed)
@@ -137,7 +147,7 @@ class Trainer:
         self.reset()
 
         self.seed, seed = jax.random.split(self.seed)
-        for step, data in enumerate(dataset()):
+        for step, data in enumerate(_get_iterator(dataset)):
             inputs, labels, _ = unpack_x_y_sample_weight(data)
 
             if rng_cols is not None:
@@ -217,7 +227,7 @@ class Trainer:
 
         # self.initialize(dataset, strategy)
 
-        for data in dataset():
+        for data in _get_iterator(dataset):
             inputs, labels, _ = unpack_x_y_sample_weight(data)
             predict_fn = strategy.predict
             preds = predict_fn(self.state, inputs)
@@ -239,6 +249,10 @@ class Trainer:
     @property
     def params(self):
         return self.state.params
+
+    @params.setter
+    def params(self, new_params):
+        self.state = self.state.replace(params=new_params)
 
     @property
     def optimizer(self):

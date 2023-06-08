@@ -19,8 +19,8 @@ class Detector(nn.Module):
     test_nms_threshold: float = 8.0
     test_pre_nms_topk: int = -1
     test_max_output: int = 768
-    test_min_score: float = 0.25
-    training: bool = True
+    test_min_score: float = 0.2
+    # training: bool = True
 
     def _proposal_locations(self, lpn_scores, lpn_regression, training: bool = None):
         """

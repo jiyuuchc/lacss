@@ -62,11 +62,11 @@ class ConvNeXt(nn.Module):
     """
 
     patch_size: int = 4
-    depths: Sequence[int] = (3, 3, 9, 3)
+    depths: Sequence[int] = (3, 3, 27, 3)
     dims: Sequence[int] = (96, 192, 384, 768)
     drop_path_rate: float = 0.0
     layer_scale_init_value: float = 1e-6
-    out_channels: int = 256
+    out_channels: int = 384
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, *, training: bool = None) -> jnp.ndarray:
@@ -87,10 +87,14 @@ class ConvNeXt(nn.Module):
 
             outputs.append(x)
 
-        decoder_out = FPN(self.out_channels)(outputs)
         keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
         encoder_out = dict(zip(keys, outputs))
-        decoder_out = dict(zip(keys, decoder_out))
+
+        if self.out_channels > 0:
+            decoder_out = FPN(self.out_channels)(outputs)
+            decoder_out = dict(zip(keys, decoder_out))
+        else:
+            decoder_out = None
 
         return encoder_out, decoder_out
 

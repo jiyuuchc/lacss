@@ -31,54 +31,110 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
     return combined_edges
 
 
-def self_supervised_edge_losses(pred, input):
-    """
-    Args:
-        auxnet_out: [H,W, n_groups]
-        instance_edge: [H,W]
-        category: category number [0, n_groups)
-    return:
-        loss: float
-    """
-    instance_output = pred["instance_output"]
-    instance_yc = pred["instance_yc"]
-    instance_xc = pred["instance_xc"]
-    height, width, _ = input["image"].shape
+def self_supervised_edge_loss(preds, inputs, **kwargs):
+    """LACSS cell border consistency loss"""
+
+    instance_output = preds["instance_output"]
+    instance_yc = preds["instance_yc"]
+    instance_xc = preds["instance_xc"]
+    height, width, _ = inputs["image"].shape
     instance_edge = _compute_edge(
         instance_output, instance_yc, instance_xc, height, width
     )
-    instance_edge_pred = jax.nn.sigmoid(pred["edge_pred"])
+    instance_edge_pred = jax.nn.sigmoid(preds["edge_pred"])
 
     return optax.l2_loss(instance_edge_pred, instance_edge).mean()
 
 
-# def auxnet_losses(auxnet_out, instance_edge, category=None):
-#     '''
-#     Args:
-#         auxnet_out: [H,W, n_groups]
-#         instance_edge: [H,W]
-#         category: category number [0, n_groups)
-#     return:
-#         loss: float
-#     '''
-#     edge_pred, instance_edge = _get_auxnet_prediction(auxnet_out, instance_edge, category)
+def self_supervised_segmentation_loss(
+    preds,
+    inputs,
+    *,
+    offset_sigma=jnp.array([10.0]),
+    offset_scale=jnp.array([2.0]),
+    **kwargs,
+):
+    """LACSS image segmentation consistenct loss"""
 
-#     return _binary_focal_crossentropy(edge_pred, instance_edge >= 0.5).mean()
+    height, width, _ = inputs["image"].shape
+    _, ps, _ = preds["instance_yc"].shape
 
-# class AuxnetLoss(Loss):
-#     def call(
-#         self,
-#         preds: dict,
-#         group_num: jnp.ndarray = None,
-#     ):
-#         if not 'training_locations' in preds:
-#             return 0.0
+    def _max_merge(pred):
+        label = jnp.zeros([height + ps, width + ps]) - 1.0e6
+        yc, xc = pred["instance_yc"], pred["instance_xc"]
+        logit = pred["instance_logit"]
 
-#         return jax.vmap(auxnet_losses)(
-#             auxnet_out = preds['auxnet_out'],
-#             instance_edge = preds['instance_edge'],
-#             category = group_num.astype(int),
-#         )
+        if "category" in inputs and inputs["category"] is not None:
+            c = inputs["category"].astype(int).squeeze()
+        else:
+            c = 0
+
+        sigma = offset_sigma[c]
+        scale = offset_scale[c]
+        offset = (jnp.mgrid[:ps, :ps] - (ps - 1) / 2) ** 2 / (2 * sigma * sigma)
+        offset = jnp.exp(-offset.sum(axis=0)) * scale
+        logit += offset
+
+        label = label.at[yc + ps // 2, xc + ps // 2].max(logit)
+        label = label[ps // 2 : -ps // 2, ps // 2 : -ps // 2]
+
+        return label
+
+    # fg_pred = jax.nn.tanh(preds["fg_pred"] / 2)
+    # fg_label = jax.nn.tanh(_max_merge(preds) / 2)
+    fg_pred = jax.nn.sigmoid(preds["fg_pred"])
+    fg_label = jax.lax.stop_gradient(jax.nn.sigmoid(_max_merge(preds)))
+
+    locs = jnp.floor(inputs["gt_locations"] + 0.5)
+    locs = locs.astype(int)
+    fg_label = fg_label.at[locs[:, 0], locs[:, 1]].set(1.0)
+
+    assert fg_pred.shape == fg_label.shape
+
+    # loss = 1.0 - fg_pred * jax.lax.stop_gradient(fg_label)
+    loss = (1.0 - fg_label) * fg_pred + fg_label * (1.0 - fg_pred)
+
+    loss = loss.mean()
+
+    return loss
+
+
+def aux_size_loss(preds, inputs, *, weight=0.01, **kwargs):
+    """auxillary loss to prevent model collapse"""
+
+    height, width, _ = inputs["image"].shape
+
+    valid_locs = (
+        (preds["instance_yc"] >= 0)
+        & (preds["instance_yc"] < height)
+        & (preds["instance_xc"] >= 0)
+        & (preds["instance_xc"] < width)
+    )
+
+    areas = jnp.sum(
+        preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
+    )
+    areas = jnp.clip(areas, EPS, 1e6)
+    loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1] * self.a
+
+    mask = preds["instance_mask"]
+    n_instances = jnp.count_nonzero(mask) + EPS
+    loss = loss.sum(where=mask) / n_instances
+
+    return loss * weight
+
+
+def supervised_segmentation_loss(preds, labels, **kwargs):
+
+    if "gt_labels" in labels:
+
+        mask = (labels["gt_labels"] > 0).astype("float32")
+
+    else:
+
+        mask = labels["gt_mask"].astype("float32")
+
+    return optax.sigmoid_binary_cross_entropy(preds["fg_pred"], mask).mean()
 
 
 class AuxEdgeLoss(Loss):
@@ -91,7 +147,7 @@ class AuxEdgeLoss(Loss):
         if not "training_locations" in preds:
             return 0.0
 
-        return self_supervised_edge_losses(preds, inputs)
+        return self_supervised_edge_loss(preds, inputs)
 
 
 class AuxSizeLoss(Loss):
@@ -101,26 +157,7 @@ class AuxSizeLoss(Loss):
 
     def call(self, inputs, preds, **kwargs):
 
-        height, width, _ = inputs["image"].shape
-
-        valid_locs = (
-            (preds["instance_yc"] >= 0)
-            & (preds["instance_yc"] < height)
-            & (preds["instance_xc"] >= 0)
-            & (preds["instance_xc"] < width)
-        )
-
-        areas = jnp.sum(
-            preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
-        )
-        areas = jnp.clip(areas, EPS, 1e6)
-        loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1] * self.a
-
-        mask = preds["instance_mask"]
-        n_instances = jnp.count_nonzero(mask) + EPS
-        loss = loss.sum(where=mask) / n_instances
-
-        return loss
+        return aux_size_loss(preds, inputs, weight=self.a)
 
 
 class AuxSegLoss(Loss):
@@ -140,44 +177,10 @@ class AuxSegLoss(Loss):
         self.offset_sigma = jnp.array(offset_sigma)
 
     def call(self, inputs, preds, **kwargs):
-        height, width, _ = inputs["image"].shape
-        _, ps, _ = preds["instance_yc"].shape
 
-        def _max_merge(pred):
-            label = jnp.zeros([height + ps, width + ps]) - 1.0e6
-            yc, xc = pred["instance_yc"], pred["instance_xc"]
-            logit = pred["instance_logit"]
-
-            if "category" in inputs and inputs["category"] is not None:
-                c = inputs["category"].astype(int).squeeze()
-            else:
-                c = 0
-
-            sigma = self.offset_sigma[c]
-            scale = self.offset_scale[c]
-            offset = (jnp.mgrid[:ps, :ps] - (ps - 1) / 2) ** 2 / (2 * sigma * sigma)
-            offset = jnp.exp(-offset.sum(axis=0)) * scale
-            logit += offset
-
-            label = label.at[yc + ps // 2, xc + ps // 2].max(logit)
-            label = label[ps // 2 : -ps // 2, ps // 2 : -ps // 2]
-
-            return label
-
-        # fg_pred = jax.nn.tanh(preds["fg_pred"] / 2)
-        # fg_label = jax.nn.tanh(_max_merge(preds) / 2)
-        fg_pred = jax.nn.sigmoid(preds["fg_pred"])
-        fg_label = jax.lax.stop_gradient(jax.nn.sigmoid(_max_merge(preds)))
-
-        locs = jnp.floor(inputs["gt_locations"] + 0.5)
-        locs = locs.astype(int)
-        fg_label = fg_label.at[locs[:, 0], locs[:, 1]].set(1.0)
-
-        assert fg_pred.shape == fg_label.shape
-
-        # loss = 1.0 - fg_pred * jax.lax.stop_gradient(fg_label)
-        loss = (1.0 - fg_label) * fg_pred + fg_label * (1.0 - fg_pred)
-
-        loss = loss.mean()
-
-        return loss
+        return self_supervised_segmentation_loss(
+            preds,
+            inputs,
+            offset_scale=self.offset_scale,
+            offset_sigma=self.offset_sigma,
+        )

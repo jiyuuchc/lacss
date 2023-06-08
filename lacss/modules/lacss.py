@@ -16,18 +16,24 @@ from .segmentor import Segmentor
 
 
 class Lacss(nn.Module):
-    backbone: type = "ResNet"
-    backbone_cfg: dict = field(default_factory=dict)
-    lpn: dict = field(default_factory=dict)
-    detector: dict = field(default_factory=dict)
-    segmentor: dict = field(default_factory=dict)
+    backbone: nn.Module = ConvNeXt()
+    lpn: nn.Module = LPN()
+    detector: nn.Module = Detector()
+    segmentor: nn.Module = Segmentor()
 
-    def setup(self):
-        cls = globals()[self.backbone]
-        self._backbone = cls(**self.backbone_cfg)
-        self._lpn = LPN(**self.lpn)
-        self._detector = Detector(**self.detector)
-        self._segmentor = Segmentor(**self.segmentor)
+    @classmethod
+    def from_config(cls, config):
+        config_dict = {}
+        if "backbone" in config:
+            config_dict["backbone"] = ConvNeXt(**config["backbone"])
+        if "lpn" in config:
+            config_dict["lpn"] = LPN(**config["lpn"])
+        if "detector" in config:
+            config_dict["detector"] = Detector(**config["detector"])
+        if "segmentor" in config:
+            config_dict["segmentor"] = Segmentor(**config["segmentor"])
+
+        return cls(**config_dict)
 
     def __call__(
         self,
@@ -59,7 +65,7 @@ class Lacss(nn.Module):
         )
 
         # backbone
-        encoder_features, features = self._backbone(image, training=training)
+        encoder_features, features = self.backbone(image, training=training)
         model_output = dict(
             encoder_features=encoder_features,
             decoder_features=features,
@@ -72,29 +78,34 @@ class Lacss(nn.Module):
             else None
         )
         model_output.update(
-            self._lpn(
+            self.lpn(
                 inputs=features,
                 scaled_gt_locations=scaled_gt_locations,
             )
         )
-        model_output.update(
-            self._detector(
-                scores=model_output["lpn_scores"],
-                regressions=model_output["lpn_regressions"],
-                gt_locations=gt_locations,
-                training=training,
-            )
-        )
 
-        # segmentation
-        locations = model_output["training_locations" if training else "pred_locations"]
-        scaled_locs = locations / jnp.array([height, width])
-        model_output.update(
-            self._segmentor(
-                features=features,
-                locations=scaled_locs,
+        if gt_locations is not None or not training:
+
+            model_output.update(
+                self.detector(
+                    scores=model_output["lpn_scores"],
+                    regressions=model_output["lpn_regressions"],
+                    gt_locations=gt_locations,
+                    training=training,
+                )
             )
-        )
+
+            # segmentation
+            locations = model_output[
+                "training_locations" if training else "pred_locations"
+            ]
+            scaled_locs = locations / jnp.array([height, width])
+            model_output.update(
+                self.segmentor(
+                    features=features,
+                    locations=scaled_locs,
+                )
+            )
 
         return model_output
 

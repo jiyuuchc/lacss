@@ -161,7 +161,8 @@ def reduce_loss(
 
 
 class LossLog(struct.PyTreeNode):
-    loss_fn: Loss = struct.field(pytree_node=False)
+
+    loss_fn: tp.Callable = struct.field(pytree_node=False)
     weight: jnp.ndarray = 1.0
     cnt: jnp.ndarray = 0.0
     sum: jnp.ndarray = 0.0

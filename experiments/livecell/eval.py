@@ -4,16 +4,14 @@ import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 
-import json
 from os.path import join
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import optax
 from tqdm import tqdm
 
 import lacss
+import lacss.deploy
 
 try:
     from . import data
@@ -74,21 +72,13 @@ def run_test(
 
     print("evaluating...")
 
-    try:
-        trainer = lacss.train.Trainer.from_checkpoint(checkpoint)
-    except:
-        from lacss.deploy import load_from_pretrained
-
-        module, params = load_from_pretrained(checkpoint)
-        trainer = lacss.train.Trainer(module.bind(dict(params=params)))
+    predictor = lacss.deploy.Predictor(checkpoint)
 
     print(f"checkpoint loaded from {checkpoint}")
 
     thresholds = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     mask_ap = lacss.metrics.AP(thresholds)
     box_ap = lacss.metrics.AP(thresholds)
-    fg_acc_sum = 0
-    cnts = 0
 
     for c in range(8):
 
@@ -104,14 +94,11 @@ def run_test(
             cell_type=c,
         )
 
-        if not trainer.initialized:
-            trainer.initialize(test_data, tx=optax.set_to_zero())
-
         print(f" Cell type : {c}")
 
         for inputs, labels in tqdm(test_data()):
 
-            pred = trainer(inputs, strategy=lacss.train.strategy.Core)
+            pred = predictor(inputs)
             scores = np.asarray(pred["pred_scores"])
             valid_preds = scores >= 0
             scores = scores[valid_preds]
@@ -130,30 +117,12 @@ def run_test(
             mask_ap_c.update(m_ious, scores)
             mask_ap.update(m_ious, scores)
 
-            if not supervised:
-                # fg_acc
-                pred_masks = pred["fg_pred"] >= 0
-                gt_masks = labels["gt_mask"]
-                fg_acc_sum_c += (pred_masks == gt_masks).mean()
-                cnts_c += 1
-
         print(f"Box APs: {format_array(box_ap_c.compute())}")
         print(f"Mask APs: {format_array(mask_ap_c.compute())}")
 
-        if not supervised:
-            acc = fg_acc_sum_c / cnts_c
-            print(f"Foreground Acc: {acc:.4f}")
-
-            fg_acc_sum += fg_acc_sum_c
-            cnts += cnts_c
-
     print("All cell types:")
     print(f"Box APs: {format_array(box_ap.compute())}")
-    print(f"Box APs: {format_array(mask_ap.compute())}")
-
-    if not supervised:
-        acc = fg_acc_sum / cnts
-        print(f"Foreground Acc: {acc:.4f}")
+    print(f"Mask APs: {format_array(mask_ap.compute())}")
 
 
 if __name__ == "__main__":

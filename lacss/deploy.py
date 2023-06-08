@@ -57,7 +57,7 @@ def load_from_pretrained(pretrained):
             if not isinstance(module, lacss.modules.Lacss):
 
                 module = module.bind(dict(params=params))
-                module, params = module._lacss.unbind()
+                module, params = module.lacss.unbind()
                 params = params["params"]
 
             cfg = module
@@ -71,13 +71,13 @@ def load_from_pretrained(pretrained):
         params = params["params"]
 
     # making a round-trip of module->cfg->module to icnrease backward-compatibility
-    if isinstance(cfg, nn.Module):
+    # if isinstance(cfg, nn.Module):
 
-        cfg = dataclasses.asdict(cfg)
+    #     cfg = dataclasses.asdict(cfg)
 
-    module = lacss.modules.Lacss(**cfg)
+    # module = lacss.modules.Lacss(**cfg)
 
-    return module, freeze(params)
+    return cfg, freeze(params)
 
 
 @partial(jax.jit, static_argnums=0)
@@ -109,7 +109,7 @@ class Predictor:
 
         return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
 
-    def predict(self, image, **kwargs):
+    def predict(self, image, remove_out_of_bound: bool = False, **kwargs):
 
         module, params = self.model
 
@@ -118,10 +118,54 @@ class Predictor:
         else:
             apply_fn = module.apply
 
-        return _predict(apply_fn, params, image)
+        preds = _predict(apply_fn, params, image)
+
+        if remove_out_of_bound:
+            pred_locations = preds["pred_locations"]
+            h, w, _ = image.shape
+            valid_locs = (pred_locations >= 0).all(axis=-1)
+            valid_locs &= pred_locations[:, 0] < h
+            valid_locs &= pred_locations[:, 1] < w
+            preds["pred_locations"] = jnp.where(
+                valid_locs[:, None],
+                preds["pred_locations"],
+                -1,
+            )
+            preds["pred_scores"] = jnp.where(
+                valid_locs,
+                preds["pred_scores"],
+                -1,
+            )
+
+        return preds
 
     def predict_label(self, image, **kwargs):
 
         preds = self.predict(image, **kwargs)
 
         return patches_to_label(preds, input_size=image.shape[:2])
+
+    @property
+    def module(self):
+        return self.model[0]
+
+    @property
+    def detector(self):
+        return self.module.detector
+
+    @detector.setter
+    def detector(self, new_detector):
+        from dataclasses import replace
+
+        from .modules import Detector
+
+        if isinstance(new_detector, dict):
+            new_detector = Detector(**new_detector)
+
+        if isinstance(new_detector, Detector):
+            self.model = (
+                replace(self.module, detector=new_detector),
+                self.model[1],
+            )
+        else:
+            raise ValueError(f"{new_detector} is not a Lacss Detector")

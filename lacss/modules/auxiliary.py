@@ -9,13 +9,13 @@ from .unet import UNet
 
 
 class AuxInstanceEdge(nn.Module):
-    conv_spec: Sequence[int] = (24, 64, 64)
+    conv_spec: tp.Sequence[int] = (24, 64, 64)
     n_groups: int = 1
     share_weights: bool = False
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, *, category: Optional[jnp.ndarray] = None
+        self, x: jnp.ndarray, *, category: tp.Optional[jnp.ndarray] = None
     ) -> jnp.ndarray:
         for n in self.conv_spec:
             x = nn.Conv(n, (3, 3), use_bias=False)(x)
@@ -36,8 +36,8 @@ class AuxInstanceEdge(nn.Module):
 
 
 class AuxForeground(nn.Module):
-    conv_spec: Sequence[int] = (24, 64)
-    patch_size: Sequence[int] = 1
+    conv_spec: tp.Sequence[int] = (24, 64)
+    patch_size: tp.Sequence[int] = 1
     n_groups: int = 1
     share_weights: bool = False
     augment: bool = False
@@ -80,8 +80,8 @@ class AuxForeground(nn.Module):
         self,
         x: jnp.ndarray,
         *,
-        category: Optional[jnp.ndarray] = None,
-        augment: Optional[bool] = None,
+        category: tp.Optional[jnp.ndarray] = None,
+        augment: tp.Optional[bool] = None,
     ) -> jnp.ndarray:
 
         assert category is not None or self.n_groups == 1
