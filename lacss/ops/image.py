@@ -37,7 +37,7 @@ def sorbel_edges(image):
     return output
 
 
-def _retrieve_value_at(img, loc, out_of_bound_value=0.0):
+def _retrieve_value_at(img, loc, out_of_bound_value=0):
 
     iloc = jnp.floor(loc).astype(int)
     res = loc - iloc
@@ -45,24 +45,29 @@ def _retrieve_value_at(img, loc, out_of_bound_value=0.0):
     offsets = jnp.asarray(
         [[(i >> j) % 2 for j in range(len(loc))] for i in range(2 ** len(loc))]
     )
-    ilocs = tuple(jnp.swapaxis(iloc + offsets, 0, 1))
+    ilocs = jnp.swapaxes(iloc + offsets, 0, 1)
 
-    weight = jnp.prod(res * (offsets == 0) + (1 - res) * (offsets == 1), axis=1)
+    weight = jnp.prod(res * (offsets == 1) + (1 - res) * (offsets == 0), axis=1)
 
-    value = (img[ilocs] * weight[:, None]).sum(aixs=0)
+    max_indices = jnp.asarray(img.shape)[: len(loc), None]
+    values = jnp.where(
+        (ilocs >= 0).all(axis=0) & (ilocs < max_indices).all(axis=0),
+        jnp.swapaxes(img[tuple(ilocs)], 0, -1),
+        out_of_bound_value,
+    )
 
-    valid = (loc >= 0).all() & ((loc + 1) <= jnp.asarray(img.shape)).all()
-    value = jnp.where(valid, value, out_of_bound_value)
+    value = (values * weight).sum(axis=-1)
 
     return value
 
 
-def retrieve_value(img, locs, out_of_bound_value=0.0):
-    """Retrieve values as non-integer locations by interpolation
+def sub_pixel_samples(img, locs, out_of_bound_value=0, edge_indexing=False):
+    """Retrieve image values as non-integer locations by interpolation
     Args:
-        img: [D1,D2,..,Dk, ...]
-        locs: [d1,d2,..,dn, k]
+        img: Array of shape [D1,D2,..,Dk, ...]
+        locs: Array of shape [d1,d2,..,dn, k]
         out_of_bound_value: optional float constant, defualt 0.
+        edge_indexing: if True, the index for the first value in img is 0.5, otherwise 0. Default is False
     Returns:
         values: [d1,d2,..,dn, ...], float
     """
@@ -71,13 +76,44 @@ def retrieve_value(img, locs, out_of_bound_value=0.0):
     img_shape = img.shape
     d_loc = loc_shape[-1]
 
+    if edge_indexing:
+        locs = locs - 0.5
+
     img = img.reshape(img_shape[:d_loc] + (-1,))
     locs = locs.reshape(-1, d_loc)
-    op = partial(_retrieve_value_at, img=img, out_of_bound_value=out_of_bound_value)
+    op = partial(_retrieve_value_at, out_of_bound_value=out_of_bound_value)
 
-    values = jax.vmap(op)(locs)
+    values = jax.vmap(op, in_axes=(None, 0))(img, locs)
     out_shape = loc_shape[:-1] + img_shape[d_loc:]
 
     values = values.reshape(out_shape)
 
     return values
+
+
+def sub_pixel_crop_and_resize(img, bbox, output_shape, out_of_bound_value=0):
+    """Retrieve image values of a bbox resize output. Used for ROI-Align
+    Args:
+        img: Array of shape [H, W, ...]
+        bbox: [y0, x0, y1, x1]
+        output_shape: [h, w]
+        out_of_bound_value: optional float constant, defualt 0.
+    Returns:
+        values: [h, w, ...], float
+    """
+
+    bbox = jnp.asarray(bbox)
+    img = jnp.asarray(img)
+    y0, x0, y1, x1 = bbox
+    h, w = output_shape
+
+    dy = (y1 - y0) / h
+    dx = (x1 - x0) / w
+
+    yy, xx = jnp.mgrid[(y0 + dy / 2) : y1 : (dy), (x0 + dx / 2) : x1 : dx]
+    return sub_pixel_samples(
+        img,
+        jnp.stack([yy, xx], axis=-1),
+        out_of_bound_value=out_of_bound_value,
+        edge_indexing=True,
+    )
