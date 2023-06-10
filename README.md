@@ -1,11 +1,7 @@
 # Deprecation Notice
 
-This library was an early experimental version and has been replaced by
-
-https://github.com/jiyuuchc/lacss_jax
-
-You are recommned to use the new repository instead of this one. 
-
+This branch was an early experimental version and has little development right now
+You are recommned to use the new repository instead the main-jax branch.
 
 ------------------------------------------------------------------
 
