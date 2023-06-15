@@ -11,49 +11,52 @@ from .common import SpatialAttention
 
 
 class _Encoder(nn.Module):
-    n_ch: int
-    patch_size: int
-    latent_dims: tp.Sequence[int] = (8, 8, 4)
+    n_output_features: int
+    input_patch_size: int
+    encoding_dims: tp.Tuple[int, int, int] = (8, 8, 4)
+    n_latent_features: int = -1
 
     @nn.compact
     def __call__(self, feature, loc):
-
         patch_center, _, _, _ = gather_patches(feature, loc, patch_size=2)
         encodings = patch_center.mean(axis=(-2, -3))
 
-        dim = encodings.shape[-1]
+        dim = self.n_latent_features
+        dim = dim if dim > 0 else math.prod(self.encoding_dims)
         encodings = nn.Dense(dim)(encodings)
         encodings = jax.nn.relu(encodings)
         encodings = nn.Dense(dim)(encodings)
         encodings = jax.nn.relu(encodings)
 
-        new_dim = math.prod(self.latent_dims)
-        encoding_shape = (-1,) + self.latent_dims
+        new_dim = math.prod(self.encoding_dims)
+        encoding_shape = (-1,) + self.encoding_dims
         encodings = nn.Dense(new_dim)(encodings).reshape(encoding_shape)
         encodings = jax.image.resize(
             encodings,
             (
                 encodings.shape[0],
-                self.patch_size,
-                self.patch_size,
-                self.latent_dims[-1],
+                self.input_patch_size,
+                self.input_patch_size,
+                self.encoding_dims[-1],
             ),
             "linear",
         )
 
-        encodings = nn.Conv(self.n_ch, (1, 1), use_bias=False)(encodings)
+        encodings = nn.Conv(self.n_output_features, (1, 1), use_bias=False)(encodings)
 
         return encodings
 
 
 class Segmentor(nn.Module):
-    """
-    Args:
-    conv_spec: conv_block definition, e.g. ((64, 64, 64), (16, 16))
-    instance_crop_size: crop size, int
-    feature_level: int
-    with_attention: T/F whether use spatial attention layer
-    learned_encoding: Use hard-coded position encoding or not
+    """LACSS segmentor module.
+
+    Attributes:
+        feature_level: int
+        conv_spec: conv_block definition, e.g. ((384,384,384), (64,))
+        instance_crop_size: Crop size. default is 96.
+        with_attention: Whether use spatial attention layer. Default is False
+        learned_encoding: Whether to use hard-coded position encoding. Default is False
+        encoder_dims: Dim of the position encoder, if using learned encoding. Default is (8,8,4)
     """
 
     feature_level: int = 2
@@ -119,7 +122,6 @@ class Segmentor(nn.Module):
         patches = jax.nn.relu(patches)
 
         if self.use_attention:
-
             patches = SpatialAttention()(patches)
 
         # patche convs
