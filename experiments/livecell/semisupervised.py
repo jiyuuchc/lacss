@@ -113,11 +113,9 @@ def run_training(
     with open(transfer, "rb") as f:
         cp = pickle.load(f)
         if isinstance(cp, lacss.train.Trainer):
-
             trainer = cp
 
         else:
-
             lacss_cfg, params = cp
 
             if isinstance(lacss_cfg, nn.Module):
@@ -186,7 +184,6 @@ def run_training(
                 print(f"{k}: {v}")
 
         for c in range(8) if cell_type == -1 else [cell_type]:
-
             data = itertools.dropwhile(lambda x: x[0]["category"] != c, val_data())
             inputs, label = next(data)
             preds = trainer(inputs)
@@ -208,7 +205,6 @@ def run_training(
     # warmup
 
     if epoch < warmup_epochs:
-
         trainer.losses = [
             lacss.losses.LPNLoss(),
             lacss.losses.SelfSupervisedInstanceLoss(False),
@@ -225,7 +221,6 @@ def run_training(
         )
 
         for steps, logs in enumerate(pb):
-
             if (steps + 1) % steps_per_epoch == 0:
                 epoch += 1
                 _epoch_end(epoch, logs)
@@ -235,7 +230,6 @@ def run_training(
 
     # train
     if epoch < n_epochs:
-
         trainer.losses = [
             lacss.losses.LPNLoss(),
             lacss.losses.SelfSupervisedInstanceLoss(),
@@ -251,7 +245,6 @@ def run_training(
             trainer.train(train_data, rng_cols=["droppath", "augment"], training=True)
         )
         for steps, logs in enumerate(pb):
-
             if (steps + 1) % steps_per_epoch == 0:
                 epoch += 1
                 _epoch_end(epoch, logs, eval=True)

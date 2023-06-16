@@ -377,7 +377,6 @@ def livecell_dataset_from_tfrecord(tfrpath):
 
 
 def train_parser_supervised(inputs):
-
     from lacss.data import parse_train_data_func_full_annotation
 
     inputs = parse_train_data_func_full_annotation(
@@ -400,7 +399,6 @@ def train_parser_supervised(inputs):
 
 
 def train_parser_semisupervised(inputs):
-
     from lacss.data import parse_train_data_func
 
     cell_type = tf.cast(inputs["cell_type"], tf.float32)
@@ -430,13 +428,10 @@ def train_parser_semisupervised(inputs):
 def train_data(
     datapath, n_buckets, batchsize, *, supervised=False, cell_type=-1, coco=False
 ):
-
     if not coco:
-
         ds_train = livecell_dataset_from_tfrecord(join(datapath, "train.tfrecord"))
 
     else:
-
         from lacss.data import dataset_from_coco_annotations
 
         ds_train = dataset_from_coco_annotations(
@@ -465,7 +460,6 @@ def train_data(
     )
 
     if batchsize <= 0:
-
         ds_train = ds_train.unbatch()
 
     return TFDatasetAdapter(ds_train, steps=-1).get_dataset()
@@ -514,14 +508,11 @@ def val_parser(inputs, supervised):
 def val_data(
     datapath, *, supervised=False, cell_type=-1, coco=False, split="val", batch=True
 ):
-
     if not coco:
-
         tfr_name = split + ".tfrecord"
         ds_val = livecell_dataset_from_tfrecord(join(datapath, tfr_name))
 
     else:
-
         from lacss.data import dataset_from_coco_annotations
 
         json_file = f"livecell_coco_{split}.json"
@@ -583,13 +574,10 @@ def test_parser(inputs, supervised):
 
 
 def test_data(datapath, *, supervised=False, cell_type=-1, coco=False):
-
     if not coco:
-
         ds_val = livecell_dataset_from_tfrecord(join(datapath, "test.tfrecord"))
 
     else:
-
         from lacss.data import dataset_from_coco_annotations
 
         ds_test = dataset_from_coco_annotations(

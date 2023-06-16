@@ -115,7 +115,7 @@ class AP(Metric):
 
 class LoiAP(AP):
     def __init__(self, thresholds=[0.5], **kwargs):
-        super().__init__([th * th for th in thresholds], **kwargs)
+        super().__init__([1 / th / th for th in thresholds], **kwargs)
 
     def update(self, preds, gt_locations, **kwargs):
         score = np.asarray(preds["pred_scores"])
@@ -164,12 +164,12 @@ class BoxAP(AP):
     #         score = score[valid_preds]
     #         super().update(iou, score)
 
-    def update(self, preds, gt_boxes, **kwargs):
-        pred_boxes = np.asarray(bboxes_of_patches(preds))
-        gt_boxes = np.asarray(gt_boxes)
-        iou = box_iou_similarity(pred_boxes, gt_boxes)
+    def update(self, preds, gt_bboxes, **kwargs):
+        pred_bboxes = np.asarray(bboxes_of_patches(preds))
+        gt_bboxes = np.asarray(gt_bboxes)
+        iou = box_iou_similarity(pred_bboxes, gt_bboxes)
         score = np.asarray(preds["pred_scores"])
-        gt_is_valid = (gt_boxes >= 0).all(axis=-1)
+        gt_is_valid = (gt_bboxes >= 0).all(axis=-1)
 
         valid_preds = score >= 0
         iou = iou[valid_preds][:, gt_is_valid]

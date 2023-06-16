@@ -32,7 +32,6 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 
 def get_model(cmd, config, seed):
-
     losses = [
         lacss.losses.detection_loss,
         lacss.losses.localization_loss,
@@ -46,7 +45,6 @@ def get_model(cmd, config, seed):
         logging.info(f"Loaded checkpoint {config}")
 
     elif cmd == "transfer":
-
         from lacss.deploy import load_from_pretrained
 
         module, params = load_from_pretrained(config)
@@ -141,7 +139,6 @@ def run_training(
 
     train_iter = trainer.train(train_gen, rng_cols=["droppath"], training=True)
     for epoch in range(init_epoch, n_epochs):
-
         trainer.reset()
         print(f"epoch - {epoch+1}")
 
@@ -153,7 +150,7 @@ def run_training(
         trainer.checkpoint(join(logpath, f"cp-{epoch}"))
 
         val_metrics = [
-            lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
+            lacss.metrics.LoiAP([5, 2, 1]),
             lacss.metrics.BoxAP([0.5, 0.75]),
         ]
 

@@ -1,22 +1,29 @@
-from typing import Dict, Sequence, Tuple, Union
+""" Various functions deals with segmentation pathces
+
+    All functions here takes unbatched input. Use vmap to convert to batched data
+"""
+
+from functools import partial
+from typing import Dict, Optional, Sequence, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from .boxes import box_iou_similarity
-
-""" Various functions deals with segmentation pathces
-    All functions here takes unbatched input. Use vmap to convert to batched data
-"""
+from .image import sub_pixel_samples
 
 
-def gather_patches(features, locations, patch_size: int) -> tuple:
+def gather_patches(
+    features: jnp.ndarray, locations: jnp.ndarray, patch_size: int
+) -> tuple:
     """extract feature patches according to a list of locations
+
     Args:
         features: [H,W,C] standard 2D feature map
         locations: [N, 2] float32, scaled 0..1
         patch_size: int
+
     Returns:
         patches: [N, patch_size, patch_size, C]
         y0: [N]: y0 coordinates of patches
@@ -65,16 +72,14 @@ def _get_patch_data(pred):
 def bboxes_of_patches(
     pred: Union[Sequence, Dict], threshold: float = 0.5
 ) -> jnp.ndarray:
-    """
+    """Compute the instance bboxes from model predictions
+
     Args:
-        pred: either a tuple or a dict containing three arrays:
-            instance_outputs: [n, patch_size, patch_size, 1] float
-            instance_y_coords: [n, patch_size, patch_size] y patch coords
-            instance_x_coords: [n, patch_size, patch_size] x patch coords
-        threshold: float
+        pred: A model prediction dictionary:
+        threshold: for segmentation, default 0.5
+
     Returns:
-        bboxes: [n, 4] int
-        bboox for empty patches are filled with -1
+        bboxes: [n, 4] bboox for empty patches are filled with -1
     """
     patches, yy, xx = _get_patch_data(pred)
 
@@ -105,12 +110,15 @@ def indices_of_patches(
     input_size: Tuple[int, int] = None,
     threshold: float = 0.5,
 ) -> tuple:
-    """
+    """Compute yx coodinates of all segmented instances
+
     Args:
-        pred: model output (unbatched):
+        pred: A model prediction dictionary
         threshold: float
+
     Returns:
-        data for MaskIndices
+        [N, 3] array. The first two columns are y-x coordinates. The third
+            column is a index value for different instances.
     """
     patches, yy, xx = _get_patch_data(pred)
 
@@ -129,14 +137,18 @@ def indices_of_patches(
     return jnp.stack([yy, xx, rowids], axis=-1)
 
 
-def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128, threshold=0.5):
-    """Compute iou between prediction and label.
+def iou_patches_and_labels(
+    pred: dict, labels: jnp.ndarray, BLOCK_SIZE: int = 128, threshold: float = 0.5
+) -> jnp.ndarray:
+    """Compute iou between prediction and ground truth label.
+
     Args:
-        pred: model output (unbatched):
-        labels: image label bg_label = 0
-        threshold: float, default 0.5
+        pred: A model prediction dictionary
+        labels: image label. bg_label = 0
+        threshold: for segmentation. default is 0.5
+
     Returns:
-        [n, m] iou values.
+        [n, m] array of iou values.
     """
     patches, yc, xc = _get_patch_data(pred)
     patches = patches >= threshold
@@ -168,14 +180,21 @@ def iou_patches_and_labels(pred, labels, BLOCK_SIZE=128, threshold=0.5):
     return ious
 
 
-def patches_to_segmentations(pred, input_size, threshold=0.5):
-    """expand patches to the full image size
+def patches_to_segmentations(
+    pred: dict, input_size: Tuple[int, int], threshold: float = 0.5
+) -> jnp.ndarray:
+    """Expand the predicted patches to the full image size.
+    The default model segmentation output shows only a small patch around each instance. This
+    function expand each patch to the size of the orginal image.
+
     Args:
-        pred: model output (unbatched):
-        input_size: tuple(int, int)
-        threshold: float
+        pred: A model prediction dictionary
+        input_size: shape of the input image. Tuple of H, W
+        threshold: for segmentation. Default is 0.5.
+
     Returns:
-        segmentations: [n, height, width]
+        segmentations: [n, height, width] n full0-size segmenatation masks.
+
     """
     patches, yc, xc = _get_patch_data(pred)
     n_patches, patch_size, _ = yc.shape
@@ -188,16 +207,23 @@ def patches_to_segmentations(pred, input_size, threshold=0.5):
 
 
 def patches_to_label(
-    pred, input_size, mask=None, score_threshold=0.5, threshold=0.5, min_cell_area=0.0
-):
+    pred: dict,
+    input_size: Tuple[int, int],
+    mask: Optional[jnp.ndarray] = None,
+    score_threshold: float = 0.5,
+    threshold: float = 0.5,
+    min_cell_area: int = 0,
+) -> jnp.ndarray:
     """convert patch output to the image label
+
     Args:
-        pred: model output (unbatched):
-        input_size: a int tuple of [heght, width]
-        mask: boolean indicators of which cell to display, default is None (all cells)
-        score_threshold: otional, min_score to be plotted, default .5
-        threshold: optional, output threshold,  default .5
-        min_cell_area: optional min cell area to be plotted, default 0.
+        pred: A model prediction dictionary
+        input_size: shape of the input image. Tuple of H, W
+        mask: boolean indicators masking out unwanted instances. Default is None (all cells)
+        score_threshold: otional, min_score to be included. Default is .5.
+        threshold: segmentation threshold.  Default .5
+        min_cell_area: optional minimal cell area to be plotted, default 0.
+
     Returns:
         label: [height, width]
     """
@@ -224,14 +250,17 @@ def patches_to_label(
     return label
 
 
-def ious_of_patches_from_same_image(pred, threshold=0.5):
-    """
+def ious_of_patches_from_same_image(pred: dict, threshold: float = 0.5) -> jnp.ndarray:
+    """Compute IOUs among instances from the same image. Most likely used for nms.
+
     Args:
-        pred: model output without batch dim
-        threshold: output threshold, default to 0.5
+        pred: A model prediction dictionary
+        threshold: Segmentation threshold. Default is 0.5.
+
     Returns:
-        ious: upper triagle matrix. mask ious of cells indicated by yc and xc
+        ious: IOUs as an upper triagle matrix.
     """
+
     bboxes = bboxes_of_patches(pred)
     box_ious = box_iou_similarity(bboxes, bboxes)
     box_ious = np.triu(box_ious, 1)
@@ -272,14 +301,17 @@ def ious_of_patches_from_same_image(pred, threshold=0.5):
     return mask_ious
 
 
-def non_max_suppress_predictions(pred, iou_threshold=0.6):
-    """
+def non_max_suppress_predictions(pred: dict, iou_threshold: float = 0.6) -> jnp.ndarray:
+    """Perform nms on the model prediction based on mask IOU
+
     Args:
-        pred: model output without batch dim
+        pred: A model prediction dictionary
         ious_threshold: default 0.6
+
     Returns:
         mask: boolean mask of cells not supressed
     """
+
     ious = ious_of_patches_from_same_image(pred)
     mask = ious > iou_threshold
 
@@ -291,3 +323,51 @@ def non_max_suppress_predictions(pred, iou_threshold=0.6):
         mask = mask & ~suppressed[:, None]
 
     return ~mask.any(axis=0)
+
+
+_sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
+
+
+def rescale_patches(
+    pred: dict, scale: float
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Rescale/resize instance outputs in a sub-pixel accurate way.
+    If the input image was rescaled, this function take care of rescaling the predictions
+    to the orginal coodinates.
+
+    Args:
+        pred: A model prediction dictionary
+        scale: The scaling value. The function does not take a noop shortcut even if scale is 1.
+
+    Returns: A tuple of three arrays
+        patches: a 3D array of the rescaled segmentation patches. The array shape should be different from
+            the orignal patches in model predition.
+        yy: The y-coordinates of the patches in mesh-grid format
+        xx: The x-coordinates of the patches in mesh-grid format
+    """
+
+    new_y0 = (pred["instance_yc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
+    new_x0 = (pred["instance_xc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
+    patch = pred["instance_output"]
+    ps = round(patch.shape[-1] * scale)
+
+    yy, xx = jnp.mgrid[:ps, :ps]
+    yy = (
+        jnp.floor(new_y0[:, None, None]).astype(int) + yy
+    )  # center indexing in new scale
+    xx = (
+        jnp.floor(new_x0[:, None, None]).astype(int) + xx
+    )  # center indexing in new scale
+
+    rel_yy = (yy + 0.5) / scale - pred["instance_yc"][
+        :, :1, :1
+    ]  # edge indexing in old scale
+    rel_xx = (xx + 0.5) / scale - pred["instance_xc"][
+        :, :1, :1
+    ]  # edge indexing in old scale
+    new_patch = _sampling_op(
+        patch,
+        np.stack([rel_yy, rel_xx], axis=-1),
+    )
+
+    return new_patch, yy, xx

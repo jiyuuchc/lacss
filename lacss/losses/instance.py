@@ -178,7 +178,9 @@ def supervised_instance_loss(preds, labels, **kwargs):
 
     else:
         y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
-        gt_segs = labels["gt_segmentations"]
+        gt_segs = labels["gt_masks"]
+        if len(gt_segs.shape) == 4:
+            gt_segs = gt_segs.squeeze(-1)
         seg_size = gt_segs.shape[1]
 
         hs = (y1 - y0) / seg_size
