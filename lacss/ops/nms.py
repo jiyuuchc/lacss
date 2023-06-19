@@ -77,48 +77,27 @@ def _suppression_loop_body(inputs):
     return boxes, num_selected
 
 
-def sorted_non_max_suppression(
+def _nms(
     scores: ArrayLike,
     boxes: ArrayLike,
     max_output_size: int,
     threshold: float = 0.5,
     min_score: float = 0,
-) -> Tuple[Array, Array]:
-    """non-maximum suppression for either bboxes or points.
-
-    Assumption:
-
-        * The boxes are sorted by scores
-
-    The overal design of the algorithm is to handle boxes tile-by-tile:
-
-    Args:
-        scores: [N]
-        boxes: [N, C]  C=4 for boxes, C=2 for locations
-        max_output_size: a positive scalar integer
-        threshold: a scalar float, can be negative
-        min_score: min score to be selected, default 0
-
-    Returns:
-        nms_scores: [M].  M = max_output_size
-        nms_proposals: [M, C].
-    """
-
+) -> Array:
     # preprocessing
     c = boxes.shape[-1]
     if c != 2 and c != 4:
         raise ValueError(f"boxes should be Nx4 or Nx2, got Nx{c}")
+
     # if similarity_func is None:
     #     similarity_func = box_iou_similarity if c == 4 else distance_similarity
-
-    if max_output_size <= 0:
-        max_output_size = boxes.shape[0]
 
     # pad_to_multiply_of(tile_size)
     num_boxes = boxes.shape[0]
     pad = NMS_TILE_SIZE - 1 - (num_boxes - 1) % NMS_TILE_SIZE
     boxes = jnp.pad(boxes, [[0, pad], [0, 0]], constant_values=-1)
     scores = jnp.pad(scores, [[0, pad]], constant_values=-1)
+    orig_num_boxes = num_boxes
     num_boxes += pad
     boxes = boxes.reshape(-1, NMS_TILE_SIZE, c)
 
@@ -164,16 +143,65 @@ def sorted_non_max_suppression(
     # reshape boxes back
     boxes = boxes.reshape(-1, c)
 
-    # remove suppressed boxes
-    selected = jnp.argwhere(
-        (boxes >= 0).any(axis=-1), size=max_output_size, fill_value=-1
+    # find valid boxes
+    selected = (boxes >= 0).any(axis=-1)
+    selected &= scores >= min_score
+
+    # remove padding
+    selected = selected[:orig_num_boxes]
+
+    return selected
+
+
+def sorted_non_max_suppression(
+    scores: ArrayLike,
+    boxes: ArrayLike,
+    max_output_size: int,
+    threshold: float = 0.5,
+    min_score: float = 0,
+    return_selection: bool = False,
+) -> Sequence[Array]:
+    """non-maximum suppression for either bboxes or points.
+
+    Assumption:
+
+        * The boxes are sorted by scores
+
+    The overal design of the algorithm is to handle boxes tile-by-tile:
+
+    Args:
+        scores: [N]
+        boxes: [N, C]  C=4 for boxes, C=2 for locations
+        max_output_size: a positive scalar integer
+        threshold: a scalar float, can be negative
+        min_score: min score to be selected, default 0
+        return_selection: whether also return the boolean indicator
+
+    Returns:
+        nms_scores: [M].  M = max_output_size
+        nms_proposals: [M, C].
+        selection: [N] a boolean indicator of selection status of original input
+    """
+    if max_output_size <= 0:
+        max_output_size = boxes.shape[0]
+
+    selected = _nms(
+        scores,
+        boxes,
+        max_output_size,
+        threshold,
+        min_score,
+    )
+
+    # find index of selected
+    idx_of_selected = jnp.argwhere(
+        selected, size=max_output_size, fill_value=-1
     ).squeeze(-1)
-    scores = jnp.where(selected >= 0, scores[selected], -1.0)
-    boxes = jnp.where(selected[:, None] >= 0, boxes[selected, :], -1.0)
 
-    # remove low score
-    selected = scores >= min_score
-    scores = jnp.where(selected, scores, -1)
-    boxes = jnp.where(selected[:, None], boxes, -1)
+    scores = jnp.where(idx_of_selected >= 0, scores[idx_of_selected], -1.0)
+    boxes = jnp.where(idx_of_selected[:, None] >= 0, boxes[idx_of_selected], -1.0)
 
-    return scores, boxes
+    if return_selection:
+        return scores, boxes, selected
+    else:
+        return scores, boxes

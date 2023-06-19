@@ -37,7 +37,7 @@ def self_supervised_edge_loss(preds, inputs, **kwargs):
     instance_output = preds["instance_output"]
     instance_yc = preds["instance_yc"]
     instance_xc = preds["instance_xc"]
-    height, width, _ = inputs["image"].shape
+    height, width = inputs["image"].shape[:2]
     instance_edge = _compute_edge(
         instance_output, instance_yc, instance_xc, height, width
     )
@@ -56,8 +56,8 @@ def self_supervised_segmentation_loss(
 ):
     """Image segmentation consistenct loss for the collaboraor model"""
 
-    height, width, _ = inputs["image"].shape
-    _, ps, _ = preds["instance_yc"].shape
+    height, width = inputs["image"].shape[:2]
+    ps = preds["instance_yc"].shape[-1]
 
     offset_sigma = jnp.asarray(offset_sigma).reshape(-1)
     offset_scale = jnp.asarray(offset_scale).reshape(-1)
@@ -72,7 +72,7 @@ def self_supervised_segmentation_loss(
             and "cls_id" in inputs
             and inputs["cls_id"] is not None
         ):
-            c = inputs["category"].astype(int).squeeze()
+            c = inputs["cls_id"].astype(int).squeeze()
         else:
             c = 0
 
@@ -109,7 +109,7 @@ def self_supervised_segmentation_loss(
 def aux_size_loss(preds, inputs, *, weight=0.01, **kwargs):
     """Auxillary loss to prevent model collapse"""
 
-    height, width, _ = inputs["image"].shape
+    height, width = inputs["image"].shape[:2]
 
     valid_locs = (
         (preds["instance_yc"] >= 0)

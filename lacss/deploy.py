@@ -15,7 +15,7 @@ import jax.numpy as jnp
 from flax.core.frozen_dict import freeze, unfreeze
 
 import lacss.modules
-from lacss.ops import patches_to_label
+from lacss.ops import patches_to_label, sorted_non_max_suppression
 from lacss.train import Inputs
 from lacss.types import *
 
@@ -27,7 +27,54 @@ model_urls: Mapping[str, str] = {
 }
 
 
+def _remove_edge_instances(
+    pred: dict,
+    img_shape: Tuple[int, int],
+    remove_top: bool = True,
+    remove_bottom: bool = True,
+    remove_left: bool = True,
+    remove_right: bool = True,
+    threshold: float = 0.5,
+    min_border_pixel: int = 1,
+):
+    h, w = img_shape
+    segs = pred["instance_output"] >= threshold
+    yc = pred["instance_yc"]
+    xc = pred["instance_xc"]
+
+    removal = jnp.zeros([len(segs)], dtype=bool)
+    if remove_top:
+        is_top = jnp.count_nonzero((yc <= 0) & segs, axis=(1, 2)) >= min_border_pixel
+        removal |= is_top
+    if remove_bottom:
+        is_bottom = (
+            jnp.count_nonzero((yc >= h - 1) & segs, axis=(1, 2)) >= min_border_pixel
+        )
+        removal |= is_bottom
+    if remove_left:
+        is_left = jnp.count_nonzero((xc <= 0) & segs, axis=(1, 2)) >= min_border_pixel
+        removal |= is_left
+    if remove_right:
+        is_right = (
+            jnp.count_nonzero((xc >= w - 1) & segs, axis=(1, 2)) >= min_border_pixel
+        )
+        removal |= is_right
+
+    removal = removal.reshape(pred["instance_mask"].shape)
+    pred["instance_mask"] &= ~removal
+
+    return pred
+
+
 def load_from_pretrained(pretrained):
+    """Load a saved model.
+
+    Args:
+        pretrained: The url to the saved model.
+
+    Returns: A tuple (module, parameters) representing the model.
+    """
+
     if os.path.isdir(pretrained):
         from lacss.train import LacssTrainer
 
@@ -156,6 +203,15 @@ class Predictor:
                 _ = self.predict(x)
 
     def __call__(self, inputs, **kwargs):
+        """Do inference.
+
+        Args:
+            inputs: Model inputs.
+
+        Returns:
+            A dict of LACSS model outputs.
+        """
+
         inputs_obj = Inputs.from_value(inputs)
 
         return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
@@ -201,7 +257,7 @@ class Predictor:
         instance_mask = preds["instance_mask"].squeeze(axis=(1, 2))
 
         if min_area > 0:
-            areas = np.count_nonzero(preds["instance_logit"] > 0, axis=(1, 2))
+            areas = np.count_nonzero(preds["instance_output"] > 0.5, axis=(1, 2))
             instance_mask &= areas > min_area
 
         if remove_out_of_bound:
@@ -237,6 +293,143 @@ class Predictor:
             input_size=image.shape[:2],
             score_threshold=score_threshold,
         )
+
+    def predict_on_large_image(
+        self,
+        image: ArrayLike,
+        gs: int,
+        ss: int,
+        output_label: bool = False,
+        *,
+        scaling: float = 1,
+        min_area: int = 0,
+        nms_iou: float = 0.3,
+        segmentation_threshold: float = 0.5,
+        score_threshold: float = 0.5,
+        **kwargs,
+    ) -> Union[dict, ArrayLike]:
+        """Make prediction on very large image by dividing into a grid.
+
+        Direct model prediction on large image may cause out-of-memory error. This
+        method divided the large image to smaller grid and then stitch the results
+        to form the complete prediction.
+
+        Args:
+            image: An image with (H, W, C) format.
+            gs: An int value. Grid size of the computation.
+            ss: An int value of stepping size. Must be small than gs to produce valid
+                results.
+            output_label: Whether to output full model prediction or segmentation
+                label.
+
+        Keyword Args:
+            scaling: A image scaling factor.
+            nms_iou: Optional iou threshold for the non-max-suppression post-processing.
+                Default is 0, which disable non-max-suppression.
+            min_area: Optional minimum area for the instance to be included in the results.
+                Default is 0.
+            segmentation_threshold: Default is 0.5.
+
+        Returns: Segmention label if output_label is True, otherwise a dict of full model
+            predictions.
+        """
+
+        get_padding = lambda a, gs, ss: (a - 1) // ss * ss + gs - a
+
+        h, w = image.shape[:2]
+        padded_img = np.pad(
+            image, [[0, get_padding(h, gs, ss)], [0, get_padding(w, gs, ss)], [0, 0]]
+        )
+
+        preds = []
+        for y0 in range(0, h, ss):
+            for x0 in range(0, w, ss):
+                logging.info(f"Processing grid {y0}-{x0}")
+                pred = self.predict(
+                    padded_img[y0 : y0 + gs, x0 : x0 + gs],
+                    scaling=scaling,
+                    min_area=min_area,
+                    **kwargs,
+                )
+                pred = _remove_edge_instances(
+                    pred,
+                    [gs, gs],
+                    remove_top=y0 != 0,
+                    remove_bottom=(y0 + gs) != h,
+                    remove_left=x0 != 0,
+                    remove_right=(x0 + gs) != w,
+                )
+
+                logging.info(f"Transfer result...")
+                boolean_mask = np.array(pred["instance_mask"].squeeze((1, 2)))
+                pred = dict(
+                    pred_scores=np.array(pred["pred_scores"]),
+                    pred_locations=np.array(
+                        pred["pred_locations"] + jnp.asarray([y0, x0])
+                    ),
+                    pred_bboxes=np.array(
+                        pred["pred_bboxes"] + jnp.asarray([y0, x0, y0, x0])
+                    ),
+                    pred_masks=np.array(
+                        pred["instance_output"] >= segmentation_threshold
+                    ),
+                    pred_masks_y0=np.array(pred["instance_yc"][:, 0, 0] + y0),
+                    pred_masks_x0=np.array(pred["instance_xc"][:, 0, 0] + x0),
+                )
+                pred = jax.tree_util.tree_map(lambda x: x[boolean_mask], pred)
+                preds.append(pred)
+
+        logging.info(f"Postprocessing...")
+        preds = jax.tree_util.tree_map(lambda *x: np.concatenate(x), *preds)
+        valid_locs = (
+            (preds["pred_locations"] > 0).all(axis=1)
+            & (preds["pred_locations"][:, 0] < h)
+            & (preds["pred_locations"][:, 1] < w)
+        )
+        valid_locs = valid_locs & (preds["pred_scores"] >= score_threshold)
+        # valid_locs = valid_locs & (np.count_nonzero(preds["pred_masks"]) >= min_area)
+
+        preds = jax.tree_util.tree_map(lambda x: x[valid_locs], preds)
+
+        # sort based on scores
+        asort = np.argsort(preds["pred_scores"])[::-1]
+        preds = jax.tree_util.tree_map(lambda x: x[asort], preds)
+
+        # nms
+        if nms_iou > 0:
+            logging.info(f"nms...")
+            scores = preds["pred_scores"]
+            boxes = preds["pred_bboxes"]
+            _, _, selections = sorted_non_max_suppression(
+                scores,
+                boxes,
+                -1,
+                threshold=nms_iou,
+                return_selection=True,
+            )
+
+            preds = jax.tree_util.tree_map(lambda x: x[selections], preds)
+
+        if output_label:
+            logging.info(f"Generating label...")
+
+            ps = preds["pred_masks"].shape[-1]
+
+            label = np.zeros([h + ps, w + ps], dtype=int)
+            cnt = len(preds["pred_masks"])
+            for mask, y0, x0 in zip(
+                preds["pred_masks"][::-1],
+                preds["pred_masks_y0"][::-1],
+                preds["pred_masks_x0"][::-1],
+            ):
+                yc, xc = np.where(mask)
+                label[(yc + y0 + ps // 2, xc + x0 + ps // 2)] = cnt
+                cnt -= 1
+
+            return label[ps // 2 : ps // 2 + h, ps // 2 : ps // 2 + w]
+
+        else:
+            return preds
 
     @property
     def module(self) -> nn.Module:

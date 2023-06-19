@@ -70,7 +70,7 @@ class Lacss(nn.Module):
         elif ch == 2:
             image = jnp.concatenate([image, jnp.zeros_like(image[..., :1])], axis=-1)
 
-        assert image.shape[-1] == 3
+        # assert image.shape[-1] == 3
 
         # ensure input size is multiple of 32
         height = ((orig_height - 1) // 32 + 1) * 32

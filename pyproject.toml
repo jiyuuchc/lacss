@@ -27,6 +27,9 @@ pytest = "^7.2.2"
 jupyterlab = "^3.6.1"
 imagecodecs = "^2023.3.16"
 
+[tool.poetry.group.docs]
+optional = true
+
 [tool.poetry.group.docs.dependencies]
 mkdocs = "^1.4.3"
 mkdocstrings = {extras = ["python"], version = "^0.22.0"}

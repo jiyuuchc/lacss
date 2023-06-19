@@ -20,7 +20,7 @@ python <project_dir>/experiments/livecell/semisupervised.py <model_config_file> 
 
 If starting from an existing transfer model:
 ```
-python <project_dir>/experiments/livecell/semisupervised.py <model_config_file> <path-to-transfer-model> --datapath=<data_dir> --logpath=<log_dir> --warmup-steps=0
+python <project_dir>/experiments/livecell/semisupervised.py <model_config_file> --transfer=<path-to-transfer-model> --datapath=<data_dir> --logpath=<log_dir> --warmup-steps=0
 ```
 
 #### Testing: 

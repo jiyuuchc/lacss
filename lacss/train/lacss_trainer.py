@@ -84,7 +84,7 @@ def collaborator_border_loss(preds, labels, inputs):
 
 def mc_loss(preds, labels, inputs):
     if labels is None:
-        label = {}
+        labels = {}
 
     if "gt_labels" in labels or "gt_masks" in labels:
         return 0.0
