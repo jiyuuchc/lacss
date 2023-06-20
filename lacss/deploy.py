@@ -12,7 +12,6 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
@@ -22,6 +21,8 @@ from lacss.ops import patches_to_label
 from lacss.train import Inputs
 
 _cached_partial = lru_cache(partial)
+
+Image = tp.Any
 
 
 def load_from_pretrained(pretrained):
@@ -50,12 +51,10 @@ def load_from_pretrained(pretrained):
         thingy = pickle.loads(bytes)
 
         if isinstance(thingy, lacss.train.Trainer):
-
             module = thingy.model
             params = thingy.params
 
             if not isinstance(module, lacss.modules.Lacss):
-
                 module = module.bind(dict(params=params))
                 module, params = module.lacss.unbind()
                 params = params["params"]
@@ -63,11 +62,9 @@ def load_from_pretrained(pretrained):
             cfg = module
 
         else:
-
             cfg, params = thingy
 
     if "params" in params and len(params) == 1:
-
         params = params["params"]
 
     # making a round-trip of module->cfg->module to icnrease backward-compatibility
@@ -87,11 +84,9 @@ def _predict(apply_fn, params, image):
 
 class Predictor:
     def __init__(self, url, precompile_shape=None):
-
         self.model = load_from_pretrained(url)
 
         if precompile_shape is not None:
-
             logging.info("Prcompile the predictor for image shape {precompile_shape}.")
             logging.info("This will take several minutes.")
 
@@ -104,12 +99,33 @@ class Predictor:
                 _ = self.predict(x)
 
     def __call__(self, inputs, **kwargs):
-
         inputs_obj = Inputs.from_value(inputs)
 
         return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
 
-    def predict(self, image, remove_out_of_bound: bool = False, **kwargs):
+    def predict(
+        self,
+        image: Image,
+        min_area: float = 0,
+        remove_out_of_bound: bool = False,
+        **kwargs,
+    ):
+        """Predict segmentation.
+
+        Args:
+            image: ndarray of (h,w,c) format. Value of c must be 1-3
+            min_area: Minimum area of a valid prediction. Default is 0
+            remove_out_of_bound: Whether to remove out-of-bound predictions. Default is False.
+
+        Returns:
+            Raw model prediction as a dict. Most important keys are
+
+            instance_output: Segmentation instances. (N, S, S) array
+            instance_yc: The meshgrid y-coordinates of the instances. (N, S, S) array
+            instance_xc: The meshgrid x-coordinates of the instances. (N, S, S) array
+            pred_scores: The prediction scores of each instance. (N) array. -1 indicating invalid predictions.
+            pred_locations: The prediction centroids of each instances. (N, 2) array
+        """
 
         module, params = self.model
 
@@ -119,6 +135,14 @@ class Predictor:
             apply_fn = module.apply
 
         preds = _predict(apply_fn, params, image)
+
+        if min_area > 0:
+            areas = jnp.count_nonzero(preds["instance_logit"] > 0, axis=(1, 2))
+            preds["pred_scores"] = jnp.where(
+                areas > min_area,
+                preds["pred_scores"],
+                -1,
+            )
 
         if remove_out_of_bound:
             pred_locations = preds["pred_locations"]
@@ -140,7 +164,6 @@ class Predictor:
         return preds
 
     def predict_label(self, image, **kwargs):
-
         preds = self.predict(image, **kwargs)
 
         return patches_to_label(preds, input_size=image.shape[:2])
