@@ -24,6 +24,10 @@ _cached_partial = lru_cache(partial)
 
 Image = tp.Any
 
+model_urls = {
+    "livecell": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/439e524f-e4e9-4f97-9f38-c22cb85adbd1/file_downloaded",
+    "tissuenet": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/1e0a839d-f564-4ee0-a4f3-34792df7c613/file_downloaded"
+}
 
 def load_from_pretrained(pretrained):
     if os.path.isdir(pretrained):
@@ -40,15 +44,21 @@ def load_from_pretrained(pretrained):
             params = pickle.load(f)
 
     else:
-        import urllib
-
+        
         if os.path.isfile(pretrained):
-            pretrained = "file://" + urllib.request.pathname2url(
-                os.path.abspath(pretrained)
-            )
 
-        bytes = urllib.request.urlopen(pretrained).read()
-        thingy = pickle.loads(bytes)
+            with open(pretrained, "rb") as f:
+                thingy = pickle.load(f)
+
+        else:
+            from urllib.request import Request, urlopen
+            import io
+    
+            headers = {"User-Agent": "Wget/1.13.4 (linux-gnu)"}
+            req = Request(url=pretrained, headers=headers)
+
+            bytes = urlopen(req).read()
+            thingy = pickle.loads(bytes)
 
         if isinstance(thingy, lacss.train.Trainer):
             module = thingy.model
@@ -62,9 +72,11 @@ def load_from_pretrained(pretrained):
             cfg = module
 
         else:
+
             cfg, params = thingy
 
     if "params" in params and len(params) == 1:
+
         params = params["params"]
 
     # making a round-trip of module->cfg->module to icnrease backward-compatibility
