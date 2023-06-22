@@ -1,3 +1,7 @@
+"""
+metrics classes for computing coco-style AP metrics.
+"""
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,8 +11,6 @@ from ..train.metric import Metric
 from ..utils import _get_name
 
 """
-metrics classes for computing coco-style AP metrics.
-
 BE CAREFUL making changes here. Very easy to make a mistake and resulting mismatch with
 coco algorithm. Be sure to validate against coco-evaluation before commit changes.
 """
@@ -16,6 +18,7 @@ coco algorithm. Be sure to validate against coco-evaluation before commit change
 
 def _unique_location_matching(similarity_matrix, threshold):
     """Perform matching based on similarity_matrix.
+
     This is different from the matchre functions in ops/*.py in that the matching
     will be unique: each column will match at most one row
     Args:
@@ -61,12 +64,11 @@ def np_compute_ap(similarity_matrix, thresholds):
 
 class AP(Metric):
     """compute AP based on similarity_matrix and score.
-    These are numpy functions
     Usage:
       m = MeanAP([threshold_1, threshold_2,...])
-      m.update_states(similarity_matrix, scores)
+      m.update(similarity_matrix, scores)
       ...
-      m.result()
+      m.compute()
     """
 
     def __init__(self, thresholds=[0.5], coco_style=False, name=None):
@@ -114,6 +116,15 @@ class AP(Metric):
 
 
 class LoiAP(AP):
+    """Compute AP of LACSS model based on location matching
+
+    Usage:
+      m = LoiAP([distance_threshold_1, distance_threshold_2,...])
+      m.update(model_predication, gt_point_labels)
+      ...
+      m.compute()
+    """
+
     def __init__(self, thresholds=[0.5], **kwargs):
         super().__init__([1 / th / th for th in thresholds], **kwargs)
 
@@ -132,37 +143,16 @@ class LoiAP(AP):
 
         super().update(dist2, score)
 
-    # def update(self, preds, gt_locations, **kwargs):
-    #     scores = preds["pred_scores"]
-    #     pred_locations = preds["pred_locations"]
-    #     n_batch = gt_locations.shape[0]
-    #     for k in range(n_batch):
-    #         score = scores[k]
-    #         pred = pred_locations[k]
-    #         gt = gt_locations[k]
-    #         row_mask = score > 0
-    #         col_mask = (gt >= 0).all(axis=-1)
-    #         dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
-
-    #         dist2 = np.asarray(1.0 / dist2)
-    #         dist2 = dist2[row_mask][:, col_mask]
-    #         score = np.asarray(score)[row_mask]
-
-    #         super().update(dist2, score)
-
 
 class BoxAP(AP):
-    # def update(self, preds, gt_boxes, **kwargs):
-    #     pred_boxes = jax.vmap(bboxes_of_patches)(preds)
-    #     box_ious = np.asarray(box_iou_similarity(pred_boxes, gt_boxes))
-    #     scores = np.asarray(preds["pred_scores"])
-    #     valid_gt_boxes = np.asarray((gt_boxes >= 0).all(axis=-1))
+    """Compute bounding-box AP
 
-    #     for score, iou, gt_is_valid in zip(scores, box_ious, valid_gt_boxes):
-    #         valid_preds = score >= 0
-    #         iou = iou[valid_preds][:, gt_is_valid]
-    #         score = score[valid_preds]
-    #         super().update(iou, score)
+    Usage:
+      m = BoxAP([iou_threshold_1, iou_threshold_2,...])
+      m.update(model_predication, gt_bboxes)
+      ...
+      m.compute()
+    """
 
     def update(self, preds, gt_bboxes, **kwargs):
         pred_bboxes = np.asarray(bboxes_of_patches(preds))
@@ -175,24 +165,3 @@ class BoxAP(AP):
         iou = iou[valid_preds][:, gt_is_valid]
         score = score[valid_preds]
         super().update(iou, score)
-
-
-class MaskAP(AP):
-    def update(self, pred, gt_label, **kwargs):
-        scores = np.asarray(pred["pred_scores"])
-        ious = np.asarray(iou_patches_and_labels(pred, gt_label))
-
-        valid = scores >= 0
-        valid_scores = scores[valid]
-        valid_ious = ious[valid]
-        super().update(valid_ious, valid_scores)
-
-    # def update(self, preds, gt_labels, **kwargs):
-
-    #     for k in range(len(gt_labels)):
-    #         self._update(
-    #             *jax.tree_util.tree_map(
-    #                 lambda v: v[k],
-    #                 (preds, gt_labels),
-    #             )
-    #         )

@@ -83,7 +83,7 @@ def sorted_non_max_suppression(
     threshold: float = 0.5,
     min_score: float = 0,
 ):
-    """non-maximum suppression.
+    """non-maximum suppression for either bboxes or points.
     Assumption:
         * The boxes are sorted by scores
     The overal design of the algorithm is to handle boxes tile-by-tile:

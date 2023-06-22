@@ -1,3 +1,9 @@
+""" Ops on bounding-boxes
+
+All functions here are degisned to work as either a numpy op or a jax op depending on
+the data type of the input.
+"""
+
 import jax
 import jax.numpy as jnp
 import numpy as np

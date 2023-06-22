@@ -4,7 +4,7 @@ jnp = jax.numpy
 
 
 def locations_to_labels(locations, target_shape, threshold=1.5):
-    """Generate labels as score regression targets
+    """Generate labels as LPN regression targets
     Args:
         locations: [N, 2] float32 true location values. scaled 0..1, masking out invalid with -1
         target_shape: (H, W)  int
@@ -42,7 +42,7 @@ def locations_to_labels(locations, target_shape, threshold=1.5):
 
 
 def distance_similarity(pred_locations, gt_locations):
-    """
+    """Compute distance similarity matrix
     pairwise similarity = 1 / distance ^2
     Args:
       pred_locations: [N, 2] use -1 to mask out invalid locations
@@ -64,11 +64,11 @@ def distance_similarity(pred_locations, gt_locations):
 
 
 def location_matching(pred_locations, gt_locations, threshold):
-    """
+    """Match predicted location to gt locations
     Args:
       pred_locations:r [N, 2]
       gt_locations: [K, 2]
-      threshold: float
+      threshold: float. Maximum distance to be matched
     Returns:
       matches: [N], indices of the matches location in gt list
       indicators: [N] bool
