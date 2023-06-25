@@ -31,7 +31,7 @@ def sorbel_edges(image):
         in_axes=[None, 0],
     )
 
-    image = jnp.pad(image, [[0, 0], [1, 1], [1, 1]], mode="reflect")
+    image = jnp.pad(image, [[0, 0], [1, 1], [1, 1]])
     output = sorbel_filter(image, kernels)
 
     return output

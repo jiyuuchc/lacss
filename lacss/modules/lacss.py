@@ -116,7 +116,7 @@ class LacssWithHelper(nn.Module):
     aux_fg_cfg: tp.Optional[dict] = None
 
     def setup(self):
-        self._lacss = Lacss(**self.cfg)
+        self._lacss = Lacss.from_config(self.cfg)
         if self.aux_edge_cfg is not None:
             self._aux_edge_module = AuxInstanceEdge(**self.aux_edge_cfg)
         if self.aux_fg_cfg is not None:

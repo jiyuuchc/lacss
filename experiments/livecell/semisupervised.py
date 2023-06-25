@@ -6,12 +6,10 @@ tf.config.set_visible_devices([], "GPU")
 
 import dataclasses
 import itertools
-import json
-import logging
 import os
 import pickle
 from functools import partial
-from logging.config import valid_ident
+
 from os.path import join
 
 import flax.linen as nn
@@ -19,9 +17,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 from jax.config import config
+from pathlib import Path
 from tqdm import tqdm
 
 import lacss
@@ -50,11 +50,10 @@ class FgAcc:
         pred_masks = preds["fg_pred"]
         pred_masks = (pred_masks >= 0).astype(int)
         gt_masks = (gt_labels > 0).astype(int)
-        acc = (
-            jnp.count_nonzero(pred_masks == gt_masks, axis=(1, 2)) / pred_masks[0].size
-        )
-        self.acc += jnp.sum(acc)
-        self.cnts += gt_masks.shape[0]
+        acc = (pred_masks == gt_masks).mean()        
+
+        self.acc += acc
+        self.cnts += 1
 
     def compute(self):
         return self.acc / self.cnts
@@ -75,9 +74,9 @@ net_configs = (
 
 @app.command()
 def run_training(
-    datapath: str = "../../livecell_dataset/",
     transfer: str = "../../cnsp4.pkl",
-    logpath: str = ".",
+    datapath: Path = Path("../../livecell_dataset/"),
+    logpath: Path = Path("."),
     seed: int = 42,
     batchsize: int = 1,
     n_epochs: int = 15,
@@ -106,7 +105,7 @@ def run_training(
         pass
 
     train_data = data.train_data(datapath, n_buckets, batchsize, cell_type=cell_type)
-    val_data = data.val_data(datapath, cell_type=cell_type)
+    val_data = data.val_data(datapath, cell_type=cell_type, batch=False)
 
     # model
 
@@ -120,13 +119,13 @@ def run_training(
 
             if isinstance(lacss_cfg, nn.Module):
                 lacss_cfg = dataclasses.asdict(lacss_cfg)
+            lacss_cfg = unfreeze(lacss_cfg)
+
             if "params" in params:
                 params = params["params"]
-
-            lacss_cfg = unfreeze(lacss_cfg)
             params = freeze(params)
 
-            lacss_cfg["backbone_cfg"]["drop_path_rate"] = dp_rate
+            lacss_cfg["backbone"]["drop_path_rate"] = dp_rate
 
             cfg = dict(
                 cfg=lacss_cfg,
@@ -158,8 +157,8 @@ def run_training(
             new_params.update(dict(_lacss=params))
             trainer.state = trainer.state.replace(params=freeze(new_params))
 
-    file_writer = tf.summary.create_file_writer(join(logpath, "train"))
-    to_label = jax.vmap(lacss.ops.patches_to_label, in_axes=(0, None))
+    file_writer = tf.summary.create_file_writer(str(logpath / "train"))
+    to_label = lacss.ops.patches_to_label
 
     def _epoch_end(epoch, logs=None, eval=False):
         print(f"epoch - {epoch}")
@@ -170,7 +169,8 @@ def run_training(
             for k, v in logs.items():
                 tf.summary.scalar(k, v, epoch)
 
-        trainer.save_model(join(logpath, f"weight-{epoch}.pkl"), "_lacss")
+        # trainer.save_model(logpath/f"weight-{epoch}.pkl", "_lacss")
+        trainer.checkpoint(logpath/f"cp-{epoch}")
         trainer.reset()
 
         if eval:
@@ -179,26 +179,26 @@ def run_training(
                 lacss.metrics.BoxAP([0.5, 0.75]),
                 FgAcc(),
             ]
-            var_logs = trainer.test_and_compute(val_data, val_metrics)
+            var_logs = trainer.test_and_compute(val_data, val_metrics, strategy=lacss.train.JIT)
             for k, v in var_logs.items():
                 print(f"{k}: {v}")
 
-        for c in range(8) if cell_type == -1 else [cell_type]:
-            data = itertools.dropwhile(lambda x: x[0]["category"] != c, val_data())
-            inputs, label = next(data)
-            preds = trainer(inputs)
-            label = to_label(preds, inputs["image"].shape[1:3])
-            output = jnp.concatenate(
-                [
-                    inputs["image"],
-                    label[..., None] / label.max(),
-                    jax.nn.sigmoid(preds["fg_pred"][..., None]),
-                ],
-                axis=2,
-            )
-
-            with file_writer.as_default():
-                tf.summary.image(f"img_{c}", output, epoch)
+        # for c in range(8) if cell_type == -1 else [cell_type]:
+            # data = itertools.dropwhile(lambda x: x["category"] != c, val_data())
+            # inputs, label = next(data)
+            # preds = trainer(inputs, strategy=lacss.train.JIT)
+            # label = to_label(preds, inputs["image"].shape[:2])
+            # output = jnp.concatenate(
+                # [
+                    # inputs["image"][None,...]
+                    # label[None,...,None] / label.max(),
+                    # jax.nn.sigmoid(preds["fg_pred"][None, ..., None]),
+                # ],
+                # axis=2,
+            # )
+# 
+            # with file_writer.as_default():
+                # tf.summary.image(f"img_{c}", output, epoch)
 
     epoch = init_epoch
 

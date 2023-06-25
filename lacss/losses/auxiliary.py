@@ -115,7 +115,7 @@ def aux_size_loss(preds, inputs, *, weight=0.01, **kwargs):
         preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
     )
     areas = jnp.clip(areas, EPS, 1e6)
-    loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1] * self.a
+    loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1]
 
     mask = preds["instance_mask"]
     n_instances = jnp.count_nonzero(mask) + EPS

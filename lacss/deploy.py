@@ -188,18 +188,25 @@ class Predictor:
     def detector(self):
         return self.module.detector
 
+    #FIXME Change the detector without first compile the mode will result
+    #in error. This is a hidden gotcha. Need to setup warning to the user.
     @detector.setter
     def detector(self, new_detector):
-        from dataclasses import replace
-
         from .modules import Detector
+
+        cur_module = self.module
 
         if isinstance(new_detector, dict):
             new_detector = Detector(**new_detector)
 
         if isinstance(new_detector, Detector):
             self.model = (
-                replace(self.module, detector=new_detector),
+                lacss.modules.Lacss(
+                    self.module.backbone,
+                    self.module.lpn,
+                    new_detector,
+                    self.module.segmentor,
+                ),
                 self.model[1],
             )
         else:

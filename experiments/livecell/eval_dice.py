@@ -10,14 +10,19 @@ from tqdm import tqdm
 import lacss
 import lacss.deploy
 
-
-def mask_its(pred, gt_m, gt_b):
+def get_box_its(pred, gt_b):
     b = np.asarray(lacss.ops.bboxes_of_patches(pred))
-    m = pred["instance_output"] >= 0.5
+    box_its = lacss.ops.box_intersection(gt_b, b)
+    areas = lacss.ops.box_area(b)
+    gt_areas = lacss.ops.box_are(gt_b)
+
+    return box_its, areas, gt_areas
+
+def get_mask_its(pred, gt_m, box_its):
+    m = np.asarray(pred["instance_output"] >= 0.5)
     yc = np.asarray(pred["instance_yc"])
     xc = np.asarray(pred["instance_xc"])
 
-    box_its = lacss.ops.box_intersection(gt_b, b)
     gt_ids, pred_ids = np.where(box_its > 0)
 
     gt_m = np.pad(gt_m, [[0, 0], [192, 192], [192, 192]])
@@ -106,6 +111,8 @@ def main(
         test_min_score=min_score,
     )
 
+    print(model.module)
+
     test_data = lacss.data.coco_generator_full(
         datapath / "annotations/LIVECell/livecell_coco_test.json",
         datapath / "images/livecell_test_images",
@@ -128,8 +135,9 @@ def main(
             pred["instance_xc"],
         ) = lacss.ops.rescale_patches(pred, scale)
 
-        pred_its, pred_areas, gt_areas = mask_its(
-            pred, data["masks"] > 0, data["bboxes"]
+        box_its, _, _ = get_box_its(pred, data["bboxes"])
+        mask_its, pred_areas, gt_areas = get_mask_its(
+            pred, data["masks"] > 0, box_its
         )
         if not t in dice:
             dice[t] = Dice()

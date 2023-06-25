@@ -9,18 +9,22 @@ from tqdm import tqdm
 
 import lacss
 import lacss.deploy
-from lacss.metrics import AP
+from lacss.metrics import AP, LoiAP
 
+app = typer.Typer(pretty_exceptions_enable=False)
 
-def mask_its(pred, gt_m, gt_b):
+def get_ious(pred, gt_m, gt_b):
     b = np.asarray(lacss.ops.bboxes_of_patches(pred))
-    m = pred["instance_output"] >= 0.5
+    m = np.asarray(pred["instance_output"] >= 0.5)
     yc = np.asarray(pred["instance_yc"])
     xc = np.asarray(pred["instance_xc"])
 
-    box_its = lacss.ops.box_intersection(gt_b, b)
-    gt_ids, pred_ids = np.where(box_its > 0)
-
+    box_its = lacss.ops.box_intersection(b, gt_b)
+    b_area = lacss.ops.box_area(b)
+    gt_b_area = lacss.ops.box_area(gt_b)
+    box_ious = box_its / (b_area[:,None] + gt_b_area - box_its + 1e-8)
+    
+    pred_ids, gt_ids = np.where(box_its > 0)
     gt_m = np.pad(gt_m, [[0, 0], [192, 192], [192, 192]])
     gt = gt_m[
         (
@@ -29,7 +33,6 @@ def mask_its(pred, gt_m, gt_b):
             xc[pred_ids] + 192,
         )
     ]
-
     v = np.count_nonzero(
         m[pred_ids] & gt,
         axis=(1, 2),
@@ -39,8 +42,9 @@ def mask_its(pred, gt_m, gt_b):
 
     areas = np.count_nonzero(m, axis=(1, 2))
     gt_areas = np.count_nonzero(gt_m, axis=(1, 2))
+    mask_ious = intersects / (areas[:,None] + gt_areas - intersects + 1e-8)
 
-    return intersects, areas, gt_areas
+    return box_ious, mask_ious
 
 
 cell_size_scales = {
@@ -58,13 +62,16 @@ cell_size_scales = {
 _th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
 
+@app.command()
 def main(
     modelpath: Path,
     datapath: Path = Path("../../livecell_dataset"),
     logpath: Path = Path("."),
     nms: int = 4,
+    min_area: int = 0,
+    normalize: bool = False,
 ):
-    model = lacss.deploy.Predictor(modelpath)
+    model = lacss.deploy.Predictor(modelpath, [520,704,1])
 
     model.detector = lacss.modules.Detector(
         test_nms_threshold=nms,
@@ -77,7 +84,9 @@ def main(
         datapath / "images/livecell_test_images",
     )
 
-    ap = {"all": AP(_th)}
+    mask_ap = {"all": AP(_th)}
+    box_ap = {"all": AP(_th)}
+    loi_ap = {"all": LoiAP([5,2,1])}
     for data in tqdm(test_data):
         t = data["filename"].split("_")[0]
         scale = cell_size_scales[t]
@@ -87,27 +96,44 @@ def main(
         image = jax.image.resize(
             image, [round(h / scale), round(w / scale), 1], "linear"
         )
-        pred = model((image,), remove_out_of_bound=True)
+        if normalize:
+            image = (image - image.min())/(image.max()-image.min())
+        pred = model((image,), remove_out_of_bound=True, min_area=min_area)
         (
             pred["instance_output"],
             pred["instance_yc"],
             pred["instance_xc"],
         ) = lacss.ops.rescale_patches(pred, scale)
+        pred["pred_locations"] = pred["pred_locations"] * scale
 
-        pred_its, pred_areas, gt_areas = mask_its(
+        box_ious, mask_ious = get_ious(
             pred, data["masks"] > 0, data["bboxes"]
         )
-        ious = pred_its / (pred_areas[:, None] + gt_areas - pred_its + 1e-8)
+        
+        scores = pred["pred_scores"]
+        valid_predictions = pred['instance_mask'].squeeze() & (scores > 0)
 
-        if not t in ap:
-            ap[t] = AP(_th)
-        ap[t].update(ious, pred["pred_scores"])
-        ap["all"].update(ious, pred["pred_scores"])
+        scores = scores[valid_predictions]
+        mask_ious = mask_ious[valid_predictions]
+        box_ious = box_ious[valid_predictions]
 
-    for t in sorted(ap.keys()):
+        if not t in mask_ap:
+            mask_ap[t] = AP(_th)
+            box_ap[t] = AP(_th)
+            loi_ap[t] = LoiAP([5,2,1])
+        mask_ap[t].update(mask_ious, scores)
+        mask_ap["all"].update(mask_ious, scores)
+        box_ap[t].update(box_ious, scores)
+        box_ap["all"].update(box_ious, scores)
+        loi_ap[t].update(pred, gt_locations=data["centroids"])
+        loi_ap["all"].update(pred, gt_locations=data["centroids"])
+
+    for t in sorted(mask_ap.keys()):
         print(t)
-        print(ap[t].result())
+        print("LOIAP: ", loi_ap[t].compute())
+        print("BoxAP: ", box_ap[t].compute())
+        print("MaskAP: ", mask_ap[t].compute())
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    app()
