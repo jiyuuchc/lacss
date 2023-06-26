@@ -11,7 +11,7 @@ from .unet import UNet
 class AuxInstanceEdge(nn.Module):
     conv_spec: tp.Sequence[int] = (24, 64, 64)
     n_groups: int = 1
-    share_weights: bool = False
+    # share_weights: bool = False
 
     @nn.compact
     def __call__(
@@ -40,40 +40,7 @@ class AuxForeground(nn.Module):
     patch_size: tp.Sequence[int] = 1
     n_groups: int = 1
     share_weights: bool = False
-    augment: bool = False
-    use_attention: bool = False
-
-    def transform(self, img):
-        rng = self.make_rng("augment")
-        rns = jax.random.uniform(rng, [2])
-        img = jax.lax.cond(
-            rns[0] >= 0.5,
-            lambda img: img[:, ::-1, :],
-            lambda img: img,
-            img,
-        )
-        img = jax.lax.cond(
-            rns[1] >= 0.5,
-            lambda img: img[::-1, :, :],
-            lambda img: img,
-            img,
-        )
-        return img, rns
-
-    def inverse(self, img, rns):
-        img = jax.lax.cond(
-            rns[0] >= 0.5,
-            lambda img: img[:, ::-1],
-            lambda img: img,
-            img,
-        )
-        img = jax.lax.cond(
-            rns[1] >= 0.5,
-            lambda img: img[::-1, :],
-            lambda img: img,
-            img,
-        )
-        return img
+    # use_attention: bool = False
 
     @nn.compact
     def __call__(
@@ -81,16 +48,8 @@ class AuxForeground(nn.Module):
         x: jnp.ndarray,
         *,
         category: tp.Optional[jnp.ndarray] = None,
-        augment: tp.Optional[bool] = None,
     ) -> jnp.ndarray:
-
         assert category is not None or self.n_groups == 1
-
-        if augment is None:
-            augment = self.augment
-
-        if augment:
-            x, rns = self.transform(x)
 
         net = UNet(self.conv_spec, self.patch_size)
         _, decoder_out = net(x)
@@ -102,9 +61,6 @@ class AuxForeground(nn.Module):
         fg = nn.Conv(self.n_groups, (3, 3))(y)
         fg = fg[..., c]
 
-        if augment:
-            fg = self.inverse(fg, rns)
-
         if fg.shape != x.shape[:-1]:
             fg = jax.image.resize(fg, x.shape[:-1], "linear")
 
@@ -113,9 +69,6 @@ class AuxForeground(nn.Module):
         if self.share_weights:
             edge = nn.Conv(self.n_groups, (3, 3))(y)
             edge = edge[..., c]
-
-            if augment:
-                edge = self.inverse(edge, rns)
 
             if edge.shape != x.shape[:-1]:
                 edge = jax.image.resize(edge, x.shape[:-1], "linear")

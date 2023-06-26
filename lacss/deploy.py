@@ -26,8 +26,9 @@ Image = tp.Any
 
 model_urls = {
     "livecell": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/439e524f-e4e9-4f97-9f38-c22cb85adbd1/file_downloaded",
-    "tissuenet": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/1e0a839d-f564-4ee0-a4f3-34792df7c613/file_downloaded"
+    "tissuenet": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/1e0a839d-f564-4ee0-a4f3-34792df7c613/file_downloaded",
 }
+
 
 def load_from_pretrained(pretrained):
     if os.path.isdir(pretrained):
@@ -44,16 +45,14 @@ def load_from_pretrained(pretrained):
             params = pickle.load(f)
 
     else:
-        
         if os.path.isfile(pretrained):
-
             with open(pretrained, "rb") as f:
                 thingy = pickle.load(f)
 
         else:
             from urllib.request import Request, urlopen
             import io
-    
+
             headers = {"User-Agent": "Wget/1.13.4 (linux-gnu)"}
             req = Request(url=pretrained, headers=headers)
 
@@ -72,11 +71,9 @@ def load_from_pretrained(pretrained):
             cfg = module
 
         else:
-
             cfg, params = thingy
 
     if "params" in params and len(params) == 1:
-
         params = params["params"]
 
     # making a round-trip of module->cfg->module to icnrease backward-compatibility
@@ -120,6 +117,7 @@ class Predictor:
         image: Image,
         min_area: float = 0,
         remove_out_of_bound: bool = False,
+        scaling: float = 1.0,
         **kwargs,
     ):
         """Predict segmentation.
@@ -145,6 +143,12 @@ class Predictor:
             apply_fn = _cached_partial(module.apply, **kwargs)
         else:
             apply_fn = module.apply
+
+        if scaling != 1.0:
+            h, w, c = image.shape
+            image = jax.image.resize(
+                image, [round(h * scaling), round(w * scaling), c], "linear"
+            )
 
         preds = _predict(apply_fn, params, image)
 
@@ -173,6 +177,14 @@ class Predictor:
                 -1,
             )
 
+        if scaling != 1.0:
+            (
+                preds["instance_output"],
+                preds["instance_yc"],
+                preds["instance_xc"],
+            ) = lacss.ops.rescale_patches(preds, 1 / scaling)
+            preds["pred_locations"] = preds["pred_locations"] / scaling
+
         return preds
 
     def predict_label(self, image, **kwargs):
@@ -188,8 +200,8 @@ class Predictor:
     def detector(self):
         return self.module.detector
 
-    #FIXME Change the detector without first compile the mode will result
-    #in error. This is a hidden gotcha. Need to setup warning to the user.
+    # FIXME Change the detector without first compile the mode will result
+    # in error. This is a hidden gotcha. Need to setup warning to the user.
     @detector.setter
     def detector(self, new_detector):
         from .modules import Detector

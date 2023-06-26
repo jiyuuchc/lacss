@@ -20,9 +20,10 @@ from .loss import LossLog
 # this avoids JIT when supplying partial func as args
 _cached_partial = lru_cache(partial)
 
+LOSSES = tp.Union[tp.Callable, tp.Sequence[tp.Callable]]
+
 
 def _get_iterator(g):
-
     try:
         it = iter(g)
     except:
@@ -32,15 +33,40 @@ def _get_iterator(g):
 
 
 class Trainer:
+    """ FLAX trainer
+    The design is to be minimal but help avoiding certain biolerplate code when train with FLAX
+
+    Attributes:
+        model: A Flax module
+        losses: A list of loss function (or other callabels). 
+        optimizer: An optax optimizer
+        seed: RNG seed
+        strategy: Training strategy. See lacss.train.strategy module. 
+        params: Current model parameters. This is a frozen dict. This is read/write.
+        initialized: Whether the model has been initialized with an optimizer and initial weights.
+    
+    Constructor:
+        model: A Flax module
+        losses: A loss function (callabels) or a list of loss functions, or None. Default is None.
+            These should have the call signiture of: 
+                loss = loss_fn(inputs, labels, preds)
+            The "preds" is the model output. The "inputs" and "labels" are from the train dataset.
+            The model trains on the sum of all losses.
+        optimizer: An optax optimzier or None
+        seed: integer RNG seed. Default is 42.
+        strategy: Training strategy. See lacss.train.strategy module. Default is JIT, which trains
+            on a single GPU with unbatched input data. Use VMapped strategy for bathced input. Use
+            Distributed for multi-GPU training. Use Eager for debugging (no JIT). You can supply 
+            your own stategy class.
+    """
     def __init__(
         self,
         model: nn.Module,
-        losses: tp.Callable,
+        losses: tp.Optional[LOSSES] = None,
         optimizer: GradientTransformation = None,
         seed: int = 42,
         strategy: type = strategy.JIT,
     ):
-
         self.model = model
         self.losses = losses
         self._loss_weights = None
@@ -54,7 +80,12 @@ class Trainer:
         # self.reset()
 
     def reset(self, loss_weights=None):
+        """ Reset internal loss value tracking
 
+        Args:
+            loss_weights: Optional weights of individual loss functions. If not None, the
+                total loss is weighted sum.
+        """
         if self.losses is None:
             raise ValueError(f"No loss functions provided")
 
@@ -86,14 +117,22 @@ class Trainer:
         return self._initialized
 
     def initialize(self, dataset, tx: GradientTransformation = None):
+        """ Initialize the model weights and optimizer states.
 
+        Args:
+            dataset: An iterator or generator function to supply the training dataset.
+                The dataset should yield (inputs, labels) or inputs. In the latter case
+                the labels = None. The inputs is either a tuple or a dict. If the inputs 
+                is a dict, the keys are interpreted as the names for keyword args of the 
+                model's __call__ function.
+            tx: Optional optax optimzier for when the object was constructed without an 
+                optimizer
+        """
         if tx is None:
             tx = self.optimizer
 
         if not self._initialized:
-
             if self.model.scope is None:
-
                 peek = next(_get_iterator(dataset))
                 inputs, _, _ = unpack_x_y_sample_weight(peek)
 
@@ -101,7 +140,6 @@ class Trainer:
                 variables = self._strategy.init_fn(key, self.model, inputs)
 
             else:
-
                 self.model, variables = self.model.unbind()
 
             self.state = TrainState.create(
@@ -111,12 +149,22 @@ class Trainer:
             )
 
         else:
-
             raise ValueError("Calling initialize() on already initialized Trainer")
 
         self._initialized = True
 
     def __call__(self, inputs, *, strategy=None, **kwargs):
+        """ Calling the underlying model
+
+        Args:
+            inputs: A tuple or a dict as the inputs for the model.
+            strategy: Optionally supply a differnt calling strategy as the default one
+                supplied at the constructor.
+            **kwargs: Additional keyword args passed on to the model
+        
+        Returns:
+            Model outputs.
+        """
         if strategy is None:
             strategy = self._strategy
 
@@ -138,6 +186,28 @@ class Trainer:
         }
 
     def train(self, dataset, strategy=None, rng_cols=None, **kwargs):
+        """ Create the training iterator
+
+        Args:
+            dataset: An iterator or generator function to supply the training dataset.
+                See initialize()
+            strategy: Optionally override the default strategy.
+            rng_cols: Names of any RNG used by the model. Should be a list of strs.
+            **kwargs: Additional keyward args passed to the model. E.g. "training=True"
+        
+        Returns:
+            A iterator. Stepping through the iterator will train the model. The iterator
+                itself returns a loss log dict, which are mean loss values for each loss
+                function.
+        
+        Usage example:
+            trainer.reset()
+            train_it = trainer.train(train_dataset, training=True)
+            for k in range(train_steps):
+                loss_logs = next(train_it)
+                if k % 1000 == 0:
+                    print(loss_logs)
+        """
         if strategy is None:
             strategy = self._strategy
 
@@ -172,6 +242,14 @@ class Trainer:
             yield batch_logs
 
     def save_model(self, path, sub_module: tp.Optional[str] = None):
+        """ Save the model in a pickled file. The pickle is a tuple of
+            (module, weights).
+
+        Args:
+            path: The file path.
+            sub_module: Optionally only save a sub_module of the model
+                by specifying the name
+        """
         module = self.model
         params = self.params
 
@@ -191,6 +269,12 @@ class Trainer:
             cloudpickle.dump((cfg, params), f)
 
     def checkpoint(self, path):
+        """ Make a checkpoint of the trainer. This saves the model as well as
+        the training states.
+
+        Args:
+            path: The file path.
+        """
         if isinstance(path, str):
             path = pathlib.Path(path)
 
@@ -201,6 +285,14 @@ class Trainer:
 
     @staticmethod
     def from_checkpoint(path):
+        """ Restore from the checkpoint.
+
+        Args:
+            path: The checkpoint file path.
+
+        Returns:
+            A new trainer object.
+        """
         if isinstance(path, str):
             path = pathlib.Path(path)
 
@@ -217,6 +309,24 @@ class Trainer:
         return trainer
 
     def test(self, dataset, metrics, strategy=None):
+        """ Create test/validation iterator.
+
+        Args:
+            dataset: An iterator or generator function to supply the testing data.
+                The iterator should yield a tupple of (inputs, labels). The labels
+                should be a dict.
+            metrics: A list of Metric objects. They should have two functions:
+                m.update(preds, **kwargs):
+                    preds is the model output. the remaining kwargs are content of
+                    labels.
+                m.compute():
+                    which should return the accumulated metric value.
+            strategy: Optionally override the default strategy.
+        
+        Returns:
+            An iterator. Stepping through it will drive the updating of each metric
+                obj. The iterator itself return the list of metrics.
+        """
         if strategy is None:
             strategy = self._strategy
 
@@ -242,6 +352,14 @@ class Trainer:
             yield metrics
 
     def test_and_compute(self, *args, **kwargs):
+        """ A convient function to compute all metrics.
+
+        Args:
+            same as the test() fucntion
+        
+        Returns:
+            A metric dict. Keys are metric names.
+        """
         for metrics in self.test(*args, **kwargs):
             pass
         return {_get_name(m): m.compute() for m in metrics}
@@ -260,11 +378,9 @@ class Trainer:
 
     @optimizer.setter
     def optimizer(self, tx):
-
         self._optimizer = tx
 
         if self._initialized:
-
             self.state = TrainState.create(
                 apply_fn=self.model.apply,
                 params=self.params,

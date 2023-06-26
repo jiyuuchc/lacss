@@ -13,6 +13,7 @@ from lacss.metrics import AP, LoiAP
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
+
 def get_ious(pred, gt_m, gt_b):
     b = np.asarray(lacss.ops.bboxes_of_patches(pred))
     m = np.asarray(pred["instance_output"] >= 0.5)
@@ -22,8 +23,8 @@ def get_ious(pred, gt_m, gt_b):
     box_its = lacss.ops.box_intersection(b, gt_b)
     b_area = lacss.ops.box_area(b)
     gt_b_area = lacss.ops.box_area(gt_b)
-    box_ious = box_its / (b_area[:,None] + gt_b_area - box_its + 1e-8)
-    
+    box_ious = box_its / (b_area[:, None] + gt_b_area - box_its + 1e-8)
+
     pred_ids, gt_ids = np.where(box_its > 0)
     gt_m = np.pad(gt_m, [[0, 0], [192, 192], [192, 192]])
     gt = gt_m[
@@ -42,7 +43,7 @@ def get_ious(pred, gt_m, gt_b):
 
     areas = np.count_nonzero(m, axis=(1, 2))
     gt_areas = np.count_nonzero(gt_m, axis=(1, 2))
-    mask_ious = intersects / (areas[:,None] + gt_areas - intersects + 1e-8)
+    mask_ious = intersects / (areas[:, None] + gt_areas - intersects + 1e-8)
 
     return box_ious, mask_ious
 
@@ -67,17 +68,18 @@ def main(
     modelpath: Path,
     datapath: Path = Path("../../livecell_dataset"),
     logpath: Path = Path("."),
-    nms: int = 4,
+    nms: int = 8,
     min_area: int = 0,
     normalize: bool = False,
 ):
-    model = lacss.deploy.Predictor(modelpath, [520,704,1])
+    model = lacss.deploy.Predictor(modelpath, [520, 704, 1])
 
     model.detector = lacss.modules.Detector(
         test_nms_threshold=nms,
         test_max_output=3074,
         test_min_score=0,
     )
+    print(model.module)
 
     test_data = lacss.data.coco_generator_full(
         datapath / "annotations/LIVECell/livecell_coco_test.json",
@@ -86,32 +88,22 @@ def main(
 
     mask_ap = {"all": AP(_th)}
     box_ap = {"all": AP(_th)}
-    loi_ap = {"all": LoiAP([5,2,1])}
+    loi_ap = {"all": LoiAP([5, 2, 1])}
     for data in tqdm(test_data):
         t = data["filename"].split("_")[0]
         scale = cell_size_scales[t]
 
         image = data["image"]
-        h, w, _ = image.shape
-        image = jax.image.resize(
-            image, [round(h / scale), round(w / scale), 1], "linear"
-        )
         if normalize:
-            image = (image - image.min())/(image.max()-image.min())
-        pred = model((image,), remove_out_of_bound=True, min_area=min_area)
-        (
-            pred["instance_output"],
-            pred["instance_yc"],
-            pred["instance_xc"],
-        ) = lacss.ops.rescale_patches(pred, scale)
-        pred["pred_locations"] = pred["pred_locations"] * scale
+            image = (image - image.min()) / (image.max() - image.min())
 
-        box_ious, mask_ious = get_ious(
-            pred, data["masks"] > 0, data["bboxes"]
+        pred = model(
+            (image,), remove_out_of_bound=True, min_area=min_area, scaling=1 / scale
         )
-        
+        box_ious, mask_ious = get_ious(pred, data["masks"] > 0, data["bboxes"])
+
         scores = pred["pred_scores"]
-        valid_predictions = pred['instance_mask'].squeeze() & (scores > 0)
+        valid_predictions = pred["instance_mask"].squeeze() & (scores > 0)
 
         scores = scores[valid_predictions]
         mask_ious = mask_ious[valid_predictions]
@@ -120,7 +112,7 @@ def main(
         if not t in mask_ap:
             mask_ap[t] = AP(_th)
             box_ap[t] = AP(_th)
-            loi_ap[t] = LoiAP([5,2,1])
+            loi_ap[t] = LoiAP([5, 2, 1])
         mask_ap[t].update(mask_ious, scores)
         mask_ap["all"].update(mask_ious, scores)
         box_ap[t].update(box_ious, scores)

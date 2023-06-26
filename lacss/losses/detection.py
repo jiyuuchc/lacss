@@ -55,7 +55,8 @@ def localization_loss(preds, delta=1.0, **kwargs):
         )
         mask = gt_scores[k] > 0
         regr_loss += jnp.sum(h, where=mask)
-        cnt += jnp.count_nonzero(mask)
+        # cnt += jnp.count_nonzero(mask)
+        cnt += gt_scores[k].size
 
     return regr_loss / (cnt + EPS)
 
@@ -72,7 +73,6 @@ class DetectionLoss(Loss):
         self.gamma = gamma
 
     def call(self, preds: dict, **kwargs) -> jnp.ndarray:
-
         return detection_loss(preds=preds, gamma=self.gamma)
 
 
@@ -82,7 +82,6 @@ class LocalizationLoss(Loss):
         self.delta = delta
 
     def call(self, preds: dict, **kwrags) -> jnp.ndarray:
-
         return localization_loss(preds, delta=self.delta)
 
 

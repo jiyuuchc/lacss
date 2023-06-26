@@ -4,8 +4,10 @@ import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 
+import dataclasses
 import json
 import logging
+import typing as tp
 from functools import partial
 from os.path import join
 from pathlib import Path
@@ -16,18 +18,25 @@ import numpy as np
 import optax
 import typer
 from tqdm import tqdm
+from flax.core.frozen_dict import freeze, unfreeze
 
 import lacss
 from lacss.train import TFDatasetAdapter
-from data import get_cell_type_and_scaling_v1 as get_cell_type_and_scaling
+from lacss.deploy import load_from_pretrained
+from data import get_cell_type_and_scaling
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
 
 def train_parser(inputs, target_size=[544, 544]):
-    _, default_scale = tf.py_function(
-        get_cell_type_and_scaling, [inputs["filename"]], (tf.int32, tf.float32)
+    cell_type, default_scale = tf.py_function(
+        get_cell_type_and_scaling,
+        [inputs["filename"]],
+        (tf.int32, tf.float32),
     )
+
+    del inputs["masks"]
+    del inputs["bboxes"]
 
     image = inputs["image"]
     gamma = tf.random.uniform([], 0.5, 2.0)
@@ -44,19 +53,21 @@ def train_parser(inputs, target_size=[544, 544]):
         inputs, target_size=target_size, area_ratio_threshold=0.5
     )
 
+    n_locs = tf.shape(inputs["centroids"])[0]
+    pad_size = (n_locs - 1) // 1024 * 1024 + 1024 - n_locs
+    gt_locations = tf.pad(
+        inputs["centroids"], [[0, pad_size], [0, 0]], constant_values=-1
+    )
+
     return dict(
         image=tf.ensure_shape(inputs["image"], target_size + [1]),
-        gt_locations=inputs["centroids"],
-    ), dict(
-        gt_bboxes=inputs["bboxes"],
-        gt_masks=inputs["masks"],
+        gt_locations=gt_locations,
+        cell_type=cell_type,
     )
 
 
 def train_data(
     datapath: Path,
-    n_buckets: int,
-    batchsize: int,
 ):
     ds = lacss.data.dataset_from_coco_annotations(
         datapath / "annotations" / "LIVECell" / "livecell_coco_train.json",
@@ -64,28 +75,19 @@ def train_data(
         [520, 704, 1],
     )
     ds = ds.cache(str(datapath / "train_cache")).repeat()
-    ds = ds.map(train_parser)
-
-    ds = ds.bucket_by_sequence_length(
-        element_length_func=lambda x, _: tf.shape(x["gt_locations"])[0],
-        bucket_boundaries=list(np.arange(1, n_buckets + 1) * (4096 // n_buckets) + 1),
-        bucket_batch_sizes=(max(batchsize, 1),) * (n_buckets + 1),
-        padding_values=-1.0,
-        pad_to_bucket_boundary=True,
-    )
-
-    if batchsize <= 0:
-        ds = ds.unbatch()
+    ds = ds.map(train_parser).filter(lambda x: tf.shape(x["gt_locations"])[0] > 0)
 
     return TFDatasetAdapter(ds, steps=-1).get_dataset()
 
 
 def val_parser(inputs):
-    _, default_scale = tf.py_function(
-        get_cell_type_and_scaling, [inputs["filename"]], (tf.int32, tf.float32)
-    )
-
     del inputs["masks"]
+
+    cell_type, default_scale = tf.py_function(
+        get_cell_type_and_scaling,
+        [inputs["filename"]],
+        (tf.int32, tf.float32),
+    )
 
     inputs["image"] = tf.image.per_image_standardization(inputs["image"])
 
@@ -96,6 +98,7 @@ def val_parser(inputs):
 
     return dict(
         image=inputs["image"],
+        cell_type=cell_type,
     ), dict(
         gt_locations=inputs["centroids"],
         gt_bboxes=inputs["bboxes"],
@@ -116,90 +119,98 @@ def val_data(
     return TFDatasetAdapter(ds, steps=-1).get_dataset()
 
 
-def get_model(cmd, config, seed):
-    losses = [
-        lacss.losses.detection_loss,
-        lacss.losses.localization_loss,
-        lacss.losses.supervised_instance_loss,
-    ]
+class CKS(nn.Module):
+    lacss: nn.Module
+    aux_1: nn.Module
+    aux_2: nn.Module
 
-    if cmd == "resume":
-        cp = lacss.train.Trainer.from_checkpoint(config)
-        assert isinstance(cp, lacss.train.Trainer)
-        trainer = cp
-        logging.info(f"Loaded checkpoint {config}")
+    def __call__(self, image, cell_type, gt_locations=None, *, training=None):
+        outputs = self.lacss(image=image, gt_locations=gt_locations, training=training)
+        outputs.update(self.aux_1(image, category=cell_type))
+        outputs.update(self.aux_2(image, category=cell_type))
 
-    elif cmd == "transfer":
-        from lacss.deploy import load_from_pretrained
-
-        module, params = load_from_pretrained(config)
-        model = module.bind(dict(params=params))
-
-        trainer = lacss.train.Trainer(
-            model=model,
-            losses=losses,
-            seed=seed,
-            strategy=lacss.train.strategy.VMapped,
-        )
-
-    elif cmd == "config":
-        with open(config) as f:
-            model_cfg = json.load(f)
-        model = lacss.modules.Lacss.from_config(model_cfg)
-
-        trainer = lacss.train.Trainer(
-            model=model,
-            losses=losses,
-            seed=seed,
-            strategy=lacss.train.strategy.VMapped,
-        )
-
-    else:
-        raise ValueError('Must be one of "resume", "transfer" or "config"')
-
-    return trainer
+        return outputs
 
 
 @app.command()
 def run_training(
-    cmd: str,
-    config: Path,
-    datapath: Path = Path("../../livecell_dataset"),
+    transfer: Path,
+    datapath: Path = Path("../../livecell_dataset/"),
     logpath: Path = Path("."),
     seed: int = 42,
-    batchsize: int = 1,
-    n_epochs: int = 10,
-    steps_per_epoch: int = 3500 * 5,
+    n_epochs: int = 15,
+    steps_per_epoch: int = 3500,
+    lr: float = 0.001,
     init_epoch: int = 0,
-    lr: float = 0.002,
-    n_buckets: int = 4,
+    size_loss: float = 0.01,
+    offset_sigma: float = 15.0,
+    offset_scale: float = 2.0,
+    hard_label: bool = False,
 ):
     tf.random.set_seed(seed)
-
     logging.info(f"Logging to {logpath}")
 
-    train_gen = train_data(
-        datapath,
-        n_buckets,
-        batchsize,
-    )
+    train_gen = train_data(datapath)
     val_gen = val_data(datapath)
 
-    trainer = get_model(cmd, config, seed)
+    try:
+        with open(transfer) as f:
+            model_cfg = json.load(f)
+            model = lacss.modules.Lacss.from_config(model_cfg)
+            update_params = None
 
-    # initialize before calling asdict because the model may be bound
-    steps_per_epoch = steps_per_epoch // batchsize
+    except:
+        model, update_params = load_from_pretrained(transfer)
+        if hasattr(model, "lacss"):
+            model = model.lacss
+
+    cks_model = CKS(
+        model,
+        lacss.modules.AuxForeground(
+            conv_spec=(16, 32, 64),  # change
+            n_groups=8,
+        ),
+        lacss.modules.AuxInstanceEdge(
+            conv_spec=(32, 32),  # change
+            n_groups=8,
+        ),
+    )
+    trainer = lacss.train.Trainer(
+        model=cks_model,
+        losses=[
+            lacss.losses.LPNLoss(),
+            lacss.losses.SelfSupervisedInstanceLoss(not hard_label),
+            lacss.losses.AuxSizeLoss(size_loss),
+            lacss.losses.AuxEdgeLoss(),
+            lacss.losses.AuxSegLoss(
+                offset_sigma=offset_sigma,
+                offset_scale=offset_scale,
+            ),
+        ],
+        seed=seed,
+        strategy=lacss.train.JIT,
+    )
+
     if not trainer.initialized:
-        schedules = [
-            optax.cosine_decay_schedule(lr * batchsize, steps_per_epoch)
-        ] * n_epochs
-        boundaries = [steps_per_epoch * i for i in range(1, n_epochs)]
-        schedule = optax.join_schedules(schedules, boundaries)
-
-        trainer.initialize(train_gen, optax.adam(schedule))
+        optimizer = optax.adamw(lr)
+        trainer.initialize(train_gen, optimizer)
 
     print(trainer.model)
 
+    # transfer weights
+    if update_params is not None:
+        model_params = unfreeze(trainer.params)
+        if "lacss" in update_params:
+            model_params.update(update_params)
+        else:
+            model_params.update(
+                dict(
+                    lacss=update_params,
+                )
+            )
+        trainer.params = freeze(model_params)
+
+    # start training
     logpath.mkdir(parents=True, exist_ok=True)
 
     train_iter = trainer.train(train_gen, rng_cols=["droppath"], training=True)

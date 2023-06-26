@@ -592,3 +592,30 @@ def test_data(datapath, *, supervised=False, cell_type=-1, coco=False):
     ds_val = ds_val.map(partial(test_parser, supervised=supervised))
 
     return TFDatasetAdapter(ds_val).get_dataset()
+
+
+avg_size = {
+    "A172": 34.6,
+    "BT474": 24.6,
+    "BV2": 13.3,
+    "Huh7": 40.8,
+    "MCF7": 18.5,
+    "SHSY5Y": 20.1,
+    "SKOV3": 44.8,
+    "SkBr3": 21.8,
+}
+
+
+def get_cell_type_and_scaling(name, target_size=34.6):
+    """Need to be a numpy function due to tf.string limitation"""
+    cell_type = name.numpy().split(b"_")[0].decode()
+    cellsize = avg_size[cell_type]
+    cell_type_no = list(avg_size.keys()).index(cell_type)
+    return cell_type_no, target_size / cellsize
+
+
+def get_cell_type_and_scaling_v1(name):
+    cell_type = name.numpy().split(b"_")[0].decode()
+    cell_type_no = list(avg_size.keys()).index(cell_type)
+
+    return cell_type_no, 1 / cell_size_scales[cell_type]

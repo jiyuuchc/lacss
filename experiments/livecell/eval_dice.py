@@ -10,6 +10,7 @@ from tqdm import tqdm
 import lacss
 import lacss.deploy
 
+
 def get_box_its(pred, gt_b):
     b = np.asarray(lacss.ops.bboxes_of_patches(pred))
     box_its = lacss.ops.box_intersection(gt_b, b)
@@ -17,6 +18,7 @@ def get_box_its(pred, gt_b):
     gt_areas = lacss.ops.box_are(gt_b)
 
     return box_its, areas, gt_areas
+
 
 def get_mask_its(pred, gt_m, box_its):
     m = np.asarray(pred["instance_output"] >= 0.5)
@@ -100,10 +102,12 @@ def main(
     modelpath: Path,
     datapath: Path = Path("../../livecell_dataset"),
     logpath: Path = Path("."),
-    nms: int = 4,
+    nms: int = 8,
     min_score: float = 0.4,
+    normalize: bool = False,
+    min_area: int = 0,
 ):
-    model = lacss.deploy.Predictor(modelpath)
+    model = lacss.deploy.Predictor(modelpath, [520, 704, 1])
 
     model.detector = lacss.modules.Detector(
         test_nms_threshold=nms,
@@ -124,25 +128,19 @@ def main(
         scale = cell_size_scales[t]
 
         image = data["image"]
-        h, w, _ = image.shape
-        image = jax.image.resize(
-            image, [round(h / scale), round(w / scale), 1], "linear"
+        if normalize:
+            image = (image - image.min()) / (image.max() - image.min())
+
+        pred = model(
+            (image,), remove_out_of_bound=True, min_area=min_area, scaling=1 / scale
         )
-        pred = model((image,), remove_out_of_bound=True)
-        (
-            pred["instance_output"],
-            pred["instance_yc"],
-            pred["instance_xc"],
-        ) = lacss.ops.rescale_patches(pred, scale)
 
         box_its, _, _ = get_box_its(pred, data["bboxes"])
-        mask_its, pred_areas, gt_areas = get_mask_its(
-            pred, data["masks"] > 0, box_its
-        )
+        mask_its, pred_areas, gt_areas = get_mask_its(pred, data["masks"] > 0, box_its)
         if not t in dice:
             dice[t] = Dice()
-        dice[t].update(pred_its, pred_areas, gt_areas)
-        dice["all"].update(pred_its, pred_areas, gt_areas)
+        dice[t].update(mask_its, pred_areas, gt_areas)
+        dice["all"].update(mask_its, pred_areas, gt_areas)
 
     for t in sorted(dice.keys()):
         print(t)

@@ -46,20 +46,24 @@ def supervised_instance_loss(preds, labels, **kwargs):
     else:
         y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
         gt_segs = labels["gt_masks"]
-        if len(gt_segs.shape) == 4:
-            gt_segs = gt_segs.squeeze(-1)
+        if len(gt_segs.shape) == 4: # either NxHxWx1 or NxHxW
+            gt_segs = gt_segs.squeeze(-1) 
         seg_size = gt_segs.shape[1]
 
-        hs = (y1 - y0) / seg_size
+        # pixel size of the gt mask labels
+        hs = (y1 - y0) / seg_size 
         ws = (x1 - x0) / seg_size
 
-        yc = (yc - y0[:, None, None]) / hs[:, None, None]
-        xc = (xc - x0[:, None, None]) / ws[:, None, None]
+        # compute rescaled coorinats in edge indexing
+        yc = (yc - y0[:, None, None] + .5) / hs[:, None, None]
+        xc = (xc - x0[:, None, None] + .5) / ws[:, None, None]
 
-        gt_patches = jax.vmap(sub_pixel_samples)(
+        # resample the label to match model coordinates
+        gt_patches = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))(
             gt_segs,
             jnp.stack([yc, xc], axis=-1),
         )
+        gt_patches = (gt_patches>=.5).astype(int)
 
     loss = optax.sigmoid_binary_cross_entropy(instance_logit, gt_patches)
 

@@ -50,7 +50,7 @@ class FgAcc:
         pred_masks = preds["fg_pred"]
         pred_masks = (pred_masks >= 0).astype(int)
         gt_masks = (gt_labels > 0).astype(int)
-        acc = (pred_masks == gt_masks).mean()        
+        acc = (pred_masks == gt_masks).mean()
 
         self.acc += acc
         self.cnts += 1
@@ -170,7 +170,7 @@ def run_training(
                 tf.summary.scalar(k, v, epoch)
 
         # trainer.save_model(logpath/f"weight-{epoch}.pkl", "_lacss")
-        trainer.checkpoint(logpath/f"cp-{epoch}")
+        trainer.checkpoint(logpath / f"cp-{epoch}")
         trainer.reset()
 
         if eval:
@@ -179,26 +179,29 @@ def run_training(
                 lacss.metrics.BoxAP([0.5, 0.75]),
                 FgAcc(),
             ]
-            var_logs = trainer.test_and_compute(val_data, val_metrics, strategy=lacss.train.JIT)
+            var_logs = trainer.test_and_compute(
+                val_data, val_metrics, strategy=lacss.train.JIT
+            )
             for k, v in var_logs.items():
                 print(f"{k}: {v}")
 
         # for c in range(8) if cell_type == -1 else [cell_type]:
-            # data = itertools.dropwhile(lambda x: x["category"] != c, val_data())
-            # inputs, label = next(data)
-            # preds = trainer(inputs, strategy=lacss.train.JIT)
-            # label = to_label(preds, inputs["image"].shape[:2])
-            # output = jnp.concatenate(
-                # [
-                    # inputs["image"][None,...]
-                    # label[None,...,None] / label.max(),
-                    # jax.nn.sigmoid(preds["fg_pred"][None, ..., None]),
-                # ],
-                # axis=2,
-            # )
-# 
-            # with file_writer.as_default():
-                # tf.summary.image(f"img_{c}", output, epoch)
+        # data = itertools.dropwhile(lambda x: x["category"] != c, val_data())
+        # inputs, label = next(data)
+        # preds = trainer(inputs, strategy=lacss.train.JIT)
+        # label = to_label(preds, inputs["image"].shape[:2])
+        # output = jnp.concatenate(
+        # [
+        # inputs["image"][None,...]
+        # label[None,...,None] / label.max(),
+        # jax.nn.sigmoid(preds["fg_pred"][None, ..., None]),
+        # ],
+        # axis=2,
+        # )
+
+    #
+    # with file_writer.as_default():
+    # tf.summary.image(f"img_{c}", output, epoch)
 
     epoch = init_epoch
 

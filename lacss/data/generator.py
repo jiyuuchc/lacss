@@ -48,20 +48,14 @@ def coco_generator_full(annotation_file, image_path, mask_shape=None):
             masks.append(mask)
 
             mi = np.stack(np.where(mask >= 0.5), axis=-1)
-            locs.append(mi.mean(axis=0))
+            locs.append(mi.mean(axis=0) + 0.5)
 
         bboxes = np.array(bboxes, dtype="float32")
         locs = np.array(locs, dtype="float32")
         masks = np.array(masks, dtype="float32")
 
-        if mask_shape is not None:
-            segs = _crop_and_resize(masks, bboxes, mask_shape).numpy()
-        else:
-            segs = masks
-
         filepath = glob.glob(join(image_path, "**", imginfo["file_name"]))
         assert len(filepath) == 1
-
         image = imageio.imread(filepath[0])
 
         if len(image.shape) == 2:
@@ -74,12 +68,19 @@ def coco_generator_full(annotation_file, image_path, mask_shape=None):
             0.0,
             1.0,
         ) * [img_h, img_w, img_h, img_w]
+        bboxes = bboxes.astype("float32")
 
         locs = np.clip(
             locs / [img_h, img_w],
             0.0,
             1.0,
         ) * [img_h, img_w]
+        locs = locs.astype("float32")
+
+        if mask_shape is not None:
+            segs = _crop_and_resize(masks, bboxes, mask_shape).numpy()
+        else:
+            segs = masks
 
         n_cells = masks.shape[0]
         masks = masks.astype("int32") * np.arange(1, n_cells + 1).reshape(n_cells, 1, 1)
