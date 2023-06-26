@@ -133,7 +133,7 @@ class LacssWithHelper(nn.Module):
         if self.aux_fg_cfg is not None:
 
             preds.update(
-                self._aux_fg_module(image, category=category, augment=training)
+                self._aux_fg_module(image, category=category)
             )
 
         return preds

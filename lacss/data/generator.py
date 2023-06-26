@@ -221,9 +221,9 @@ def img_mask_pair_generator(ds_files):
 
         yield {
             "img_id": k,
-            "image": img,
-            "centroids": locs,
-            "bboxes": bboxes,
+            "image": img.astype("float32"),
+            "centroids": np.asarray(locs, dtype="float32") + .5,
+            "bboxes": np.asarray(bboxes),
             "label": mask,
         }
 
