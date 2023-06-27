@@ -1,0 +1,11 @@
+{
+  "backbone": {
+  	"depths": [3,3,27,3],
+  	"drop_path_rate": 0.4,
+    "patch_size": 2
+  },
+  "detector": {
+  	"train_max_output": 2560,
+  	"test_max_output": 2560
+  }
+}

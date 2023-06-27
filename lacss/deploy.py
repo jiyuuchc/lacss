@@ -92,6 +92,26 @@ def _predict(apply_fn, params, image):
 
 
 class Predictor:
+    """ Main interface for model deployment.
+
+    Attributes:
+        module: The underlying FLAX module 
+        params: Model weights.
+        detector: The detector submodule for convinence. It is common to 
+            modidify this submodule to find optimal parameters for detection.
+            Note this submodule is weight-less.
+    
+    Constructor:
+        url: A URL of the saved model. URLs for build-in pretrained models can be found
+            in lacss.deploy.model_urls
+        precompile_shape: Optionally supply the image shape for precompiling. Otherwise 
+            the model will be recompiled for every new input image shape.
+    
+    Usage Example:
+        url = lacss.deploy.model_urls["livecell"]
+        predictor = lacss.deploy.Predictor(url)
+        label = predictor.predict_label(image)
+    """
     def __init__(self, url, precompile_shape=None):
         self.model = load_from_pretrained(url)
 
@@ -108,6 +128,8 @@ class Predictor:
                 _ = self.predict(x)
 
     def __call__(self, inputs, **kwargs):
+        """ Perform model prediction
+        """
         inputs_obj = Inputs.from_value(inputs)
 
         return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
@@ -123,9 +145,11 @@ class Predictor:
         """Predict segmentation.
 
         Args:
-            image: ndarray of (h,w,c) format. Value of c must be 1-3
+            image: A ndarray of (h,w,c) format. Value of c must be 1-3
             min_area: Minimum area of a valid prediction. Default is 0
             remove_out_of_bound: Whether to remove out-of-bound predictions. Default is False.
+            scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
+                to the model. The results will be resized back to the scale of the orginal input image.
 
         Returns:
             Raw model prediction as a dict. Most important keys are
@@ -151,6 +175,11 @@ class Predictor:
             )
 
         preds = _predict(apply_fn, params, image)
+        del preds["encoder_features"]
+        del preds["decoder_features"]
+        del preds["lpn_features"]
+        del preds["lpn_scores"]
+        del preds["lpn_regressions"]
 
         if min_area > 0:
             areas = jnp.count_nonzero(preds["instance_logit"] > 0, axis=(1, 2))
@@ -187,14 +216,37 @@ class Predictor:
 
         return preds
 
-    def predict_label(self, image, **kwargs):
+    def predict_label(self, image, *, score_threshold=0.5, **kwargs):
+        """ A convinent funciton to obtain prediction in image label format
+
+        Args:
+            image: Input image.
+            score_threshold: The minimal prediction scores. Default is 0.5
+
+        Returns:
+            label: A [H, W] array. The values indicate the id of the cells. For cells
+                with overlapping areas, the pixel is assigned for the cell with higher
+                prediction scores.
+        """
         preds = self.predict(image, **kwargs)
 
-        return patches_to_label(preds, input_size=image.shape[:2])
+        return patches_to_label(
+            preds, 
+            input_size=image.shape[:2], 
+            score_threshold=score_threshold,
+        )
 
     @property
     def module(self):
         return self.model[0]
+    
+    @property
+    def params(self):
+        return self.model[1]
+    
+    @params.setter
+    def params(self, new_params):
+        self.model = self.module, new_params
 
     @property
     def detector(self):

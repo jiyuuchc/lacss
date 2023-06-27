@@ -32,7 +32,7 @@ def supervised_instance_loss(preds, labels, **kwargs):
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
 
-    if "gt_labels" in labels:
+    if "gt_labels" in labels: # labeled with image label
         gt_labels = labels["gt_labels"].astype("int32")
 
         n_patches, ps, _ = yc.shape
@@ -41,9 +41,9 @@ def supervised_instance_loss(preds, labels, **kwargs):
         gt_patches = gt_labels[yc + ps // 2, xc + ps // 2] == (
             jnp.arange(n_patches)[:, None, None] + 1
         )
-        gt_patches = gt_patches.astype(int)
+        gt_patches = gt_patches.astype("float32")
 
-    else:
+    else: # labeled with bboxes and rescaled segmentation masks, ie, coco
         y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
         gt_segs = labels["gt_masks"]
         if len(gt_segs.shape) == 4: # either NxHxWx1 or NxHxW
@@ -59,11 +59,11 @@ def supervised_instance_loss(preds, labels, **kwargs):
         xc = (xc - x0[:, None, None] + .5) / ws[:, None, None]
 
         # resample the label to match model coordinates
-        gt_patches = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))(
+        gt_patches = jax.vmap(sub_pixel_samples)(
             gt_segs,
-            jnp.stack([yc, xc], axis=-1),
+            jnp.stack([yc, xc], axis=-1) - .5, # default is center indexing
         )
-        gt_patches = (gt_patches>=.5).astype(int)
+        gt_patches = (gt_patches>=.5).astype("float32")
 
     loss = optax.sigmoid_binary_cross_entropy(instance_logit, gt_patches)
 

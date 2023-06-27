@@ -264,9 +264,7 @@ class Trainer:
 
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
-            cfg = dataclasses.asdict(module)
-            params = unfreeze(params)
-            cloudpickle.dump((cfg, params), f)
+            cloudpickle.dump((module, params), f)
 
     def checkpoint(self, path):
         """ Make a checkpoint of the trainer. This saves the model as well as
