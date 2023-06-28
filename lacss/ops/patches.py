@@ -367,7 +367,7 @@ def rescale_patches(
     ]  # edge indexing in old scale
     new_patch = _sampling_op(
         patch,
-        np.stack([rel_yy, rel_xx], axis=-1),
+        jnp.stack([rel_yy, rel_xx], axis=-1),
     )
 
     return new_patch, yy, xx

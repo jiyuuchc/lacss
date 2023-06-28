@@ -95,7 +95,16 @@ def load_from_pretrained(pretrained):
 
 @partial(jax.jit, static_argnums=0)
 def _predict(apply_fn, params, image):
-    return apply_fn(dict(params=params), image)
+    preds = apply_fn(dict(params=params), image)
+    preds["pred_bboxes"] = lacss.ops.bboxes_of_patches(preds)
+
+    del preds["encoder_features"]
+    del preds["decoder_features"]
+    del preds["lpn_features"]
+    del preds["lpn_scores"]
+    del preds["lpn_regressions"]
+
+    return preds
 
 
 class Predictor:
@@ -181,6 +190,7 @@ class Predictor:
         else:
             apply_fn = module.apply
 
+        # scale image if asked
         if scaling != 1.0:
             h, w, c = image.shape
             image = jax.image.resize(
@@ -188,19 +198,13 @@ class Predictor:
             )
 
         preds = _predict(apply_fn, params, image)
-        del preds["encoder_features"]
-        del preds["decoder_features"]
-        del preds["lpn_features"]
-        del preds["lpn_scores"]
-        del preds["lpn_regressions"]
+
+        # check prediction validity
+        instance_mask = preds["instance_mask"].squeeze(axis=(1, 2))
 
         if min_area > 0:
             areas = jnp.count_nonzero(preds["instance_logit"] > 0, axis=(1, 2))
-            preds["pred_scores"] = jnp.where(
-                areas > min_area,
-                preds["pred_scores"],
-                -1,
-            )
+            instance_mask &= areas > min_area
 
         if remove_out_of_bound:
             pred_locations = preds["pred_locations"]
@@ -208,17 +212,11 @@ class Predictor:
             valid_locs = (pred_locations >= 0).all(axis=-1)
             valid_locs &= pred_locations[:, 0] < h
             valid_locs &= pred_locations[:, 1] < w
-            preds["pred_locations"] = jnp.where(
-                valid_locs[:, None],
-                preds["pred_locations"],
-                -1,
-            )
-            preds["pred_scores"] = jnp.where(
-                valid_locs,
-                preds["pred_scores"],
-                -1,
-            )
+            instance_mask &= valid_locs
 
+        preds["instance_mask"] = instance_mask.reshape(-1, 1, 1)
+
+        # rescale segmentations
         if scaling != 1.0:
             (
                 preds["instance_output"],
@@ -226,6 +224,7 @@ class Predictor:
                 preds["instance_xc"],
             ) = lacss.ops.rescale_patches(preds, 1 / scaling)
             preds["pred_locations"] = preds["pred_locations"] / scaling
+            preds["pred_bboxes"] = preds["pred_bboxes"] / scaling
 
         return preds
 
