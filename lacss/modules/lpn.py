@@ -12,12 +12,14 @@ from .common import ChannelAttention
 
 
 class LPN(nn.Module):
-    """
-    Args:
-    in_channels: number of channels in input feature
-    feature_level: input feature level default 3
-    conv_layers: conv layer spec
-    with_channel_attention: whether include channel attention
+    """Location detection dead
+
+    Attributes:
+
+        feature_levels: Input feature level, e.g. [2, 3, 4]
+        conv_spec: Conv layer specification
+        detection_roi: Parameter for label smoothing
+
     """
 
     feature_levels: tp.Sequence[int] = (4, 3, 2)
@@ -58,16 +60,16 @@ class LPN(nn.Module):
         Args:
             inputs: feature dict: {'lvl': [H, W, C]}
             scaled_gt_locations: scaled 0..1 [N, 2], only valid in training
-        Returns:
-            outputs:
-            {
-                lpn_scores: dict: {'lvl': [H, W, 1]}
-                lpn_regressions: dict {'lvl': [H, W, 2]}
-                gt_lpn_scores: dict {'lvl': [H, W, 1]}, only if training
-                gt_lpn_regressions: dict {'lvl': [H, W, 2]}, only if training
-            }
-        """
 
+        Returns:
+            A dict of features
+
+                * lpn_scores: dict: {'lvl': [H, W, 1]}
+                * lpn_regressions: dict {'lvl': [H, W, 2]}
+                * gt_lpn_scores: dict {'lvl': [H, W, 1]}, only if training
+                * gt_lpn_regressions: dict {'lvl': [H, W, 2]}, only if training
+
+        """
         all_scores = dict()
         all_regrs = dict()
         all_features = dict()

@@ -32,7 +32,7 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
 
 
 def self_supervised_edge_loss(preds, inputs, **kwargs):
-    """LACSS cell border consistency loss"""
+    """Cell border prediction consistency loss"""
 
     instance_output = preds["instance_output"]
     instance_yc = preds["instance_yc"]
@@ -54,7 +54,7 @@ def self_supervised_segmentation_loss(
     offset_scale=jnp.array([2.0]),
     **kwargs,
 ):
-    """LACSS image segmentation consistenct loss"""
+    """Image segmentation consistenct loss for the collaboraor model"""
 
     height, width, _ = inputs["image"].shape
     _, ps, _ = preds["instance_yc"].shape
@@ -100,7 +100,7 @@ def self_supervised_segmentation_loss(
 
 
 def aux_size_loss(preds, inputs, *, weight=0.01, **kwargs):
-    """auxillary loss to prevent model collapse"""
+    """Auxillary loss to prevent model collapse"""
 
     height, width, _ = inputs["image"].shape
 

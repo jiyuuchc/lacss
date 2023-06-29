@@ -1,3 +1,8 @@
+""" 
+Attributes:
+    model_urls: URLs for build-in pretrain models. e.g model_urls["livecell"].
+"""
+
 import dataclasses
 import json
 import logging
@@ -12,7 +17,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax.core.frozen_dict import freeze, unfreeze
+from flax.core.frozen_dict import FrozenDict, freeze, unfreeze
 from flax.training.train_state import TrainState
 
 import lacss.modules
@@ -20,11 +25,13 @@ import lacss.train.strategy as strategy
 from lacss.ops import patches_to_label
 from lacss.train import Inputs
 
+_Image = jnp.ndarray
+_ImageShape = tp.Tuple[int, int, int]
+_Params = FrozenDict
+
 _cached_partial = lru_cache(partial)
 
-Image = tp.Any
-
-model_urls = {
+model_urls: tp.Mapping[str, str] = {
     "livecell": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/439e524f-e4e9-4f97-9f38-c22cb85adbd1/file_downloaded",
     "tissuenet": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/1e0a839d-f564-4ee0-a4f3-34792df7c613/file_downloaded",
 }
@@ -50,8 +57,8 @@ def load_from_pretrained(pretrained):
                 thingy = pickle.load(f)
 
         else:
-            from urllib.request import Request, urlopen
             import io
+            from urllib.request import Request, urlopen
 
             headers = {"User-Agent": "Wget/1.13.4 (linux-gnu)"}
             req = Request(url=pretrained, headers=headers)
@@ -92,27 +99,34 @@ def _predict(apply_fn, params, image):
 
 
 class Predictor:
-    """ Main interface for model deployment.
+    """Main class interface for model deployment.
 
     Attributes:
-        module: The underlying FLAX module 
+        module: The underlying FLAX module
         params: Model weights.
-        detector: The detector submodule for convinence. It is common to 
-            modidify this submodule to find optimal parameters for detection.
-            Note this submodule is weight-less.
-    
-    Constructor:
-        url: A URL of the saved model. URLs for build-in pretrained models can be found
-            in lacss.deploy.model_urls
-        precompile_shape: Optionally supply the image shape for precompiling. Otherwise 
+        detector: The detector submodule for convinence. A common use case
+            is to customize this submodule during inference. e.g.
+            ```
+            predictor.detector['test_min_score"] = 0.5
+            ```
+            Detector submodule has no trained paramters.
+    Args:
+
+        url: A URL or local path to the saved model.
+            URLs for build-in pretrained models can be found in lacss.deploy.model_urls
+        precompile_shape: Image shape(s) for precompiling. Otherwise
             the model will be recompiled for every new input image shape.
-    
-    Usage Example:
-        url = lacss.deploy.model_urls["livecell"]
-        predictor = lacss.deploy.Predictor(url)
-        label = predictor.predict_label(image)
+
+    Examples:
+        A typical use is to retrieve a build-in pretrained model:
+
+            url = lacss.deploy.model_urls["livecell"]
+            predictor = lacss.deploy.Predictor(url)
+            label = predictor.predict_label(image)
+
     """
-    def __init__(self, url, precompile_shape=None):
+
+    def __init__(self, url: str, precompile_shape: tp.Optional[_ImageShape] = None):
         self.model = load_from_pretrained(url)
 
         if precompile_shape is not None:
@@ -128,37 +142,36 @@ class Predictor:
                 _ = self.predict(x)
 
     def __call__(self, inputs, **kwargs):
-        """ Perform model prediction
-        """
         inputs_obj = Inputs.from_value(inputs)
 
         return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
 
     def predict(
         self,
-        image: Image,
+        image: _Image,
         min_area: float = 0,
         remove_out_of_bound: bool = False,
         scaling: float = 1.0,
         **kwargs,
-    ):
+    ) -> dict:
         """Predict segmentation.
 
         Args:
             image: A ndarray of (h,w,c) format. Value of c must be 1-3
-            min_area: Minimum area of a valid prediction. Default is 0
+            min_area: Minimum area of a valid prediction.
             remove_out_of_bound: Whether to remove out-of-bound predictions. Default is False.
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
 
         Returns:
-            Raw model prediction as a dict. Most important keys are
+            Model predictions with following elements:
 
-            instance_output: Segmentation instances. (N, S, S) array
-            instance_yc: The meshgrid y-coordinates of the instances. (N, S, S) array
-            instance_xc: The meshgrid x-coordinates of the instances. (N, S, S) array
-            pred_scores: The prediction scores of each instance. (N) array. -1 indicating invalid predictions.
-            pred_locations: The prediction centroids of each instances. (N, 2) array
+                - pred_scores: The prediction scores of each instance.
+                - pred_bboxes: The bounding-boxes of detected instances in y0x0y1x1 format
+                - instance_output: A 3d array representing segmentation instances.
+                - instance_yc: The meshgrid y-coordinates of the instances.
+                - instance_xc: The meshgrid x-coordinates of the instances.
+                - instance_mask: A boolean mask indicating the validity of the instances.
         """
 
         module, params = self.model
@@ -216,40 +229,42 @@ class Predictor:
 
         return preds
 
-    def predict_label(self, image, *, score_threshold=0.5, **kwargs):
-        """ A convinent funciton to obtain prediction in image label format
+    def predict_label(
+        self, image: _Image, *, score_threshold: float = 0.5, **kwargs
+    ) -> jnp.ndarray:
+        """Predict segmentation in image label format
 
         Args:
             image: Input image.
-            score_threshold: The minimal prediction scores. Default is 0.5
+            score_threshold: The minimal prediction scores.
 
         Returns:
-            label: A [H, W] array. The values indicate the id of the cells. For cells
+            A [H, W] array. The values indicate the id of the cells. For cells
                 with overlapping areas, the pixel is assigned for the cell with higher
                 prediction scores.
         """
         preds = self.predict(image, **kwargs)
 
         return patches_to_label(
-            preds, 
-            input_size=image.shape[:2], 
+            preds,
+            input_size=image.shape[:2],
             score_threshold=score_threshold,
         )
 
     @property
-    def module(self):
+    def module(self) -> nn.Module:
         return self.model[0]
-    
+
     @property
-    def params(self):
+    def params(self) -> _Params:
         return self.model[1]
-    
+
     @params.setter
     def params(self, new_params):
         self.model = self.module, new_params
 
     @property
-    def detector(self):
+    def detector(self) -> lacss.module.Detector:
         return self.module.detector
 
     # FIXME Change the detector without first compile the mode will result

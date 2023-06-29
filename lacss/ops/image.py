@@ -6,15 +6,19 @@ from jax.scipy.signal import convolve
 jnp = jax.numpy
 
 
-def sorbel_edges(image):
+def sorbel_edges(image: jnp.ndarray) -> jnp.ndarray:
     """Returns a tensor holding Sobel edge maps.
-    >>> image = random.uniform(key, shape=[3, 28, 28])
-    >>> sobel = sobel_edges(image)
-    >>> sobel_y = sobel[0, :, :, :] # sobel in y-direction
-    >>> sobel_x = sobel[1, :, :, :] # sobel in x-direction
-    ```
+
+    Examples:
+
+        >>> image = random.uniform(key, shape=[3, 28, 28])
+        >>> sobel = sobel_edges(image)
+        >>> sobel_y = sobel[0, :, :, :] # sobel in y-direction
+        >>> sobel_x = sobel[1, :, :, :] # sobel in x-direction
+
     Args:
         image: [n, h, w]
+
     Returns:
         Tensor holding edge maps for each channel. [2, n, h, w]
     """
@@ -63,11 +67,13 @@ def _retrieve_value_at(img, loc, out_of_bound_value=0):
 
 def sub_pixel_samples(img, locs, out_of_bound_value=0, edge_indexing=False):
     """Retrieve image values as non-integer locations by interpolation
+
     Args:
         img: Array of shape [D1,D2,..,Dk, ...]
         locs: Array of shape [d1,d2,..,dn, k]
         out_of_bound_value: optional float constant, defualt 0.
         edge_indexing: if True, the index for the first value in img is 0.5, otherwise 0. Default is False
+
     Returns:
         values: [d1,d2,..,dn, ...], float
     """

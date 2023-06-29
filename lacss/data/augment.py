@@ -142,12 +142,15 @@ def crop_to_roi(inputs, *, roi, area_ratio_threshold=1.0, p=1.0):
 
             boolean_mask &= (new_areas / areas) >= area_ratio_threshold
 
+        # so that TF won't complain boolean_mask has no shape
+        boolean_mask = tf.ensure_shape(boolean_mask, [None])
+
         if "centroids" in inputs:
-            inputs["centroids"] = ctrds[boolean_mask]
+            inputs["centroids"] = tf.boolean_mask(ctrds, boolean_mask)
 
         if "bboxes" in inputs:
-            orig_bboxes = inputs["bboxes"][boolean_mask]
-            inputs["bboxes"] = bboxes[boolean_mask]
+            orig_bboxes = tf.boolean_mask(inputs["bboxes"], boolean_mask)
+            inputs["bboxes"] = tf.boolean_mask(bboxes, boolean_mask)
 
             if "masks" in inputs:
                 target_shape = inputs["masks"].shape[1:3]
@@ -168,7 +171,7 @@ def crop_to_roi(inputs, *, roi, area_ratio_threshold=1.0, p=1.0):
                 )
 
                 inputs["masks"] = _crop_and_resize(
-                    inputs["masks"][boolean_mask],
+                    tf.boolean_mask(inputs["masks"], boolean_mask),
                     new_bbox,
                     target_shape,
                 )

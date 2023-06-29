@@ -22,7 +22,16 @@ def _mean_over_boolean_mask(loss, mask):
 
 
 def supervised_instance_loss(preds, labels, **kwargs):
-    """LACSS instance loss, supervised with segmentation label"""
+    """LACSS instance loss, supervised with segmentation label
+
+    Args:
+        preds: Model predictions
+        labels: Label dictionary. Two types of segmentation labels are accepted.
+            If ```labels["gt_labels"]``` is provided, its value is treated as pixel
+            labels of the image. Otherwisde, one much supply both ```labels["gt_bboxes"]```
+            and ```labels["gt_masks"]```. The gt_masks is a 3D array representing all
+            segmentation resized to a fixed dimension.
+    """
 
     instance_mask = preds["instance_mask"]
     instance_logit = preds["instance_logit"]
@@ -32,7 +41,7 @@ def supervised_instance_loss(preds, labels, **kwargs):
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
 
-    if "gt_labels" in labels: # labeled with image label
+    if "gt_labels" in labels:  # labeled with image label
         gt_labels = labels["gt_labels"].astype("int32")
 
         n_patches, ps, _ = yc.shape
@@ -43,27 +52,27 @@ def supervised_instance_loss(preds, labels, **kwargs):
         )
         gt_patches = gt_patches.astype("float32")
 
-    else: # labeled with bboxes and rescaled segmentation masks, ie, coco
+    else:  # labeled with bboxes and rescaled segmentation masks, ie, coco
         y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
         gt_segs = labels["gt_masks"]
-        if len(gt_segs.shape) == 4: # either NxHxWx1 or NxHxW
-            gt_segs = gt_segs.squeeze(-1) 
+        if len(gt_segs.shape) == 4:  # either NxHxWx1 or NxHxW
+            gt_segs = gt_segs.squeeze(-1)
         seg_size = gt_segs.shape[1]
 
         # pixel size of the gt mask labels
-        hs = (y1 - y0) / seg_size 
+        hs = (y1 - y0) / seg_size
         ws = (x1 - x0) / seg_size
 
         # compute rescaled coorinats in edge indexing
-        yc = (yc - y0[:, None, None] + .5) / hs[:, None, None]
-        xc = (xc - x0[:, None, None] + .5) / ws[:, None, None]
+        yc = (yc - y0[:, None, None] + 0.5) / hs[:, None, None]
+        xc = (xc - x0[:, None, None] + 0.5) / ws[:, None, None]
 
         # resample the label to match model coordinates
         gt_patches = jax.vmap(sub_pixel_samples)(
             gt_segs,
-            jnp.stack([yc, xc], axis=-1) - .5, # default is center indexing
+            jnp.stack([yc, xc], axis=-1) - 0.5,  # default is center indexing
         )
-        gt_patches = (gt_patches>=.5).astype("float32")
+        gt_patches = (gt_patches >= 0.5).astype("float32")
 
     loss = optax.sigmoid_binary_cross_entropy(instance_logit, gt_patches)
 
@@ -71,7 +80,13 @@ def supervised_instance_loss(preds, labels, **kwargs):
 
 
 def self_supervised_instance_loss(preds, *, soft_label: bool = True):
-    """LACSS instance loss, unsupervised"""
+    """Unsupervised instance loss
+
+    Args:
+        preds: Model prediction dict.
+        soft_label: If False, it convertes image mask prediction to hard label
+            (ie. 0 or 1), before computing loss.
+    """
 
     instance_mask = preds["instance_mask"]
     instances = preds["instance_output"]
@@ -117,7 +132,7 @@ def self_supervised_instance_loss(preds, *, soft_label: bool = True):
 def weakly_supervised_instance_loss(
     preds, labels, inputs, *, ignore_mask: bool = False, **kwargs
 ):
-    """Lacss instance loss, supervised with image mask"""
+    """Instance loss supervised by image mask instead of instance masks"""
 
     instance_mask = preds["instance_mask"]
     instances = preds["instance_output"]

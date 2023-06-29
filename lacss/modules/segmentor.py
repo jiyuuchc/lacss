@@ -48,15 +48,16 @@ class _Encoder(nn.Module):
 
 
 class Segmentor(nn.Module):
-    """LACSS segmentor module.
+    """LACSS segmentation head.
 
     Attributes:
-        feature_level: int
+        feature_level: The scale of the feature used for segmentation
         conv_spec: conv_block definition, e.g. ((384,384,384), (64,))
-        instance_crop_size: Crop size. default is 96.
-        with_attention: Whether use spatial attention layer. Default is False
-        learned_encoding: Whether to use hard-coded position encoding. Default is False
+        instance_crop_size: Crop size for segmentation.
+        with_attention: Whether use spatial attention layer.
+        learned_encoding: Whether to use hard-coded position encoding.
         encoder_dims: Dim of the position encoder, if using learned encoding. Default is (8,8,4)
+
     """
 
     feature_level: int = 2
@@ -77,13 +78,16 @@ class Segmentor(nn.Module):
     def __call__(self, features: dict, locations: jnp.ndarray) -> dict:
         """
         Args:
-            features: {'lvl' [H, W, C]} feature dictionary
-            locations: [N, 2]  scaled 0..1
-        outputs:
-            instance_output: [N, crop_size, crop_size]
-            instance_mask; [N, 1, 1] boolean mask indicating valid outputs
-            instance_yc: [N, crop_size, crop_size] meshgrid y coordinates
-            instance_xc: [N, crop_size, crop_size] meshgrid x coordinates
+            features: {'scale' [H, W, C]} feature dictionary from the backbone.
+            locations: [N, 2]  normalized to image size.
+
+        Returns:
+            A dictionary of values representing segmentation outputs.
+
+                * instance_output: [N, crop_size, crop_size]
+                * instance_mask; [N, 1, 1] boolean mask indicating valid outputs
+                * instance_yc: [N, crop_size, crop_size] meshgrid y coordinates
+                * instance_xc: [N, crop_size, crop_size] meshgrid x coordinates
         """
         crop_size = self.instance_crop_size
         lvl = self.feature_level

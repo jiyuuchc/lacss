@@ -1,0 +1,32 @@
+site_name: LACSS
+repo_url: https://github.com/jiyuuchc/lacss
+theme: 
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - toc.integrate 
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+
+nav:
+  - About: index.md
+  - API Reference:
+      - lacss.deploy: 'api/deploy.md'
+      - lacss.train: 'api/train.md'
+      - lacss.data: 'api/data.md'
+      - lacss.modules: 'api/modules.md'
+      - lacss.losses: 'api/losses.md'
+      - lacss.ops: 'api/ops.md'
+
+watch:
+  - lacss

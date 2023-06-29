@@ -84,19 +84,25 @@ def sorted_non_max_suppression(
     min_score: float = 0,
 ):
     """non-maximum suppression for either bboxes or points.
+
     Assumption:
+
         * The boxes are sorted by scores
+
     The overal design of the algorithm is to handle boxes tile-by-tile:
+
     Args:
         scores: [N]
         boxes: [N, C]  C=4 for boxes, C=2 for locations
         max_output_size: a positive scalar integer
         threshold: a scalar float, can be negative
         min_score: min score to be selected, default 0
+
     Returns:
         nms_scores: [M].  M = max_output_size
         nms_proposals: [M, C].
     """
+
     # preprocessing
     c = boxes.shape[-1]
     if c != 2 and c != 4:

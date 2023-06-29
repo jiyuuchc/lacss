@@ -16,13 +16,32 @@ from .segmentor import Segmentor
 
 
 class Lacss(nn.Module):
+    """Main class for LACSS model
+
+    Attributes:
+        backbone: The ConvNeXt backbone
+        lpn: The LPN head for detecting cell location
+        detector: A weight-less module interpreting lpn output
+        segmentor: The segmentation head
+
+    """
+
     backbone: nn.Module = ConvNeXt()
     lpn: nn.Module = LPN()
     detector: nn.Module = Detector()
     segmentor: nn.Module = Segmentor()
 
     @classmethod
-    def from_config(cls, config):
+    def from_config(cls, config: dict):
+        """Factory method to build an Lacss instance from a configuration dictionary
+
+        Args:
+            config: A configuration dictionary.
+
+        Returns:
+            An Lacss instance.
+
+        """
         config_dict = {}
         if "backbone" in config:
             config_dict["backbone"] = ConvNeXt(**config["backbone"])
@@ -48,6 +67,7 @@ class Lacss(nn.Module):
             gt_locations: [M, 2] if training, otherwise None
         Returns:
             a dict of model outputs
+
         """
         orig_height, orig_width, ch = image.shape
         if ch == 1:
@@ -132,8 +152,6 @@ class LacssWithHelper(nn.Module):
 
         if self.aux_fg_cfg is not None:
 
-            preds.update(
-                self._aux_fg_module(image, category=category)
-            )
+            preds.update(self._aux_fg_module(image, category=category))
 
         return preds

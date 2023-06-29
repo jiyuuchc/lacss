@@ -1,5 +1,9 @@
+""" Common data generators.
+"""
+
 import glob
 import json
+import typing as tp
 from functools import partial
 from os.path import join
 
@@ -28,7 +32,31 @@ def _crop_and_resize(masks, boxes, target_shape):
     return tf.squeeze(segs, axis=-1)
 
 
-def coco_generator_full(annotation_file, image_path, mask_shape=None):
+def coco_generator_full(
+    annotation_file: str,
+    image_path: str,
+    mask_shape: tp.Optional[tp.Tuple[int, int]] = None,
+):
+    """A generator function to produce coco-annotated data
+
+    Args:
+        annotation_file: Path to coco annotation files
+        image_path: Path to image directory
+        mask_shape: If supplied, all the instance segmentations will be croped and resized to the specifed size. Otherwise,
+            the segmentations are uncropped (in original image size)
+
+    Yields:
+        A data dictionary.
+            * id: data id
+            * filename: image filename
+            * image: an array [H, W, C]
+            * masks: segmentation masks. [N, H, W] or [N,] + mask_shape
+            * centroids: yx format.
+            * bboxes: y0x0y1x1 format.
+            * label: an array [H, W] representing pixel labels of all instances.
+
+    """
+
     from pycocotools.coco import COCO
 
     coco = COCO(annotation_file=annotation_file)
@@ -133,11 +161,24 @@ def coco_generator(annotation_file, image_path):
 
 
 def dataset_from_coco_annotations(
-    annotation_file,
-    image_path,
-    image_shape=[None, None, 3],
-    mask_shape=[48, 48],
+    annotation_file: str,
+    image_path: str,
+    image_shape: tuple = [None, None, 3],
+    mask_shape: tuple = [48, 48],
 ):
+    """Obtaining a tensowflow dataset from coco annotations. See [coco_generator_full()](api/lacss.data#lacss.data.coco_generator_full)
+
+    Args:
+        annotation_file: Path to coco annotation files
+        image_path: Path to image directory
+        image_shape: The expect image shapes. Use None to represent variable dimensions.
+        mask_shape: If supplied, all the instance segmentations will be croped and resized to the specifed size. Otherwise,
+            the segmentations are uncropped (in original image size)
+
+    Returns:
+        A tensorflow dataset.
+
+    """
     if mask_shape is None:
         mask_spec = tf.TensorSpec([None] + image_shape[:2], dtype=tf.float32)
     else:
@@ -157,7 +198,21 @@ def dataset_from_coco_annotations(
     )
 
 
-def simple_generator(annotation_file, image_path):
+def simple_generator(annotation_file: str, image_path: str):
+    """A simple generator function to produce image data labeled with points and image-level segmentaion.
+
+    Args:
+        annotation_file: Path to the json format annotation file.
+        image_path: Path to the image directory.
+
+    Yields:
+        Data dictionary:
+            * img_id: data id
+            * image: an array [H, W, C]
+            * image_mask: segmentation masks for the image. [H, W]
+            * centroids: yx format.
+    """
+
     with open(annotation_file, "r") as f:
         annotations = json.load(f)
 
@@ -191,6 +246,17 @@ def simple_generator(annotation_file, image_path):
 def dataset_from_simple_annotations(
     annotation_file, image_path, image_shape=[None, None, 3], **kwargs
 ):
+    """Obtaining a tensowflow dataset from simple annotatiion. See [simple_generator()](/api/lacss.data#lacss.data.simple_generator)
+
+    Args:
+        annotation_file: Path to the json format annotation file.
+        image_path: Path to the image directory.
+        image_shape: The expect image shapes. Use None to represent variable dimensions.
+
+    Returns:
+        A tensorflow dataset object
+
+    """
     return tf.data.Dataset.from_generator(
         lambda: simple_generator(annotation_file, image_path, **kwargs),
         output_signature={
@@ -203,6 +269,21 @@ def dataset_from_simple_annotations(
 
 
 def img_mask_pair_generator(ds_files):
+    """A generator function to produce image data labeled with segmentation labels.
+        In this case, one has paired input images and label images as files on disk.
+
+    Args:
+        ds_file: A tuple of (image_list, label_list).
+            The image_list are pathes to images. The label_list are pathes to labels.
+
+    Yields:
+        Data dictionary:
+            * img_id: data id
+            * image: an array [H, W, C]
+            * centroids: yx format.
+            * bboxes: y0x0y1x1 format.
+            * label: an array [H, W] representing pixel labels of all instances.
+    """
     for k, (img_file, mask_file) in enumerate(ds_files):
         img = imageio.imread(img_file).astype("float32")
         img /= 255
@@ -222,7 +303,7 @@ def img_mask_pair_generator(ds_files):
         yield {
             "img_id": k,
             "image": img.astype("float32"),
-            "centroids": np.asarray(locs, dtype="float32") + .5,
+            "centroids": np.asarray(locs, dtype="float32") + 0.5,
             "bboxes": np.asarray(bboxes),
             "label": mask,
         }
@@ -231,6 +312,17 @@ def img_mask_pair_generator(ds_files):
 def dataset_from_img_mask_pairs(
     imgfiles, maskfiles, image_shape=[None, None, 3], **kwargs
 ):
+    """Obtaining a tensowflow dataset from image/label pairs.
+            See [img_mask_pair_generator()](/api/lacss.data#lacss.data.img_mask_pair_generator)
+
+    Args:
+        imgfiles: List of file pathes to input image file.
+        maskfiles: List of file pathes to label image file.
+        image_shape: The expect image shapes. Use None to represent variable dimensions.
+
+    Returns:
+        A tensorflow dataset object
+    """
     return tf.data.Dataset.from_generator(
         lambda: img_mask_pair_generator(zip(imgfiles, maskfiles), **kwargs),
         output_signature={

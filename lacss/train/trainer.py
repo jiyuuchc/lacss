@@ -2,6 +2,7 @@ import dataclasses
 import pathlib
 import typing as tp
 from functools import lru_cache, partial
+from pathlib import Path
 
 import cloudpickle
 import flax.linen as nn
@@ -16,11 +17,12 @@ from . import strategy
 from .data import *
 from .loss import LossLog
 
+LOSSES = tp.Union[tp.Callable, tp.Sequence[tp.Callable]]
+_PathLike = tp.Union[str, Path]
+
 # so that multiple calls return the same obj
 # this avoids JIT when supplying partial func as args
 _cached_partial = lru_cache(partial)
-
-LOSSES = tp.Union[tp.Callable, tp.Sequence[tp.Callable]]
 
 
 def _get_iterator(g):
@@ -33,40 +35,41 @@ def _get_iterator(g):
 
 
 class Trainer:
-    """ FLAX trainer
+    """FLAX trainer
     The design is to be minimal but help avoiding certain biolerplate code when train with FLAX
 
     Attributes:
         model: A Flax module
-        losses: A list of loss function (or other callabels). 
+        losses: A list of loss function (or other callabels).
         optimizer: An optax optimizer
         seed: RNG seed
-        strategy: Training strategy. See lacss.train.strategy module. 
+        strategy: Training strategy. See lacss.train.strategy module.
         params: Current model parameters. This is a frozen dict. This is read/write.
         initialized: Whether the model has been initialized with an optimizer and initial weights.
-    
-    Constructor:
-        model: A Flax module
-        losses: A loss function (callabels) or a list of loss functions, or None. Default is None.
-            These should have the call signiture of: 
-                loss = loss_fn(inputs, labels, preds)
-            The "preds" is the model output. The "inputs" and "labels" are from the train dataset.
-            The model trains on the sum of all losses.
-        optimizer: An optax optimzier or None
-        seed: integer RNG seed. Default is 42.
-        strategy: Training strategy. See lacss.train.strategy module. Default is JIT, which trains
-            on a single GPU with unbatched input data. Use VMapped strategy for bathced input. Use
-            Distributed for multi-GPU training. Use Eager for debugging (no JIT). You can supply 
-            your own stategy class.
     """
+
     def __init__(
         self,
         model: nn.Module,
-        losses: tp.Optional[LOSSES] = None,
+        losses: tp.Optional[tp.Sequence[LOSSES]] = None,
         optimizer: GradientTransformation = None,
         seed: int = 42,
         strategy: type = strategy.JIT,
     ):
+        """Constructor
+
+        Args:
+            model: A Flax module. It can be a bound module with parameters.
+            losses: A loss function (callabels) or a list of loss functions, or None.
+                These should have the call signiture of:
+                    loss = loss_fn(inputs, labels, preds)
+                The "preds" is the model output. The "inputs" and "labels" are from the train dataset.
+                The model trains on the sum of all losses.
+            optimizer: An optax optimzier
+            seed: RNG seed.
+            strategy: Training backend. See [Traing backends](/api/train/#training-backends).
+
+        """
         self.model = model
         self.losses = losses
         self._loss_weights = None
@@ -79,8 +82,8 @@ class Trainer:
 
         # self.reset()
 
-    def reset(self, loss_weights=None):
-        """ Reset internal loss value tracking
+    def reset(self, loss_weights: tp.Optional[tp.Sequence[float]] = None):
+        """Reset internal loss value tracking
 
         Args:
             loss_weights: Optional weights of individual loss functions. If not None, the
@@ -116,16 +119,13 @@ class Trainer:
     def initialized(self):
         return self._initialized
 
-    def initialize(self, dataset, tx: GradientTransformation = None):
-        """ Initialize the model weights and optimizer states.
+    def initialize(self, dataset, tx: GradientTransformation = None) -> None:
+        """Initialize the model weights and optimizer states.
 
         Args:
             dataset: An iterator or generator function to supply the training dataset.
-                The dataset should yield (inputs, labels) or inputs. In the latter case
-                the labels = None. The inputs is either a tuple or a dict. If the inputs 
-                is a dict, the keys are interpreted as the names for keyword args of the 
-                model's __call__ function.
-            tx: Optional optax optimzier for when the object was constructed without an 
+                see [train()](/api/train#lacss.train.trainer.Trainer.train)
+            tx: Optional optax optimzier for when the object was constructed without an
                 optimizer
         """
         if tx is None:
@@ -153,15 +153,15 @@ class Trainer:
 
         self._initialized = True
 
-    def __call__(self, inputs, *, strategy=None, **kwargs):
-        """ Calling the underlying model
+    def __call__(self, inputs: tp.Any, *, strategy=None, **kwargs) -> tp.Any:
+        """Calling the underlying model
 
         Args:
             inputs: A tuple or a dict as the inputs for the model.
             strategy: Optionally supply a differnt calling strategy as the default one
                 supplied at the constructor.
             **kwargs: Additional keyword args passed on to the model
-        
+
         Returns:
             Model outputs.
         """
@@ -185,28 +185,33 @@ class Trainer:
             for loss_log in self.loss_logs
         }
 
-    def train(self, dataset, strategy=None, rng_cols=None, **kwargs):
-        """ Create the training iterator
+    def train(self, dataset, strategy=None, rng_cols=None, **kwargs) -> tp.Iterator:
+        """Create the training iterator
 
         Args:
-            dataset: An iterator or generator function to supply the training dataset.
-                See initialize()
+            dataset: An iterator or generator function to supply the training data.
+                The dataset should yield ```(inputs, labels)``` if the data come with labels or
+                ```(inputs, None)``` if there is no label. The inputs is either a tuple or a
+                dict. If the inputs is a dict, the keys are interpreted as the names for
+                keyword args of the model's __call__ function.
             strategy: Optionally override the default strategy.
-            rng_cols: Names of any RNG used by the model. Should be a list of strs.
+            rng_cols: Names of any RNG used by the model. Should be a list of strings.
             **kwargs: Additional keyward args passed to the model. E.g. "training=True"
-        
+
         Returns:
             A iterator. Stepping through the iterator will train the model. The iterator
                 itself returns a loss log dict, which are mean loss values for each loss
                 function.
-        
-        Usage example:
-            trainer.reset()
+
+        Examples:
+            ```
             train_it = trainer.train(train_dataset, training=True)
             for k in range(train_steps):
                 loss_logs = next(train_it)
                 if k % 1000 == 0:
                     print(loss_logs)
+                    trainer.reset()
+            ```
         """
         if strategy is None:
             strategy = self._strategy
@@ -241,8 +246,8 @@ class Trainer:
 
             yield batch_logs
 
-    def save_model(self, path, sub_module: tp.Optional[str] = None):
-        """ Save the model in a pickled file. The pickle is a tuple of
+    def save_model(self, path: _PathLike, sub_module: tp.Optional[str] = None) -> None:
+        """Save the model in a pickled file. The pickle is a tuple of
             (module, weights).
 
         Args:
@@ -266,8 +271,8 @@ class Trainer:
         with open(path, "wb") as f:
             cloudpickle.dump((module, params), f)
 
-    def checkpoint(self, path):
-        """ Make a checkpoint of the trainer. This saves the model as well as
+    def checkpoint(self, path) -> None:
+        """Make a checkpoint of the trainer. This saves the model as well as
         the training states.
 
         Args:
@@ -283,7 +288,7 @@ class Trainer:
 
     @staticmethod
     def from_checkpoint(path):
-        """ Restore from the checkpoint.
+        """Restore from the checkpoint.
 
         Args:
             path: The checkpoint file path.
@@ -306,8 +311,8 @@ class Trainer:
 
         return trainer
 
-    def test(self, dataset, metrics, strategy=None):
-        """ Create test/validation iterator.
+    def test(self, dataset, metrics, strategy=None) -> tp.Iterator:
+        """Create test/validation iterator.
 
         Args:
             dataset: An iterator or generator function to supply the testing data.
@@ -320,7 +325,7 @@ class Trainer:
                 m.compute():
                     which should return the accumulated metric value.
             strategy: Optionally override the default strategy.
-        
+
         Returns:
             An iterator. Stepping through it will drive the updating of each metric
                 obj. The iterator itself return the list of metrics.
@@ -349,12 +354,12 @@ class Trainer:
 
             yield metrics
 
-    def test_and_compute(self, *args, **kwargs):
-        """ A convient function to compute all metrics.
+    def test_and_compute(self, *args, **kwargs) -> dict:
+        """A convient function to compute all metrics.
 
         Args:
             same as the test() fucntion
-        
+
         Returns:
             A metric dict. Keys are metric names.
         """

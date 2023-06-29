@@ -9,7 +9,24 @@ from ..ops import location_matching, sorted_non_max_suppression
 
 
 class Detector(nn.Module):
-    """A weightless layer that conver LPN output to a list of locations"""
+    """A weightless module that conver LPN output to a list of locations. Non-max-supression is
+        appplied to remove redundant detections.
+
+    Attributes:
+
+        train_nms_threshold: Threshold for non-max-suppression during training
+        train_pre_nms_topk: If > 0, only the top_k scored locations will be analyzed during training
+        train_max_output: Maximum number of outputs during training
+        train_min_score: Mininum scores to be considered during training
+        max_proposal_offset: During training, if a detected location is with in this distance threshold
+            of a ground-truth location, replacing the ground truth location with the detection one for
+            segmentation purpose.
+        test_nms_threshold: Threshold for non-max-suppression during testing
+        test_pre_nms_topk: If > 0, only the top_k scored locations will be analyzed during testing
+        test_max_output: Maximum number of outputs during testing
+        test_min_score: Mininum scores to be considered during testing
+
+    """
 
     train_nms_threshold: float = 8.0
     train_pre_nms_topk: int = -1
@@ -145,20 +162,23 @@ class Detector(nn.Module):
         gt_locations: jnp.ndarray = None,
         *,
         training: bool = None,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> dict:
         """
         Args:
-            score: {'lvl', [H, W, 1]) output from LPN
-            regression: ('lvl': [H, W, 2]) output from LPN
-            gt_locations: [N, 2] during training or None during inference. Maybe padded with -1
-        Outputs:
-            dict {
-                training_locations: [N, 2] only during training
-                pred_locations: [M, 2] sorted based on scores; M == test_max_output; padded with -1
-                pred_scores: [M] sorted, padded with -1
-            }
-        """
+                scores: {'scale', [H, W, 1]) output from LPN
+                regressions: {'scale': [H, W, 2]} output from LPN
+                gt_locations: Ground-truth call locations. This can be an array  of [N, 2] (training) or
+                    None (inference). Maybe padded with -1
+                training: Whether to run the module in training mode or not
 
+        Returns:
+                a dictionary of values.
+
+                    * pred_locations: Sorted array based on scores
+                    * pred_scores: Sorted array, padded with -1
+                    * training_locations: This value exists during training only.
+
+        """
         scores = jax.lax.stop_gradient(scores)
         regressions = jax.lax.stop_gradient(regressions)
 

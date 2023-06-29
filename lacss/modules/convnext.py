@@ -50,58 +50,9 @@ class _Block(nn.Module):
         return x
 
 
-class ConvNeXt(nn.Module):
-    """ConvNeXt
-    Args:
-        patch_size: for stem default 4
-        depths (tuple(int)): Number of blocks at each stage. Default: [3, 3, 9, 3]
-        dims (int): Feature dimension at each stage. Default: [96, 192, 384, 768]
-        drop_path_rate (float): Stochastic depth rate. Default: 0.
-        layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
-        out_channels (int): FPN output channels. Default: 256
-    """
-
-    patch_size: int = 4
-    depths: Sequence[int] = (3, 3, 27, 3)
-    dims: Sequence[int] = (96, 192, 384, 768)
-    drop_path_rate: float = 0.0
-    layer_scale_init_value: float = 1e-6
-    out_channels: int = 384
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training: bool = None) -> jnp.ndarray:
-        dp_rate = 0
-        outputs = []
-        for k in range(len(self.depths)):
-            if k == 0:
-                ps = self.patch_size
-                x = nn.Conv(self.dims[k], (ps, ps), strides=(ps, ps))(x)
-                x = nn.LayerNorm(epsilon=1e-6)(x)
-            else:
-                x = nn.LayerNorm(epsilon=1e-6)(x)
-                x = nn.Conv(self.dims[k], (2, 2), strides=(2, 2))(x)
-
-            for _ in range(self.depths[k]):
-                x = _Block(dp_rate, self.layer_scale_init_value)(x, training=training)
-                dp_rate += self.drop_path_rate / (sum(self.depths) - 1)
-
-            outputs.append(x)
-
-        keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
-        encoder_out = dict(zip(keys, outputs))
-
-        if self.out_channels > 0:
-            decoder_out = FPN(self.out_channels)(outputs)
-            decoder_out = dict(zip(keys, decoder_out))
-        else:
-            decoder_out = None
-
-        return encoder_out, decoder_out
-
-
 # utility funcs
 
-model_urls = {
+_imagenet_weights_urls = {
     "convnext_tiny_1k": "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_1k_224_ema.pth",
     "convnext_small_1k": "https://dl.fbaipublicfiles.com/convnext/convnext_small_1k_224_ema.pth",
     "convnext_base_1k": "https://dl.fbaipublicfiles.com/convnext/convnext_base_1k_224_ema.pth",
@@ -114,15 +65,7 @@ model_urls = {
 }
 
 
-def load_weight(jax_model, jax_params, url):
-    """Load pretrained convnext models
-    specs for pretrained models are:
-        tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
-        small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
-        base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
-        large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
-        X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
-    """
+def _load_weight(jax_model, jax_params, url):
     import torch
     from flax.core.frozen_dict import freeze, unfreeze
 
@@ -177,3 +120,89 @@ def load_weight(jax_model, jax_params, url):
         t(conv["kernel"], params[f"downsample_layers.{i}.1.weight"].permute(2, 3, 1, 0))
 
     return freeze(jax_params)
+
+
+class ConvNeXt(nn.Module):
+    """ConvNeXt CNN backbone
+
+    Attributes:
+        patch_size: Stem patch size
+        depths: Number of blocks at each stage.
+        dims: Feature dimension at each stage.
+        drop_path_rate: Stochastic depth rate.
+        layer_scale_init_value: Init value for Layer Scale.
+        out_channels:
+            FPN output channels. Setting this to -1 disable the FPN, in which case
+            the model output only encoder outputs.
+    """
+
+    patch_size: int = 4
+    depths: Sequence[int] = (3, 3, 27, 3)
+    dims: Sequence[int] = (96, 192, 384, 768)
+    drop_path_rate: float = 0.0
+    layer_scale_init_value: float = 1e-6
+    out_channels: int = 384
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, *, training: bool = None) -> tuple:
+        """
+        Args:
+            x: Image input.
+            training: Whether run the network in training mode (i.e. with stochastic depth)
+
+        Returns:
+            A tuple of (encoder_outputs, decoder_outputs). Both are dictionaries mapping
+                feature scale (e.g. "2") to features. If out_channels is -1, the decoder_output
+                is None.
+        """
+        dp_rate = 0
+        outputs = []
+        for k in range(len(self.depths)):
+            if k == 0:
+                ps = self.patch_size
+                x = nn.Conv(self.dims[k], (ps, ps), strides=(ps, ps))(x)
+                x = nn.LayerNorm(epsilon=1e-6)(x)
+            else:
+                x = nn.LayerNorm(epsilon=1e-6)(x)
+                x = nn.Conv(self.dims[k], (2, 2), strides=(2, 2))(x)
+
+            for _ in range(self.depths[k]):
+                x = _Block(dp_rate, self.layer_scale_init_value)(x, training=training)
+                dp_rate += self.drop_path_rate / (sum(self.depths) - 1)
+
+            outputs.append(x)
+
+        keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
+        encoder_out = dict(zip(keys, outputs))
+
+        if self.out_channels > 0:
+            decoder_out = FPN(self.out_channels)(outputs)
+            decoder_out = dict(zip(keys, decoder_out))
+        else:
+            decoder_out = None
+
+        return encoder_out, decoder_out
+
+    def get_imagenet_weights(self, model_type: str):
+        """Get imagenet weights
+
+        Args:
+            model_type: The expected model specification. This must match the current
+                instance attributes.
+
+                * tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
+                * small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
+                * base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
+                * large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
+                * X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
+
+        Returns:
+            A frozen dict representing weights of the current module
+        """
+
+        init_params = self.init(jnp.zeros[64, 64, 3])["params"]
+        params = _load_weight(
+            self,
+            init_params,
+            _imagenet_weights_urls[f"convnext_{model_type}_22k"],
+        )
