@@ -263,7 +263,7 @@ class Predictor:
         self.model = self.module, new_params
 
     @property
-    def detector(self) -> lacss.module.Detector:
+    def detector(self) -> lacss.modules.Detector:
         return self.module.detector
 
     # FIXME Change the detector without first compile the mode will result
