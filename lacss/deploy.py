@@ -44,14 +44,18 @@ def load_from_pretrained(pretrained):
         try:
             with open(join(pretrained, "config.in")) as f:
                 cfg = json.load(f)
+            module = lacss.modules.Lacss.from_config(cfg)
+
         except:
             raise ValueError(
                 f"Cannot open 'config.in' in {pretrained} as a json config file."
             )
+
         with open(join(pretrained, "weights.pkl")) as f:
             params = pickle.load(f)
 
     else:
+
         if os.path.isfile(pretrained):
             with open(pretrained, "rb") as f:
                 thingy = pickle.load(f)
@@ -70,27 +74,23 @@ def load_from_pretrained(pretrained):
             module = thingy.model
             params = thingy.params
 
-            if not isinstance(module, lacss.modules.Lacss):
-                module = module.bind(dict(params=params))
-                module, params = module.lacss.unbind()
-                params = params["params"]
-
-            cfg = module
-
         else:
             cfg, params = thingy
+
+            if isinstance(cfg, lacss.modules.Lacss):
+                module = cfg
+            else:
+                module = lacss.modules.Lacss.from_config(cfg)
+
+        if not isinstance(module, lacss.modules.Lacss):
+            module = module.bind(dict(params=params))
+            module, params = module._lacss.unbind()
+            params = params["params"]
 
     if "params" in params and len(params) == 1:
         params = params["params"]
 
-    # making a round-trip of module->cfg->module to icnrease backward-compatibility
-    # if isinstance(cfg, nn.Module):
-
-    #     cfg = dataclasses.asdict(cfg)
-
-    # module = lacss.modules.Lacss(**cfg)
-
-    return cfg, freeze(params)
+    return module, freeze(params)
 
 
 @partial(jax.jit, static_argnums=0)

@@ -76,6 +76,14 @@ class Eager:
 class Core(Eager):
     predict = jax.jit(Eager.predict)
 
+    @classmethod
+    def init_fn(cls, key, model, inputs):
+        inputs_obj = Inputs.from_value(inputs)
+
+        state = jax.jit(model.init)(key, *inputs_obj.args, **inputs_obj.kwargs)
+
+        return state
+
 
 class JIT(Core):
     train_step = jax.jit(Core.train_step)
