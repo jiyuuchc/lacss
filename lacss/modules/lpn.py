@@ -1,18 +1,17 @@
-import typing as tp
-from functools import partial
+from __future__ import annotations
+
+from typing import Mapping, Sequence, Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from ..ops import locations_to_labels
-from .common import ChannelAttention
-
-# from typing import List, Optional, Sequence, Tuple, Union
+from lacss.ops import locations_to_labels
+from lacss.types import *
 
 
 class LPN(nn.Module):
-    """Location detection dead
+    """Location detection head
 
     Attributes:
 
@@ -22,14 +21,14 @@ class LPN(nn.Module):
 
     """
 
-    feature_levels: tp.Sequence[int] = (4, 3, 2)
-    conv_spec: tp.Tuple[tp.Sequence[int], tp.Sequence[int]] = ((384, 384, 384, 384), ())
+    feature_levels: Sequence[int] = (4, 3, 2)
+    conv_spec: Tuple[Sequence[int], Sequence[int]] = ((384, 384, 384, 384), ())
     detection_roi: float = 8.0
 
     @nn.compact
     def _process_feature(
-        self, feature: jnp.ndarray
-    ) -> tp.Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        self, feature: ArrayLike
+    ) -> Tuple[ArrayLike, ArrayLike, ArrayLike]:
         conv_spec = self.conv_spec
 
         x = feature
@@ -53,8 +52,8 @@ class LPN(nn.Module):
 
     def __call__(
         self,
-        inputs: dict,
-        scaled_gt_locations: jnp.ndarray = None,
+        inputs: Mapping[str, ArrayLike],
+        scaled_gt_locations: Optional[ArrayLike] = None,
     ) -> dict:
         """
         Args:

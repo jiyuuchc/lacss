@@ -59,12 +59,19 @@ def self_supervised_segmentation_loss(
     height, width, _ = inputs["image"].shape
     _, ps, _ = preds["instance_yc"].shape
 
+    offset_sigma = jnp.asarray(offset_sigma).reshape(-1)
+    offset_scale = jnp.asarray(offset_scale).reshape(-1)
+
     def _max_merge(pred):
         label = jnp.zeros([height + ps, width + ps]) - 1.0e6
         yc, xc = pred["instance_yc"], pred["instance_xc"]
         logit = pred["instance_logit"]
 
-        if "category" in inputs and inputs["category"] is not None:
+        if (
+            offset_sigma.size > 1
+            and "cls_id" in inputs
+            and inputs["cls_id"] is not None
+        ):
             c = inputs["category"].astype(int).squeeze()
         else:
             c = 0
@@ -132,7 +139,7 @@ def supervised_segmentation_loss(preds, labels, **kwargs):
 
     else:
 
-        mask = labels["gt_mask"].astype("float32")
+        mask = labels["gt_image_mask"].astype("float32")
 
     return optax.sigmoid_binary_cross_entropy(preds["fg_pred"], mask).mean()
 

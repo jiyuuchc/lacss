@@ -5,7 +5,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from ..ops import location_matching, sorted_non_max_suppression
+from lacss.ops import location_matching, sorted_non_max_suppression
+from lacss.types import *
 
 
 class Detector(nn.Module):
@@ -157,12 +158,12 @@ class Detector(nn.Module):
 
     def __call__(
         self,
-        scores: jnp.ndarray,
-        regressions: jnp.ndarray,
-        gt_locations: jnp.ndarray = None,
+        scores: Mapping[str, ArrayLike],
+        regressions: Mapping[str, ArrayLike],
+        gt_locations: Optional[ArrayLike] = None,
         *,
-        training: bool = None,
-    ) -> dict:
+        training: Optional[bool] = None,
+    ) -> DataDict:
         """
         Args:
                 scores: {'scale', [H, W, 1]) output from LPN

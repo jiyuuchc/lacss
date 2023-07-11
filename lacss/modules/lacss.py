@@ -1,17 +1,14 @@
-import typing as tp
 from dataclasses import asdict, field
-from functools import partial
 
 import flax.linen as nn
-import jax
 import jax.numpy as jnp
 
-from ..ops import *
-from .auxiliary import *
+from lacss.ops import *
+from lacss.utils import dataclass_from_dict
+
 from .convnext import ConvNeXt
 from .detector import Detector
 from .lpn import LPN
-from .resnet import ResNet
 from .segmentor import Segmentor
 
 
@@ -26,10 +23,10 @@ class Lacss(nn.Module):
 
     """
 
-    backbone: nn.Module = ConvNeXt()
-    lpn: nn.Module = LPN()
-    detector: nn.Module = Detector()
-    segmentor: nn.Module = Segmentor()
+    backbone: ConvNeXt = field(default_factory=ConvNeXt)
+    lpn: LPN = field(default_factory=LPN)
+    detector: Detector = field(default_factory=Detector)
+    segmentor: Segmentor = field(default_factory=Segmentor)
 
     @classmethod
     def from_config(cls, config: dict):
@@ -42,17 +39,15 @@ class Lacss(nn.Module):
             An Lacss instance.
 
         """
-        config_dict = {}
-        if "backbone" in config:
-            config_dict["backbone"] = ConvNeXt(**config["backbone"])
-        if "lpn" in config:
-            config_dict["lpn"] = LPN(**config["lpn"])
-        if "detector" in config:
-            config_dict["detector"] = Detector(**config["detector"])
-        if "segmentor" in config:
-            config_dict["segmentor"] = Segmentor(**config["segmentor"])
+        return dataclass_from_dict(cls, config)
 
-        return cls(**config_dict)
+    def get_config(self) -> dict:
+        """Convert to a configuration dict. Can be serialized with json
+
+        Returns:
+            config: a configuration dict
+        """
+        return asdict(self)
 
     def __call__(
         self,
@@ -128,30 +123,3 @@ class Lacss(nn.Module):
             )
 
         return model_output
-
-
-class LacssWithHelper(nn.Module):
-    cfg: dict = field(default_factory=dict)
-    aux_edge_cfg: tp.Optional[dict] = None
-    aux_fg_cfg: tp.Optional[dict] = None
-
-    def setup(self):
-        self._lacss = Lacss.from_config(self.cfg)
-        if self.aux_edge_cfg is not None:
-            self._aux_edge_module = AuxInstanceEdge(**self.aux_edge_cfg)
-        if self.aux_fg_cfg is not None:
-            self._aux_fg_module = AuxForeground(**self.aux_fg_cfg)
-
-    def __call__(self, image, gt_locations=None, category=None, *, training=False):
-
-        preds = self._lacss(image, gt_locations, training=training)
-
-        if self.aux_edge_cfg is not None:
-
-            preds.update(self._aux_edge_module(image, category=category))
-
-        if self.aux_fg_cfg is not None:
-
-            preds.update(self._aux_fg_module(image, category=category))
-
-        return preds

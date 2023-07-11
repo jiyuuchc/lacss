@@ -1,8 +1,10 @@
-import typing as tp
+from __future__ import annotations
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+
+from lacss.types import *
 
 
 class ChannelAttention(nn.Module):
@@ -11,8 +13,8 @@ class ChannelAttention(nn.Module):
     @nn.compact
     def __call__(
         self,
-        x: jnp.ndarray,
-    ) -> jnp.ndarray:
+        x: ArrayLike,
+    ) -> Array:
 
         orig_shape = x.shape
 
@@ -41,8 +43,8 @@ class SpatialAttention(nn.Module):
     @nn.compact
     def __call__(
         self,
-        x: jnp.ndarray,
-    ) -> jnp.ndarray:
+        x: ArrayLike,
+    ) -> Array:
 
         y = jnp.stack([x.max(axis=-1), x.mean(axis=-1)], axis=-1)
         y = nn.Conv(1, [self.filter_size, self.filter_size])(y)
@@ -59,7 +61,9 @@ class DropPath(nn.Module):
     rate: float
 
     @nn.module.compact
-    def __call__(self, inputs, deterministic: tp.Optional[bool] = True):
+    def __call__(
+        self, inputs: ArrayLike, deterministic: Optional[bool] = True
+    ) -> Array:
         if self.rate == 0.0:
             return inputs
         keep_prob = 1.0 - self.rate
@@ -78,7 +82,7 @@ class FPN(nn.Module):
     out_channels: int = 256
 
     @nn.compact
-    def __call__(self, inputs: tp.Sequence[jnp.ndarray]) -> tp.Sequence[jnp.ndarray]:
+    def __call__(self, inputs: Sequence[ArrayLike]) -> Sequence[Array]:
         out_channels = self.out_channels
 
         outputs = [jax.nn.relu(nn.Dense(out_channels)(x)) for x in inputs]

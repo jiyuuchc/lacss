@@ -1,24 +1,22 @@
-import dataclasses
 import pathlib
-import typing as tp
 from functools import lru_cache, partial
 from pathlib import Path
 
-import cloudpickle
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import orbax.checkpoint
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
-from optax import GradientTransformation
+
+from lacss.types import *
 
 from ..utils import Inputs, _get_name
 from . import strategy
 from .data import *
 from .loss import LossLog
 
-LOSSES = tp.Union[tp.Callable, tp.Sequence[tp.Callable]]
-_PathLike = tp.Union[str, Path]
+LOSSES = Union[LossFunc, Sequence[LossFunc]]
 
 # so that multiple calls return the same obj
 # this avoids JIT when supplying partial func as args
@@ -43,7 +41,6 @@ class Trainer:
         losses: A list of loss function (or other callabels).
         optimizer: An optax optimizer
         seed: RNG seed
-        strategy: Training strategy. See lacss.train.strategy module.
         params: Current model parameters. This is a frozen dict. This is read/write.
         initialized: Whether the model has been initialized with an optimizer and initial weights.
     """
@@ -51,9 +48,9 @@ class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        losses: tp.Optional[tp.Sequence[LOSSES]] = None,
-        optimizer: GradientTransformation = None,
-        seed: int = 42,
+        losses: Optional[LOSSES] = None,
+        optimizer: Optional[Optimizer] = None,
+        seed: Union[int, Array] = 42,
         strategy: type = strategy.JIT,
     ):
         """Constructor
@@ -82,7 +79,7 @@ class Trainer:
 
         # self.reset()
 
-    def reset(self, loss_weights: tp.Optional[tp.Sequence[float]] = None):
+    def reset(self, loss_weights: Optional[Sequence[float]] = None):
         """Reset internal loss value tracking
 
         Args:
@@ -119,11 +116,12 @@ class Trainer:
     def initialized(self):
         return self._initialized
 
-    def initialize(self, dataset, tx: GradientTransformation = None) -> None:
+    def initialize(self, data, tx: Optional[Optimizer] = None) -> None:
         """Initialize the model weights and optimizer states.
 
         Args:
-            dataset: An iterator or generator function to supply the training dataset.
+            data: An iterator or generator function to produce training dataset. It is not
+                used if model is bound with weights already.
                 see [train()](/api/train#lacss.train.trainer.Trainer.train)
             tx: Optional optax optimzier for when the object was constructed without an
                 optimizer
@@ -133,7 +131,7 @@ class Trainer:
 
         if not self._initialized:
             if self.model.scope is None:
-                peek = next(_get_iterator(dataset))
+                peek = next(_get_iterator(data))
                 inputs, _, _ = unpack_x_y_sample_weight(peek)
 
                 self.seed, key = jax.random.split(self.seed)
@@ -153,7 +151,9 @@ class Trainer:
 
         self._initialized = True
 
-    def __call__(self, inputs: tp.Any, *, strategy=None, **kwargs) -> tp.Any:
+    def __call__(
+        self, inputs: Any, *, strategy: Optional[type] = None, **kwargs
+    ) -> Any:
         """Calling the underlying model
 
         Args:
@@ -179,13 +179,19 @@ class Trainer:
 
         return preds
 
-    def compute_loss_log(self):
+    def compute_loss_log(self) -> dict:
         return {
             _get_name(loss_log.loss_fn): loss_log.compute()
             for loss_log in self.loss_logs
         }
 
-    def train(self, dataset, strategy=None, rng_cols=None, **kwargs) -> tp.Iterator:
+    def train(
+        self,
+        dataset: DataSource,
+        strategy: Optional[type] = None,
+        rng_cols: Sequence[str] = None,
+        **kwargs,
+    ) -> Iterator:
         """Create the training iterator
 
         Args:
@@ -246,56 +252,60 @@ class Trainer:
 
             yield batch_logs
 
-    def save_model(self, path: _PathLike, sub_module: tp.Optional[str] = None) -> None:
-        """Save the model in a pickled file. The pickle is a tuple of
-            (module, weights).
+    # def save_model(self, path: _PathLike, sub_module: Optional[str] = None) -> None:
+    #     """Save the model in a pickled file. The pickle is a tuple of
+    #         (module, weights).
 
-        Args:
-            path: The file path.
-            sub_module: Optionally only save a sub_module of the model
-                by specifying the name
-        """
-        module = self.model
-        params = self.params
+    #     Args:
+    #         path: The file path.
+    #         sub_module: Optionally only save a sub_module of the model
+    #             by specifying the name
+    #     """
+    #     module = self.model
+    #     params = self.params
 
-        if sub_module is not None:
-            module = module.bind(dict(params=params))
-            module = getattr(module, sub_module)
-            module, params = module.unbind()
-            params = params["params"]
+    #     if sub_module is not None:
+    #         module = module.bind(dict(params=params))
+    #         module = getattr(module, sub_module)
+    #         module, params = module.unbind()
+    #         params = params["params"]
 
-        if isinstance(path, str):
-            path = pathlib.Path(path)
+    #     if isinstance(path, str):
+    #         path = pathlib.Path(path)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
-            cloudpickle.dump((module, params), f)
+    #     path.parent.mkdir(parents=True, exist_ok=True)
+    #     with open(path, "wb") as f:
+    #         cloudpickle.dump((module, params), f)
 
-    def checkpoint(self, path) -> None:
-        """Make a checkpoint of the trainer. This saves the model as well as
+    def pickle(self, path: PathLike) -> None:
+        """Make a pickle save of the trainer. This saves the model as well as
         the training states.
 
         Args:
             path: The file path.
         """
+        import pickle
+
         if isinstance(path, str):
             path = pathlib.Path(path)
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, "wb") as f:
-            cloudpickle.dump(self, f)
+            pickle.dump(self, f)
 
     @staticmethod
-    def from_checkpoint(path):
-        """Restore from the checkpoint.
+    def restore_from_pickle(path: PathLike):
+        """Restore from the a pickled saved.
 
         Args:
-            path: The checkpoint file path.
+            path: The pickle file path.
 
         Returns:
             A new trainer object.
         """
+        import pickle
+
         if isinstance(path, str):
             path = pathlib.Path(path)
 
@@ -304,14 +314,16 @@ class Trainer:
         except BaseException as e:
             raise OSError(f"Could not load the checkpoint. Got exception: {e}")
 
-        trainer = cloudpickle.loads(_bytes)
+        trainer = pickle.loads(_bytes)
 
         if not isinstance(trainer, Trainer):
             raise TypeError("The saved obj is not a Trainer checkpoint")
 
         return trainer
 
-    def test(self, dataset, metrics, strategy=None) -> tp.Iterator:
+    def test(
+        self, dataset: DataSource, metrics: Callable, strategy: Optional[type] = None
+    ) -> Iterator:
         """Create test/validation iterator.
 
         Args:

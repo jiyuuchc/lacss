@@ -79,7 +79,7 @@ def supervised_instance_loss(preds, labels, **kwargs):
     return _mean_over_boolean_mask(loss, instance_mask)
 
 
-def self_supervised_instance_loss(preds, *, soft_label: bool = True):
+def self_supervised_instance_loss(preds, *, soft_label: bool = True, **kwargs):
     """Unsupervised instance loss
 
     Args:
@@ -151,7 +151,7 @@ def weakly_supervised_instance_loss(
         loss = jnp.zeros_like(instances)
     else:
         if isinstance(labels, dict):
-            seg = labels["gt_mask"].astype("float32")
+            seg = labels["gt_image_mask"].astype("float32")
         else:
             seg = labels.astype("float32")
         seg = jnp.pad(seg, padding_size)

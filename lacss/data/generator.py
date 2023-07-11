@@ -1,5 +1,6 @@
 """ Common data generators.
 """
+from __future__ import annotations
 
 import glob
 import json

@@ -1,11 +1,12 @@
-from typing import Callable
+from __future__ import annotations
 
 import jax
+import jax.numpy as jnp
+
+from lacss.types import *
 
 from .boxes import box_iou_similarity
 from .locations import distance_similarity
-
-jnp = jax.numpy
 
 NMS_TILE_SIZE = 512
 
@@ -19,7 +20,7 @@ def _suppression_loop_body(inputs):
     Args:
         inputs: tuple
             idx: current slice
-            boxes: a tensor with a shape of [N, 4].
+            boxes: a tensor with a shape of [N, 4] or [N, 2].
             num_selected: number of selected boxes so far
             threshold: float
     Returns:
@@ -77,12 +78,12 @@ def _suppression_loop_body(inputs):
 
 
 def sorted_non_max_suppression(
-    scores,
-    boxes,
+    scores: ArrayLike,
+    boxes: ArrayLike,
     max_output_size: int,
     threshold: float = 0.5,
     min_score: float = 0,
-):
+) -> Tuple[Array, Array]:
     """non-maximum suppression for either bboxes or points.
 
     Assumption:
@@ -121,6 +122,7 @@ def sorted_non_max_suppression(
     num_boxes += pad
     boxes = boxes.reshape(-1, NMS_TILE_SIZE, c)
 
+    # process all tiles until generating enough output
     def _trivial_suppress_all(inputs):
         (
             idx,
@@ -131,16 +133,33 @@ def sorted_non_max_suppression(
         boxes = boxes.at[idx].set(-1)
         return boxes, num_outputs
 
-    # process all tiles until generating enough output
-    num_selected = 0
-    for idx in range(num_boxes // NMS_TILE_SIZE):
-        boxes, num_selected = jax.lax.cond(
+    def _inner_loop_func(idx, val):
+        boxes, num_selected = val
+        return jax.lax.cond(
             (scores[idx * NMS_TILE_SIZE] >= min_score)
             & (num_selected < max_output_size),
             _suppression_loop_body,
             _trivial_suppress_all,
             (idx, boxes, num_selected, threshold),
         )
+
+    num_selected = 0
+    boxes, num_selected = jax.lax.fori_loop(
+        0,
+        num_boxes // NMS_TILE_SIZE,
+        _inner_loop_func,
+        (boxes, num_selected),
+    )
+
+    # num_selected = 0
+    # for idx in range(num_boxes // NMS_TILE_SIZE):
+    #     boxes, num_selected = jax.lax.cond(
+    #         (scores[idx * NMS_TILE_SIZE] >= min_score)
+    #         & (num_selected < max_output_size),
+    #         _suppression_loop_body,
+    #         _trivial_suppress_all,
+    #         (idx, boxes, num_selected, threshold),
+    #     )
 
     # reshape boxes back
     boxes = boxes.reshape(-1, c)

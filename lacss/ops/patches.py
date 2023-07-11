@@ -2,21 +2,23 @@
 
     All functions here takes unbatched input. Use vmap to convert to batched data
 """
+from __future__ import annotations
 
 from functools import partial
-from typing import Dict, Optional, Sequence, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from lacss.types import *
 
 from .boxes import box_iou_similarity
 from .image import sub_pixel_samples
 
 
 def gather_patches(
-    features: jnp.ndarray, locations: jnp.ndarray, patch_size: int
-) -> tuple:
+    features: ArrayLike, locations: ArrayLike, patch_size: int
+) -> Tuple[Array, Array, Array, Array]:
     """extract feature patches according to a list of locations
 
     Args:
@@ -70,7 +72,7 @@ def _get_patch_data(pred):
 
 
 def bboxes_of_patches(
-    pred: Union[Sequence, Dict], threshold: float = 0.5
+    pred: Union[Sequence, DataDict], threshold: float = 0.5
 ) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
@@ -106,10 +108,10 @@ def bboxes_of_patches(
 
 
 def indices_of_patches(
-    pred: Union[Sequence, Dict],
+    pred: Union[Sequence, DataDict],
     input_size: Tuple[int, int] = None,
     threshold: float = 0.5,
-) -> tuple:
+) -> Array:
     """Compute yx coodinates of all segmented instances
 
     Args:
@@ -138,8 +140,8 @@ def indices_of_patches(
 
 
 def iou_patches_and_labels(
-    pred: dict, labels: jnp.ndarray, BLOCK_SIZE: int = 128, threshold: float = 0.5
-) -> jnp.ndarray:
+    pred: DataDict, labels: ArrayLike, BLOCK_SIZE: int = 128, threshold: float = 0.5
+) -> Array:
     """Compute iou between prediction and ground truth label.
 
     Args:
@@ -181,8 +183,8 @@ def iou_patches_and_labels(
 
 
 def patches_to_segmentations(
-    pred: dict, input_size: Tuple[int, int], threshold: float = 0.5
-) -> jnp.ndarray:
+    pred: DataDict, input_size: Shape, threshold: float = 0.5
+) -> Array:
     """Expand the predicted patches to the full image size.
     The default model segmentation output shows only a small patch around each instance. This
     function expand each patch to the size of the orginal image.
@@ -207,13 +209,13 @@ def patches_to_segmentations(
 
 
 def patches_to_label(
-    pred: dict,
-    input_size: Tuple[int, int],
-    mask: Optional[jnp.ndarray] = None,
+    pred: DataDict,
+    input_size: Shape,
+    mask: Optional[ArrayLike] = None,
     score_threshold: float = 0.5,
     threshold: float = 0.5,
     min_cell_area: int = 0,
-) -> jnp.ndarray:
+) -> Array:
     """convert patch output to the image label
 
     Args:
@@ -250,7 +252,7 @@ def patches_to_label(
     return label
 
 
-def ious_of_patches_from_same_image(pred: dict, threshold: float = 0.5) -> jnp.ndarray:
+def ious_of_patches_from_same_image(pred: DataDict, threshold: float = 0.5) -> Array:
     """Compute IOUs among instances from the same image. Most likely used for nms.
 
     Args:
@@ -301,7 +303,7 @@ def ious_of_patches_from_same_image(pred: dict, threshold: float = 0.5) -> jnp.n
     return mask_ious
 
 
-def non_max_suppress_predictions(pred: dict, iou_threshold: float = 0.6) -> jnp.ndarray:
+def non_max_suppress_predictions(pred: DataDict, iou_threshold: float = 0.6) -> Array:
     """Perform nms on the model prediction based on mask IOU
 
     Args:
@@ -329,8 +331,9 @@ _sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
 
 
 def rescale_patches(
-    pred: dict, scale: float
-) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    pred: DataDict,
+    scale: float,
+) -> Tuple[Array, Array, Array]:
     """Rescale/resize instance outputs in a sub-pixel accurate way.
     If the input image was rescaled, this function take care of rescaling the predictions
     to the orginal coodinates.
@@ -345,7 +348,6 @@ def rescale_patches(
         yy: The y-coordinates of the patches in mesh-grid format
         xx: The x-coordinates of the patches in mesh-grid format
     """
-
     new_y0 = (pred["instance_yc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
     new_x0 = (pred["instance_xc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
     patch = pred["instance_output"]
@@ -359,12 +361,12 @@ def rescale_patches(
         jnp.floor(new_x0[:, None, None]).astype(int) + xx
     )  # center indexing in new scale
 
-    rel_yy = (yy + 0.5) / scale - pred["instance_yc"][
-        :, :1, :1
-    ]  # edge indexing in old scale
-    rel_xx = (xx + 0.5) / scale - pred["instance_xc"][
-        :, :1, :1
-    ]  # edge indexing in old scale
+    # edge indexing in old scale
+    rel_yy = (yy + 0.5) / scale
+    rel_yy -= pred["instance_yc"][:, :1, :1]
+    rel_xx = (xx + 0.5) / scale
+    rel_xx -= pred["instance_xc"][:, :1, :1]
+
     new_patch = _sampling_op(
         patch,
         jnp.stack([rel_yy, rel_xx], axis=-1),

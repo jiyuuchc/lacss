@@ -1,261 +1,199 @@
 #!/usr/bin/env python
 
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 
 import dataclasses
-import itertools
-import os
-import pickle
-from functools import partial
-
-from os.path import join
-
-import flax.linen as nn
-import jax
-import jax.numpy as jnp
-import numpy as np
-import optax
-
-from flax.core.frozen_dict import freeze, unfreeze
-from flax.training.train_state import TrainState
-from jax.config import config
+import json
+import logging
 from pathlib import Path
-from tqdm import tqdm
+from pprint import pprint
 
-import lacss
-
-# import warnings
-# warnings.simplefilter(action='ignore', category=FutureWarning)
-
-try:
-    from . import data
-except:
-    import data
-
+import optax
+import orbax.checkpoint
 import typer
+from data import augment, get_cell_type_and_scaling, remove_redundant
+from flax.core.frozen_dict import freeze, unfreeze
+
+import lacss.data
+import lacss.train
+from lacss.deploy import load_from_pretrained
+from lacss.types import *
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-SIGMAS = (15, 15, 10, 15, 15, 12, 15, 12)
+
+def train_data(
+    datapath: Path,
+    *,
+    target_size=[544, 544],
+    v1_scaling=False,
+) -> Iterator:
+    def _train_parser(inputs):
+        ver = 1 if v1_scaling else 2
+        cell_type, default_scale = tf.py_function(
+            lambda x: get_cell_type_and_scaling(x, version=ver),
+            [inputs["filename"]],
+            (tf.int32, tf.float32),
+        )
+
+        del inputs["masks"]
+        del inputs["bboxes"]
+
+        inputs = augment(inputs, default_scale, target_size)
+
+        n_locs = tf.shape(inputs["centroids"])[0]
+        pad_size = (n_locs - 1) // 1024 * 1024 + 1024 - n_locs
+        gt_locations = tf.pad(
+            inputs["centroids"], [[0, pad_size], [0, 0]], constant_values=-1
+        )
+
+        return dict(
+            image=tf.ensure_shape(inputs["image"], target_size + [1]),
+            gt_locations=gt_locations,
+            cls_id=cell_type,
+        )
+
+    ds = (
+        lacss.data.dataset_from_coco_annotations(
+            datapath / "annotations" / "LIVECell" / "livecell_coco_train.json",
+            datapath / "images" / "livecell_train_val_images",
+            [520, 704, 1],
+        )
+        .map(remove_redundant)
+        .cache(str(datapath / "train_cache"))
+        .repeat()
+        .map(_train_parser)
+        .filter(lambda x: tf.shape(x["gt_locations"])[0] > 0)
+        .prefetch(10)
+    )
+
+    print("Train dataset is: ")
+    pprint(ds.element_spec)
+
+    return lacss.train.TFDatasetAdapter(ds, steps=-1).get_dataset()
 
 
-class FgAcc:
-    def __init__(self):
-        self.cnts = 0.0
-        self.acc = 0.0
+def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
+    def _val_parser(inputs):
+        del inputs["masks"]
 
-    def update(self, inputs, preds, gt_labels, **kwargs):
-        pred_masks = preds["fg_pred"]
-        pred_masks = (pred_masks >= 0).astype(int)
-        gt_masks = (gt_labels > 0).astype(int)
-        acc = (pred_masks == gt_masks).mean()
+        ver = 1 if v1_scaling else 2
+        cell_type, default_scale = tf.py_function(
+            lambda x: get_cell_type_and_scaling(x, version=ver),
+            [inputs["filename"]],
+            (tf.int32, tf.float32),
+        )
 
-        self.acc += acc
-        self.cnts += 1
+        inputs["image"] = tf.image.per_image_standardization(inputs["image"])
 
-    def compute(self):
-        return self.acc / self.cnts
+        h, w, _ = inputs["image"].shape
+        h = tf.round(h * default_scale)
+        w = tf.round(w * default_scale)
+        inputs = lacss.data.resize(inputs, target_size=[h, w])
 
+        return dict(image=inputs["image"], cls_id=cell_type,), dict(
+            gt_locations=inputs["centroids"],
+            gt_bboxes=inputs["bboxes"],
+        )
 
-edge_net_configs = (
-    (32, 32),
-    (32, 32, 32),
-    (64, 64, 128, 128),
-)
+    ds = (
+        lacss.data.dataset_from_coco_annotations(
+            datapath / "annotations" / "LIVECell" / "livecell_coco_val.json",
+            datapath / "images" / "livecell_train_val_images",
+            [520, 704, 1],
+        )
+        .map(remove_redundant)
+        .cache(str(datapath / "val_cache"))
+        .map(_val_parser)
+        .prefetch(10)
+    )
 
-net_configs = (
-    (16, 32, 64),
-    (16, 32, 64, 128),
-    (16, 32, 64, 128, 256),
-)
+    print("Val dataset is:")
+    pprint(ds.element_spec)
+
+    return lacss.train.TFDatasetAdapter(ds, steps=-1).get_dataset()
 
 
 @app.command()
 def run_training(
-    transfer: str = "../../cnsp4.pkl",
+    config: Path,
+    transfer: Path = None,
     datapath: Path = Path("../../livecell_dataset/"),
     logpath: Path = Path("."),
     seed: int = 42,
-    batchsize: int = 1,
-    n_epochs: int = 15,
-    warmup_epochs: int = 0,
-    steps_per_epoch: int = 3500,
+    n_steps: int = 90000,
+    validation_interval: int = 4500,
+    warmup_steps: int = 9000,
     lr: float = 0.001,
-    init_epoch: int = 0,
-    size_loss: float = 0.01,
-    n_buckets: int = 4,
-    cell_type: int = -1,
+    offset_sigma: float = 20.0,
     offset_scale: float = 2.0,
-    dp_rate: float = 0.2,
-    edge_net_config: int = 0,
-    net_config: int = 0,
-    share_weights: bool = False,
+    size_loss: float = 0.01,
+    v1_scaling: bool = False,
 ):
-    import lacss.deploy
-
     tf.random.set_seed(seed)
 
-    steps_per_epoch = steps_per_epoch // batchsize
+    logpath.mkdir(parents=True, exist_ok=True)
 
-    try:
-        os.makedirs(logpath)
-    except:
-        pass
+    logging.info(f"Logging to {logpath}")
 
-    train_data = data.train_data(datapath, n_buckets, batchsize, cell_type=cell_type)
-    val_data = data.val_data(datapath, cell_type=cell_type, batch=False)
+    train_gen = train_data(datapath, v1_scaling=v1_scaling)
+    val_gen = val_data(datapath, v1_scaling=v1_scaling)
 
-    # model
+    with open(config) as f:
+        model_cfg = json.load(f)
 
-    with open(transfer, "rb") as f:
-        cp = pickle.load(f)
-        if isinstance(cp, lacss.train.Trainer):
-            trainer = cp
+    logging.info(f"Model configuration loaded from {config}")
 
-        else:
-            lacss_cfg, params = cp
+    trainer = lacss.train.LacssTrainer(
+        model_cfg,
+        dict(n_cls=8),
+        seed=seed,
+    )
 
-            if isinstance(lacss_cfg, nn.Module):
-                lacss_cfg = dataclasses.asdict(lacss_cfg)
-            lacss_cfg = unfreeze(lacss_cfg)
+    trainer.initialize(train_gen, optax.adamw(lr))
 
-            if "params" in params:
-                params = params["params"]
-            params = freeze(params)
+    cp_mngr = orbax.checkpoint.CheckpointManager(
+        logpath,
+        trainer.get_checkpointer(),
+    )
 
-            lacss_cfg["backbone"]["drop_path_rate"] = dp_rate
+    if len(cp_mngr.all_steps()) > 0:
+        trainer.restore_from_checkpoint(cp_mngr)
 
-            cfg = dict(
-                cfg=lacss_cfg,
-                aux_edge_cfg=dict(
-                    conv_spec=edge_net_configs[edge_net_config],
-                    n_groups=8,
-                )
-                if not share_weights
-                else None,
-                aux_fg_cfg=dict(
-                    n_groups=8,
-                    conv_spec=net_configs[net_config],
-                    share_weights=share_weights,
-                ),
-            )
-            model = lacss.modules.lacss.LacssWithHelper(**cfg)
+    elif transfer is not None:
+        _, transfer_params = load_from_pretrained(transfer)
+        params = unfreeze(trainer.params)
+        params["lacss"] = transfer_params
+        trainer.params = freeze(params)
 
-            trainer = lacss.train.Trainer(
-                model=model,
-                optimizer=optax.adamw(lr * batchsize),
-                losses=[],
-                seed=seed,
-                strategy=lacss.train.strategy.VMapped,
-            )
+        logging.info(f"Transfer model configuration and weights from {transfer}")
 
-            trainer.initialize(val_data)
+    print("Model configuration:")
+    pprint(
+        dataclasses.asdict(trainer.model),
+        sort_dicts=False,
+    )
 
-            new_params = unfreeze(trainer.params)
-            new_params.update(dict(_lacss=params))
-            trainer.state = trainer.state.replace(params=freeze(new_params))
-
-    file_writer = tf.summary.create_file_writer(str(logpath / "train"))
-    to_label = lacss.ops.patches_to_label
-
-    def _epoch_end(epoch, logs=None, eval=False):
-        print(f"epoch - {epoch}")
-        if logs is not None:
-            print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
-
-        with file_writer.as_default():
-            for k, v in logs.items():
-                tf.summary.scalar(k, v, epoch)
-
-        # trainer.save_model(logpath/f"weight-{epoch}.pkl", "_lacss")
-        trainer.checkpoint(logpath / f"cp-{epoch}")
-        trainer.reset()
-
-        if eval:
-            val_metrics = [
-                lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
-                lacss.metrics.BoxAP([0.5, 0.75]),
-                FgAcc(),
-            ]
-            var_logs = trainer.test_and_compute(
-                val_data, val_metrics, strategy=lacss.train.JIT
-            )
-            for k, v in var_logs.items():
-                print(f"{k}: {v}")
-
-        # for c in range(8) if cell_type == -1 else [cell_type]:
-        # data = itertools.dropwhile(lambda x: x["category"] != c, val_data())
-        # inputs, label = next(data)
-        # preds = trainer(inputs, strategy=lacss.train.JIT)
-        # label = to_label(preds, inputs["image"].shape[:2])
-        # output = jnp.concatenate(
-        # [
-        # inputs["image"][None,...]
-        # label[None,...,None] / label.max(),
-        # jax.nn.sigmoid(preds["fg_pred"][None, ..., None]),
-        # ],
-        # axis=2,
-        # )
-
-    #
-    # with file_writer.as_default():
-    # tf.summary.image(f"img_{c}", output, epoch)
-
-    epoch = init_epoch
-
-    # warmup
-
-    if epoch < warmup_epochs:
-        trainer.losses = [
-            lacss.losses.LPNLoss(),
-            lacss.losses.SelfSupervisedInstanceLoss(False),
-            lacss.losses.AuxSizeLoss(0.02),
-            lacss.losses.AuxEdgeLoss(),
-            lacss.losses.AuxSegLoss(
-                offset_sigma=100.0,
-                offset_scale=1.0,
-            ),
-        ]
-
-        pb = tqdm(
-            trainer.train(train_data, rng_cols=["droppath", "augment"], training=True)
-        )
-
-        for steps, logs in enumerate(pb):
-            if (steps + 1) % steps_per_epoch == 0:
-                epoch += 1
-                _epoch_end(epoch, logs)
-
-                if epoch >= warmup_epochs:
-                    break
-
-    # train
-    if epoch < n_epochs:
-        trainer.losses = [
-            lacss.losses.LPNLoss(),
-            lacss.losses.SelfSupervisedInstanceLoss(),
-            lacss.losses.AuxSizeLoss(size_loss),
-            lacss.losses.AuxEdgeLoss(),
-            lacss.losses.AuxSegLoss(
-                offset_sigma=SIGMAS,
-                offset_scale=offset_scale,
-            ),
-        ]
-
-        pb = tqdm(
-            trainer.train(train_data, rng_cols=["droppath", "augment"], training=True)
-        )
-        for steps, logs in enumerate(pb):
-            if (steps + 1) % steps_per_epoch == 0:
-                epoch += 1
-                _epoch_end(epoch, logs, eval=True)
-
-                if epoch >= n_epochs:
-                    break
+    trainer.do_training(
+        train_gen,
+        val_gen,
+        n_steps=n_steps,
+        warmup_steps=warmup_steps,
+        validation_interval=validation_interval,
+        checkpoint_manager=cp_mngr,
+        sigma=offset_sigma,
+        pi=offset_scale,
+    )
 
 
 if __name__ == "__main__":
-    # config.update("jax_debug_nans", True)
+
+    logging.basicConfig(level=logging.INFO)
+
     app()

@@ -1,152 +1,172 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
-import dataclasses
-import json
-import logging
 import os
-from functools import partial
-from logging.config import valid_ident
-from os.path import join
 
-import flax.linen as nn
-import jax
-import jax.numpy as jnp
-import numpy as np
-import optax
-
-import lacss
-
-try:
-    from . import data
-except:
-    import data
-
-import typer
-
-app = typer.Typer(pretty_exceptions_enable=False)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import tensorflow as tf
 
 tf.config.set_visible_devices([], "GPU")
 
+import dataclasses
+import json
+import logging
+from pathlib import Path
 
-def get_model(cmd, config, seed):
+import numpy as np
+import optax
+import orbax.checkpoint
+import typer
+from data import tfds_from_data_path
 
-    losses = [
-        lacss.losses.LPNLoss(),
-        lacss.losses.SupervisedInstanceLoss(),
-    ]
+import lacss.data
+import lacss.train
+from lacss.deploy import load_from_pretrained
 
-    if cmd == "resume":
-        cp = lacss.train.Trainer.from_checkpoint(config)
-        assert isinstance(cp, lacss.train.Trainer)
-        trainer = cp
-        logging.info(f"Loaded checkpoint {config}")
+app = typer.Typer(pretty_exceptions_enable=False)
 
-    elif cmd == "transfer":
 
-        from lacss.deploy import _from_pretrained
+def train_parser(inputs):
+    image = inputs["image"]
+    gt_locations = inputs["centroids"]
+    mask_labels = tf.cast(inputs["label"], tf.float32)
 
-        module, params = _from_pretrained(config)
-        model = module.bind(dict(params=params))
+    if tf.random.uniform([]) >= 0.5:
+        image = tf.image.transpose(image)
+        gt_locations = gt_locations[..., ::-1]
+        mask_labels = tf.transpose(mask_labels)
 
-        trainer = lacss.train.Trainer(
-            model=model,
-            losses=losses,
-            seed=seed,
-            strategy=lacss.train.strategy.VMapped,
+    x_data = dict(
+        image=image,
+        gt_locations=gt_locations,
+    )
+    y_data = dict(
+        gt_labels=mask_labels,
+    )
+
+    return x_data, y_data
+
+
+def train_data(datapath, n_buckets, batchsize, ch=0):
+    ds_train = (
+        tfds_from_data_path(datapath / "train", ch=ch)
+        # .cache(str(datapath / "train_cache"))
+        .repeat()
+        .map(train_parser)
+        .filter(lambda x, _: tf.size(x["gt_locations"]) > 0)
+        .bucket_by_sequence_length(
+            element_length_func=lambda x, _: tf.shape(x["gt_locations"])[0],
+            bucket_boundaries=list(
+                np.arange(1, n_buckets + 1) * (2560 // n_buckets) + 1
+            ),
+            bucket_batch_sizes=(batchsize,) * (n_buckets + 1),
+            padding_values=-1.0,
+            pad_to_bucket_boundary=True,
         )
+    )
 
-    elif cmd == "config":
-        with open(config) as f:
-            model_cfg = json.load(f)
-        model = lacss.modules.Lacss(**model_cfg)
+    return lacss.train.TFDatasetAdapter(ds_train, steps=-1).get_dataset()
 
-        trainer = lacss.train.Trainer(
-            model=model,
-            losses=losses,
-            seed=seed,
-            strategy=lacss.train.strategy.VMapped,
-        )
 
-    else:
-        raise ValueError('Must be one of "resume", "transfer" or "config"')
+def val_parser(data):
+    return (
+        dict(
+            image=data["image"],
+        ),
+        dict(
+            gt_bboxes=data["bboxes"],
+            gt_locations=data["centroids"],
+            # gt_labels=data["label"],
+        ),
+    )
 
-    return trainer
+
+def val_data(datapath, ch=0):
+    ds_val = (
+        tfds_from_data_path(datapath / "val", imgsize=[256, 256, 2], ch=ch)
+        # .cache(str(datapath / "val_cache"))
+        .map(val_parser)
+    )
+
+    return lacss.train.TFDatasetAdapter(ds_val).get_dataset()
 
 
 @app.command()
 def run_training(
-    cmd: str,
-    config: str,
-    datapath: str = "../../../tissue_net/",
-    logpath: str = "./",
+    config: Path,
+    transfer: Path = None,
+    datapath: Path = Path("../../tissue_net"),
+    logpath: Path = Path("."),
     seed: int = 42,
-    n_buckets: int = 4,
     batchsize: int = 1,
-    init_epoch: int = 0,
-    n_epochs: int = 10,
-    steps_per_epoch: int = 10000,
+    n_steps: int = 100000,
+    validation_interval: int = 10000,
     lr: float = 0.002,
+    n_buckets: int = 4,
     nucleus: bool = False,
 ):
     tf.random.set_seed(seed)
-    np.random.seed(seed)
-    steps_per_epoch = steps_per_epoch // batchsize
-    ch = 1 if nucleus else 0
 
-    try:
-        os.makedirs(logpath)
-    except:
-        pass
+    logpath.mkdir(parents=True, exist_ok=True)
 
-    train_gen = data.train_data_supervised(datapath, n_buckets, batchsize, ch=ch)
-    val_gen = data.val_data_supervised(datapath, n_buckets, 4, ch=ch)
+    logging.info(f"Logging to {logpath.resolve()}")
 
-    trainer = get_model(cmd, config, seed)
-
-    if not trainer.initialized:
-        schedules = [
-            optax.cosine_decay_schedule(lr * batchsize, steps_per_epoch)
-        ] * n_epochs
-        boundaries = [steps_per_epoch * i for i in range(1, n_epochs)]
-        schedule = optax.join_schedules(schedules, boundaries)
-
-        trainer.initialize(train_gen, optax.adam(schedule))
-        # trainer.initialize(train_gen, optax.adam(lr))
-
-    logging.info(
-        json.dumps(dataclasses.asdict(trainer.model), indent=2, sort_keys=True)
+    train_gen = train_data(
+        datapath,
+        n_buckets,
+        batchsize,
+        ch=1 if nucleus else 0,
     )
 
-    epoch = init_epoch
-    for steps, logs in enumerate(
-        trainer.train(train_gen, rng_cols=["droppath"], training=True)
-    ):
+    val_gen = val_data(
+        datapath,
+        ch=1 if nucleus else 0,
+    )
 
-        if (steps + 1) % steps_per_epoch == 0:
-            epoch += 1
-            print(f"epoch - {epoch}")
-            print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
+    schedules = [optax.cosine_decay_schedule(lr * batchsize, validation_interval)] * 100
+    boundaries = [validation_interval * i for i in range(1, 100)]
+    schedule = optax.join_schedules(schedules, boundaries)
 
-            trainer.checkpoint(join(logpath, f"cp-{epoch}"))
-            trainer.reset()
+    with open(config) as f:
+        model_cfg = json.load(f)
 
-            val_metrics = [
-                lacss.metrics.LoiAP([0.2, 0.5, 1.0]),
-                lacss.metrics.BoxAP([0.5, 0.75]),
-            ]
-            var_logs = trainer.test_and_compute(val_gen, metrics=val_metrics)
-            for k, v in var_logs.items():
-                print(f"{k}: {v}")
+    logging.info(f"Model configuration loaded from {config}")
 
-            if epoch >= n_epochs:
-                break
+    trainer = lacss.train.LacssTrainer(
+        model_cfg,
+        seed=seed,
+        strategy=lacss.train.VMapped,
+    )
+
+    trainer.initialize(train_gen, optax.adamw(schedule))
+
+    cp_mngr = orbax.checkpoint.CheckpointManager(
+        logpath,
+        trainer.get_checkpointer(),
+    )
+
+    if len(cp_mngr.all_steps()) > 0:
+        trainer.restore_from_checkpoint(cp_mngr)
+
+    elif transfer is not None:
+        _, params = load_from_pretrained(transfer)
+        trainer.params = params
+
+        logging.info(f"Transfer model configuration and weights from {transfer}")
+
+    print(dataclasses.asdict(trainer.model))
+
+    trainer.do_training(
+        train_gen,
+        val_gen,
+        n_steps=n_steps,
+        validation_interval=validation_interval,
+        checkpoint_manager=cp_mngr,
+    )
 
 
 if __name__ == "__main__":
-    # import warnings
-    # warnings.simplefilter(action='ignore', category=FutureWarning)
 
     logging.basicConfig(level=logging.INFO)
 

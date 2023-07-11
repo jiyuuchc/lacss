@@ -4,6 +4,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from lacss.types import *
+
 from .common import *
 
 """ Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
@@ -23,7 +25,7 @@ class _Block(nn.Module):
     kernel_size: int = 7
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training=None) -> jnp.ndarray:
+    def __call__(self, x: ArrayLike, *, training: Optional[bool] = None) -> Array:
         dim = x.shape[-1]
         ks = self.kernel_size
         scale = self.layer_scale_init_value
@@ -65,63 +67,6 @@ _imagenet_weights_urls = {
 }
 
 
-def _load_weight(jax_model, jax_params, url):
-    import torch
-    from flax.core.frozen_dict import freeze, unfreeze
-
-    def t(m, new_value):
-        new_value = jnp.array(new_value)
-        assert m.shape == new_value.shape
-        m = new_value
-
-    checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu")
-    params = checkpoint["model"]
-    jax_params = unfreeze(jax_params)
-
-    cnt = 0
-    for i in range(4):
-        for k in range(jax_model.depths[i]):
-            block = jax_params[f"_Block_{cnt}"]
-            t(block["gamma"], params[f"stages.{i}.{k}.gamma"])
-            t(block["Conv_0"]["bias"], params[f"stages.{i}.{k}.dwconv.bias"])
-            t(
-                block["Conv_0"]["kernel"],
-                params[f"stages.{i}.{k}.dwconv.weight"].permute(2, 3, 1, 0),
-            )
-            t(block["LayerNorm_0"]["bias"], params[f"stages.{i}.{k}.norm.bias"])
-            t(block["LayerNorm_0"]["scale"], params[f"stages.{i}.{k}.norm.weight"])
-            t(block["Dense_0"]["bias"], params[f"stages.{i}.{k}.pwconv1.bias"])
-            t(
-                block["Dense_0"]["kernel"],
-                params[f"stages.{i}.{k}.pwconv1.weight"].transpose(0, 1),
-            )
-            t(block["Dense_1"]["bias"], params[f"stages.{i}.{k}.pwconv2.bias"])
-            t(
-                block["Dense_1"]["kernel"],
-                params[f"stages.{i}.{k}.pwconv2.weight"].transpose(0, 1),
-            )
-
-            cnt += 1
-
-    norm = jax_params[f"LayerNorm_0"]
-    t(norm["bias"], params["downsample_layers.0.1.bias"])
-    t(norm["scale"], params["downsample_layers.0.1.weight"])
-
-    conv = jax_params[f"Conv_0"]
-    t(conv["bias"], params["downsample_layers.0.0.bias"])
-    t(conv["kernel"], params["downsample_layers.0.0.weight"].permute(2, 3, 1, 0))
-
-    for i in range(1, 4):
-        norm = jax_params[f"LayerNorm_{i}"]
-        t(norm["bias"], params[f"downsample_layers.{i}.0.bias"])
-        t(norm["scale"], params[f"downsample_layers.{i}.0.weight"])
-        conv = jax_params[f"Conv_{i}"]
-        t(conv["bias"], params[f"downsample_layers.{i}.1.bias"])
-        t(conv["kernel"], params[f"downsample_layers.{i}.1.weight"].permute(2, 3, 1, 0))
-
-    return freeze(jax_params)
-
-
 class ConvNeXt(nn.Module):
     """ConvNeXt CNN backbone
 
@@ -144,7 +89,9 @@ class ConvNeXt(nn.Module):
     out_channels: int = 384
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training: bool = None) -> tuple:
+    def __call__(
+        self, x: ArrayLike, *, training: Optional[bool] = None
+    ) -> Tuple[DataDict, DataDict]:
         """
         Args:
             x: Image input.
@@ -183,7 +130,66 @@ class ConvNeXt(nn.Module):
 
         return encoder_out, decoder_out
 
-    def get_imagenet_weights(self, model_type: str):
+    def _load_weight(self, jax_params, url):
+        import torch
+        from flax.core.frozen_dict import freeze, unfreeze
+
+        def t(m, new_value):
+            new_value = jnp.array(new_value)
+            assert m.shape == new_value.shape
+            m = new_value
+
+        checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu")
+        params = checkpoint["model"]
+        jax_params = unfreeze(jax_params)
+
+        cnt = 0
+        for i in range(4):
+            for k in range(self.depths[i]):
+                block = jax_params[f"_Block_{cnt}"]
+                t(block["gamma"], params[f"stages.{i}.{k}.gamma"])
+                t(block["Conv_0"]["bias"], params[f"stages.{i}.{k}.dwconv.bias"])
+                t(
+                    block["Conv_0"]["kernel"],
+                    params[f"stages.{i}.{k}.dwconv.weight"].permute(2, 3, 1, 0),
+                )
+                t(block["LayerNorm_0"]["bias"], params[f"stages.{i}.{k}.norm.bias"])
+                t(block["LayerNorm_0"]["scale"], params[f"stages.{i}.{k}.norm.weight"])
+                t(block["Dense_0"]["bias"], params[f"stages.{i}.{k}.pwconv1.bias"])
+                t(
+                    block["Dense_0"]["kernel"],
+                    params[f"stages.{i}.{k}.pwconv1.weight"].transpose(0, 1),
+                )
+                t(block["Dense_1"]["bias"], params[f"stages.{i}.{k}.pwconv2.bias"])
+                t(
+                    block["Dense_1"]["kernel"],
+                    params[f"stages.{i}.{k}.pwconv2.weight"].transpose(0, 1),
+                )
+
+                cnt += 1
+
+        norm = jax_params[f"LayerNorm_0"]
+        t(norm["bias"], params["downsample_layers.0.1.bias"])
+        t(norm["scale"], params["downsample_layers.0.1.weight"])
+
+        conv = jax_params[f"Conv_0"]
+        t(conv["bias"], params["downsample_layers.0.0.bias"])
+        t(conv["kernel"], params["downsample_layers.0.0.weight"].permute(2, 3, 1, 0))
+
+        for i in range(1, 4):
+            norm = jax_params[f"LayerNorm_{i}"]
+            t(norm["bias"], params[f"downsample_layers.{i}.0.bias"])
+            t(norm["scale"], params[f"downsample_layers.{i}.0.weight"])
+            conv = jax_params[f"Conv_{i}"]
+            t(conv["bias"], params[f"downsample_layers.{i}.1.bias"])
+            t(
+                conv["kernel"],
+                params[f"downsample_layers.{i}.1.weight"].permute(2, 3, 1, 0),
+            )
+
+        return freeze(jax_params)
+
+    def get_imagenet_weights(self, model_type: str) -> Params:
         """Get imagenet weights
 
         Args:
@@ -200,9 +206,11 @@ class ConvNeXt(nn.Module):
             A frozen dict representing weights of the current module
         """
 
-        init_params = self.init(jnp.zeros[64, 64, 3])["params"]
-        params = _load_weight(
-            self,
+        init_params = self.init(jax.random.PRNGKey(0), jnp.zeros([64, 64, 3]))
+        init_params = init_params["params"]
+        params = self._load_weight(
             init_params,
             _imagenet_weights_urls[f"convnext_{model_type}_22k"],
         )
+
+        return params

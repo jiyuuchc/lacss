@@ -1,82 +1,58 @@
-import typing as tp
-
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+
+from lacss.types import *
 
 from .common import *
 from .unet import UNet
 
 
-class AuxInstanceEdge(nn.Module):
-    conv_spec: tp.Sequence[int] = (24, 64, 64)
-    n_groups: int = 1
-    # share_weights: bool = False
+class LacssCollaborator(nn.Module):
+    """Collaborator module for semi-supervised Lacss training
+
+    Attributes:
+        conv_spec: conv-net specificaiton for cell border predicition
+        unet_spec: specification for unet, used to predict cell foreground
+        patch_size: patch size for the unet
+        n_cls: number of classes (cell types) of input images
+    """
+
+    conv_spec: Sequence[int] = (32, 32)
+    unet_spec: Sequence[int] = (16, 32, 64)
+    patch_size: int = 1
+    n_cls: int = 1
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, *, category: tp.Optional[jnp.ndarray] = None
-    ) -> jnp.ndarray:
-        for n in self.conv_spec:
-            x = nn.Conv(n, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=None, group_size=1, use_scale=False)(
-                x[None, ...]
-            )[0]
-            x = jax.nn.relu(x)
-
-        x = nn.Conv(self.n_groups, (3, 3))(x)
-        c = category.astype(int).squeeze() if category is not None else 0
-        x = x[..., c]
-
-        # x = jax.nn.sigmoid(x)
-
-        return dict(
-            edge_pred=x,
-        )
-
-
-class AuxForeground(nn.Module):
-    conv_spec: tp.Sequence[int] = (24, 64)
-    patch_size: tp.Sequence[int] = 1
-    n_groups: int = 1
-    share_weights: bool = False
-    # use_attention: bool = False
-
-    @nn.compact
-    def __call__(
-        self,
-        x: jnp.ndarray,
-        *,
-        category: tp.Optional[jnp.ndarray] = None,
-    ) -> jnp.ndarray:
-        assert category is not None or self.n_groups == 1
+        self, image: ArrayLike, cls_id: Optional[ArrayLike] = None
+    ) -> DataDict:
+        assert cls_id is not None or self.n_cls == 1
+        c = cls_id.astype(int).squeeze() if cls_id is not None else 0
 
         net = UNet(self.conv_spec, self.patch_size)
-        _, decoder_out = net(x)
+        _, unet_out = net(image)
 
-        y = decoder_out[str(net.start_level)]
+        y = unet_out[str(net.start_level)]
 
-        c = category.astype(int).squeeze() if category is not None else 0
-
-        fg = nn.Conv(self.n_groups, (3, 3))(y)
+        fg = nn.Conv(self.n_cls, (3, 3))(y)
         fg = fg[..., c]
 
-        if fg.shape != x.shape[:-1]:
-            fg = jax.image.resize(fg, x.shape[:-1], "linear")
+        if fg.shape != image.shape[:-1]:
+            fg = jax.image.resize(fg, image.shape[:-1], "linear")
 
-        output = dict(fg_pred=fg)
+        y = image
+        for n_features in self.unet_spec:
+            y = nn.Conv(n_features, (3, 3), use_bias=False)(y)
+            y = nn.GroupNorm(num_groups=None, group_size=1, use_scale=False)(
+                y[None, ...]
+            )[0]
+            y = jax.nn.relu(y)
 
-        if self.share_weights:
-            edge = nn.Conv(self.n_groups, (3, 3))(y)
-            edge = edge[..., c]
+        y = nn.Conv(self.n_cls, (3, 3))(y)
+        cb = y[..., c]
 
-            if edge.shape != x.shape[:-1]:
-                edge = jax.image.resize(edge, x.shape[:-1], "linear")
-
-            output.update(
-                dict(
-                    edge_pred=edge,
-                )
-            )
-
-        return output
+        return dict(
+            fg_pred=fg,
+            edge_pred=cb,
+        )

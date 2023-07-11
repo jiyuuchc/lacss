@@ -1,148 +1,221 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
-import tensorflow as tf
-
-tf.config.set_visible_devices([], "GPU")
-
-from os.path import join
 from pathlib import Path
 
+import jax
 import numpy as np
+import typer
+from data import (
+    cell_type_table,
+    compress_masks,
+    get_cell_type_and_scaling,
+    remove_redundant,
+)
 from tqdm import tqdm
 
 import lacss
 import lacss.deploy
-from lacss.metrics.ranked import _unique_location_matching
-
-try:
-    from . import data
-except:
-    import data
-
-import typer
+from lacss.metrics import AP, LoiAP
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-
-def format_array(arr):
-    s = [f"{v:.4f}" for v in arr]
-    s = ", ".join(s)
-    return s
+_format = lambda x: ", ".join([f"{v:.4f}" for v in x])
 
 
-def mask_ious(pred, gt_mask_indices, box_ious):
-    n_pred = box_ious.shape[0]
-    patches = np.pad(pred["instance_output"] >= 0.5, [[0, 0], [1, 1], [1, 1]])
-    yc = np.asarray(pred["instance_yc"])
-    xc = np.asarray(pred["instance_xc"])
+class Dice:
+    """Compute instance Dice values"""
 
-    # gt_areas = np.count_nonzero(gt_instances, axis=(1, 2))
-    _, indices, gt_areas = np.unique(
-        gt_mask_indices[:, 0], return_index=True, return_counts=True
-    )
-    indices = indices.tolist() + [len(gt_mask_indices[:, 0])]
-    pred_areas = np.count_nonzero(patches[:n_pred], axis=(1, 2))
-    total_areas = pred_areas[:, None] + gt_areas
+    def __init__(self):
+        self.pred_areas = []
+        self.gt_areas = []
+        self.pred_scores = []
+        self.gt_scores = []
 
-    its = np.zeros_like(box_ious)
-    for pred_idx, gt_idx in np.stack(np.where(box_ious > 0), axis=-1):
-        gt_indices = gt_mask_indices[indices[gt_idx] : indices[gt_idx + 1], 1:] - (
-            yc[pred_idx, 0, 0],
-            xc[pred_idx, 0, 0],
+    def update(self, pred_its, pred_areas, gt_areas):
+        self.pred_areas.append(pred_areas)
+        self.gt_areas.append(gt_areas)
+
+        pred_best = pred_its.max(axis=1)
+        pred_best_matches = pred_its.argmax(axis=1)
+        pred_dice = pred_best * 2 / (pred_areas + gt_areas[pred_best_matches])
+        self.pred_scores.append(pred_dice)
+
+        gt_best = pred_its.max(axis=0)
+        gt_best_matches = pred_its.argmax(axis=0)
+        gt_dice = gt_best * 2 / (gt_areas + pred_areas[gt_best_matches])
+        self.gt_scores.append(gt_dice)
+
+    def compute(self):
+        pred_areas = np.concatenate(self.pred_areas)
+        gt_areas = np.concatenate(self.gt_areas)
+        pred_scores = np.concatenate(self.pred_scores)
+        gt_scores = np.concatenate(self.gt_scores)
+
+        pred_dice = (pred_areas / pred_areas.sum() * pred_scores).sum()
+        gt_dice = (gt_areas / gt_areas.sum() * gt_scores).sum()
+
+        dice = (pred_dice + gt_dice) / 2
+
+        return dice
+
+
+def get_box_its(pred, gt_b):
+    b = pred["pred_bboxes"]
+    box_its = lacss.ops.box_intersection(b, gt_b)
+    areas = lacss.ops.box_area(b)
+    gt_areas = lacss.ops.box_area(gt_b)
+
+    return box_its, areas, gt_areas
+
+
+def get_mask_its(pred, gt_m, box_its):
+    m = np.asarray(pred["instance_output"] >= 0.5)
+    yc = np.asarray(pred["instance_yc"]) + 1
+    xc = np.asarray(pred["instance_xc"]) + 1
+
+    pred_ids, gt_ids = np.where(box_its > 0)
+
+    gt_m = np.pad(gt_m, [[0, 0], [1, 1], [1, 1]])  # out-of-bound is 0
+    _, h, w = gt_m.shape
+    yc = np.clip(yc, 0, h - 1)
+    xc = np.clip(xc, 0, w - 1)
+
+    gt = gt_m[
+        (
+            gt_ids.reshape(-1, 1, 1),
+            yc[pred_ids],
+            xc[pred_ids],
         )
-        gt_indices = np.clip(gt_indices + 1, 0, yc.shape[-1] + 1)
-        gt_indices = np.swapaxes(gt_indices, 0, 1)
-        pred = patches[pred_idx]
+    ]
 
-        its[pred_idx, gt_idx] = np.count_nonzero(pred[tuple(gt_indices)])
+    v = np.count_nonzero(
+        m[pred_ids] & gt,
+        axis=(1, 2),
+    )
 
-    ious = its / (total_areas - its + 1e-6)
+    intersects = np.zeros_like(box_its, dtype="float32")
+    intersects[(pred_ids, gt_ids)] = v
 
-    return ious
+    areas = np.count_nonzero(m, axis=(1, 2))
+    gt_areas = np.count_nonzero(gt_m, axis=(1, 2))
+
+    return intersects, areas, gt_areas
+
+
+_th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
 
 @app.command()
-def run_test(
-    checkpoint: Path,
+def main(
+    modelpath: Path,
     datapath: Path = Path("../../livecell_dataset"),
-    logpath: Path = Path("./"),
-    min_area: float = 0,
-    score_threshold: float = -1.0,
+    logpath: Path = Path("."),
+    nms: int = 8,
+    min_area: int = 0,
+    min_score: float = 0.2,
+    normalize: bool = True,
+    dice_score: float = 0.5,
+    v1_scaling: bool = False,
 ):
-    print("evaluating...")
+    model = lacss.deploy.Predictor(modelpath, [520, 704, 1])
+    print(f"Model loaded from {modelpath.resolve()}")
 
-    predictor = lacss.deploy.Predictor(checkpoint)
+    model.detector.test_nms_threshold = nms
+    model.detector.test_max_output = 3074
+    model.detector.test_min_score = min_score
 
-    print(f"checkpoint loaded from {checkpoint}")
+    print(model.module)
 
-    thresholds = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
-    mask_ap = lacss.metrics.AP(thresholds)
-    box_ap = lacss.metrics.AP(thresholds)
+    mask_ap = {"all": AP(_th)}
+    box_ap = {"all": AP(_th)}
+    loi_ap = {"all": LoiAP([5, 2, 1])}
+    dice = {"all": Dice()}
 
-    tpa, fpa, fna = 0, 0, 0
-    if score_threshold < 0:
-        score_threshold = (0.4, 0.45, 0.5, 0.55, 0.6)
-    else:
-        score_threshold = (score_threshold,)
+    test_data = (
+        lacss.data.dataset_from_coco_annotations(
+            datapath / "annotations/LIVECell/livecell_coco_test.json",
+            datapath / "images/livecell_test_images",
+            [520, 704, 1],
+            None,
+        )
+        .map(remove_redundant)
+        .map(compress_masks)
+        .cache(str(datapath / "test_cache"))
+    )
+    print(test_data.element_spec)
 
-    for c in range(8):
-        print(f" Cell type : {c}")
+    for data in tqdm(test_data):
+        t, scale = get_cell_type_and_scaling(
+            data["filename"], version=1 if v1_scaling else 2
+        )
+        t = list(cell_type_table.keys())[t]
 
-        test_data = data.test_data(
-            datapath,
-            supervised=True,
-            cell_type=c,
+        if not t in mask_ap:
+            mask_ap[t] = AP(_th)
+            box_ap[t] = AP(_th)
+            loi_ap[t] = LoiAP([5, 2, 1])
+            dice[t] = Dice()
+
+        # inference
+        image = data["image"].numpy()
+        if normalize:
+            image = image - image.mean()
+            image = image / image.std()
+
+        pred = model(
+            dict(image=image),
+            # remove_out_of_bound=True,
+            min_area=min_area,
+            scaling=scale,
         )
 
-        mask_ap_c = lacss.metrics.AP(thresholds)
-        box_ap_c = lacss.metrics.AP(thresholds)
+        # recover masks from the compressed
+        mi = data["masks"].numpy()
+        n_instances = mi[:, 0].max() + 1
+        img_h, img_w, _ = image.shape
+        masks = np.zeros([n_instances, img_h, img_w], dtype="uint8")
+        masks[tuple(mi.transpose())] = 1
 
-        tp = np.zeros_like(score_threshold)
-        fp = np.zeros_like(score_threshold)
-        fn = np.zeros_like(score_threshold)
+        # compute ious matrix
+        box_its, box_areas, gt_box_areas = get_box_its(pred, data["bboxes"].numpy())
+        box_ious = box_its / (box_areas[:, None] + gt_box_areas - box_its + 1e-8)
 
-        for inputs, labels in tqdm(test_data()):
-            pred = predictor(inputs, remove_out_of_bound=True, min_area=min_area)
-            scores = np.asarray(pred["pred_scores"])
-            valid_preds = scores > 0
+        mask_its, areas, gt_areas = get_mask_its(pred, masks, box_its)
+        mask_ious = mask_its / (areas[:, None] + gt_areas - mask_its + 1e-8)
 
-            # boxes
-            pred_boxes = np.asarray(lacss.ops.bboxes_of_patches(pred))
-            gt_boxes = np.asarray(labels["gt_boxes"])
-            box_ious = np.asarray(lacss.ops.box_iou_similarity(pred_boxes, gt_boxes))
+        scores = np.asarray(pred["pred_scores"])
 
-            valid_box_ious = box_ious[valid_preds]
-            box_ap_c.update(valid_box_ious, scores[valid_preds])
-            box_ap.update(valid_box_ious, scores[valid_preds])
+        # Dice
+        valid_predictions = pred["instance_mask"].squeeze() & (scores >= dice_score)
+        valid_its = mask_its[valid_predictions]
+        valid_areas = areas[valid_predictions]
 
-            # masks
-            gt_mask_indices = np.asarray(labels["gt_mask_indices"])
-            m_ious = mask_ious(pred, gt_mask_indices, box_ious)
-            valid_m_ious = m_ious[valid_preds]
-            mask_ap_c.update(valid_m_ious, scores[valid_preds])
-            mask_ap.update(valid_m_ious, scores[valid_preds])
+        dice[t].update(valid_its, valid_areas, gt_areas)
+        dice["all"].update(valid_its, valid_areas, gt_areas)
 
-            # indicators = (valid_m_ious).max(axis=1) >= .5
-            _, indicators = _unique_location_matching(valid_m_ious, 0.5)
-            for k, th in enumerate(score_threshold):
-                sel = scores[valid_preds] >= th
-                cnts = indicators[sel].sum()
-                tp[k] += cnts
-                fp[k] += sel.sum() - cnts
-                fn[k] += len(gt_boxes) - cnts
+        # various APs
+        valid_predictions = pred["instance_mask"].squeeze() & (scores >= 0)
+        valid_ious = mask_ious[valid_predictions]
+        valid_box_ious = box_ious[valid_predictions]
+        valid_scores = scores[valid_predictions]
 
-        print(f"Box APs: {format_array(box_ap_c.compute())}")
-        print(f"Mask APs: {format_array(mask_ap_c.compute())}")
-        print(f"TP={tp}, FP={fp}, FN={fn}")
+        mask_ap[t].update(valid_ious, valid_scores)
+        mask_ap["all"].update(valid_ious, valid_scores)
 
-        tpa = tp + tpa
-        fpa = fp + fpa
-        fna = fn + fna
+        box_ap[t].update(valid_box_ious, valid_scores)
+        box_ap["all"].update(valid_box_ious, valid_scores)
 
-    print("All cell types:")
-    print(f"Box APs: {format_array(box_ap.compute())}")
-    print(f"Mask APs: {format_array(mask_ap.compute())}")
-    print(f"TP={tpa}, FP={fpa}, FN={fna}")
+        gt_locs = data["centroids"].numpy()
+        loi_ap[t].update(pred, gt_locations=gt_locs)
+        loi_ap["all"].update(pred, gt_locations=gt_locs)
+
+    for t in sorted(mask_ap.keys()):
+        print()
+        print(t)
+        print("LOIAP: ", _format(loi_ap[t].compute()))
+        print("BoxAP: ", _format(box_ap[t].compute()))
+        print("MaskAP: ", _format(mask_ap[t].compute()))
+        print("Dice: ", dice[t].compute())
 
 
 if __name__ == "__main__":

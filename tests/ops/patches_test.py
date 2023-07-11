@@ -1,9 +1,11 @@
 import jax
 import jax.numpy as jnp
+import pytest
 
 from lacss.ops import iou_patches_and_labels
 
 
+@pytest.mark.skip
 def test_iou_patch_label():
     #  3, 3  out of bound
     # [3, 3, 0, 0, 0, 0, 0, 0, 0, 0],

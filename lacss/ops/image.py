@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import partial
 
 import jax
@@ -5,8 +7,10 @@ from jax.scipy.signal import convolve
 
 jnp = jax.numpy
 
+from lacss.types import *
 
-def sorbel_edges(image: jnp.ndarray) -> jnp.ndarray:
+
+def sorbel_edges(image: ArrayLike) -> Array:
     """Returns a tensor holding Sobel edge maps.
 
     Examples:
@@ -65,7 +69,12 @@ def _retrieve_value_at(img, loc, out_of_bound_value=0):
     return value
 
 
-def sub_pixel_samples(img, locs, out_of_bound_value=0, edge_indexing=False):
+def sub_pixel_samples(
+    img: ArrayLike,
+    locs: ArrayLike,
+    out_of_bound_value: float = 0,
+    edge_indexing: bool = False,
+) -> Array:
     """Retrieve image values as non-integer locations by interpolation
 
     Args:
@@ -97,7 +106,9 @@ def sub_pixel_samples(img, locs, out_of_bound_value=0, edge_indexing=False):
     return values
 
 
-def sub_pixel_crop_and_resize(img, bbox, output_shape, out_of_bound_value=0):
+def sub_pixel_crop_and_resize(
+    img: ArrayLike, bbox: ArrayLike, output_shape: Shape, out_of_bound_value: float = 0
+) -> Array:
     """Retrieve image values of a bbox resize output. Used for ROI-Align
     Args:
         img: Array of shape [H, W, ...]

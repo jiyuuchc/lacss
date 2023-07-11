@@ -9,8 +9,8 @@ import lacss.train
 
 
 class Mse(lacss.train.Loss):
-    def call(self, preds, target, **kwargs):
-        return ((preds - target) ** 2).mean()
+    def call(self, preds, labels, **kwargs):
+        return ((preds - labels) ** 2).mean()
 
 
 def test_vmap_strategy():

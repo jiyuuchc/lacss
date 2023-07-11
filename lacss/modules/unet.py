@@ -1,14 +1,16 @@
-import typing as tp
+from __future__ import annotations
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from lacss.types import *
+
 from .common import *
 
 
 class UNet(nn.Module):
-    model_spec: tp.Sequence[int] = (32, 64, 128, 256, 512)
+    model_spec: Sequence[int] = (32, 64, 128, 256, 512)
     patch_size: int = 1
     se_ratio: int = -1
 
@@ -18,7 +20,7 @@ class UNet(nn.Module):
             raise ValueError("patch_size must be eith 1, 2 or 4")
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, training: bool = None) -> dict:
+    def __call__(self, x: ArrayLike) -> Tuple[DataDict, DataDict]:
 
         encoder_out = []
         fs = max(self.patch_size, 3)
@@ -65,7 +67,7 @@ class UNet(nn.Module):
         return encoder_out, decoder_out
 
     @property
-    def start_level(self):
+    def start_level(self) -> int:
         if self.patch_size == 4:
             return 2
         elif self.patch_size == 2:

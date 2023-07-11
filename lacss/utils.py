@@ -175,59 +175,74 @@ def show_images(imgs, locs=None, **kwargs):
                 axs[k].add_patch(c)
     plt.tight_layout()
 
+
 def masks2label(inputs):
     import jax
-    boxes = inputs['bboxes'].numpy()
+
+    boxes = inputs["bboxes"].numpy()
     boxes = np.round(boxes).astype(int)
-    label = np.zeros(inputs['image'].shape[:2])
-    for k, (m, (y1,x1,y2,x2)) in enumerate(zip(inputs["masks"].numpy(), boxes)):
+    label = np.zeros(inputs["image"].shape[:2])
+    for k, (m, (y1, x1, y2, x2)) in enumerate(zip(inputs["masks"].numpy(), boxes)):
         if y1 > y2:
             y1, y2 = y2, y1
-            m=m[::-1,:]
+            m = m[::-1, :]
         if x1 > x2:
             x1, x2 = x2, x1
-            m = m[:,::-1]
-        patch = jax.image.resize(m, [y2-y1, x2-x1], "linear")
-        label[y1:y2,x1:x2] = np.maximum(
+            m = m[:, ::-1]
+        patch = jax.image.resize(m, [y2 - y1, x2 - x1], "linear")
+        label[y1:y2, x1:x2] = np.maximum(
             (patch >= 0.5).astype(label.dtype) * (k + 1),
-            label[y1:y2,x1:x2],
+            label[y1:y2, x1:x2],
         )
     return label
 
+
 def convert_old_cp(cp):
-    import lacss
     import pickle
     from pathlib import Path
+
     from flax.core.frozen_dict import freeze, unfreeze
+
+    import lacss
 
     cp = Path(cp)
     trainer = lacss.train.Trainer.from_checkpoint(cp)
 
     model = lacss.modules.Lacss(
-        backbone = lacss.modules.ConvNeXt(
-            depths=(3,3,27,3),
+        backbone=lacss.modules.ConvNeXt(
+            depths=(3, 3, 27, 3),
             drop_path_rate=0.4,
             out_channels=256,
         ),
-        lpn = lacss.modules.LPN(
-            conv_spec=((256,256,256,256),()),
+        lpn=lacss.modules.LPN(
+            conv_spec=((256, 256, 256, 256), ()),
         ),
-        detector = lacss.modules.Detector(
+        detector=lacss.modules.Detector(
             train_max_output=2560,
             test_max_output=2560,
         ),
-        segmentor = lacss.modules.Segmentor(
-            conv_spec=((256,256,256),(64,)),
+        segmentor=lacss.modules.Segmentor(
+            conv_spec=((256, 256, 256), (64,)),
             instance_crop_size=96,
         ),
     )
-    
-    params = trainer.params['_lacss']
-    params = freeze(dict(
-        backbone=params['_backbone'],
-        lpn=params['_lpn'],
-        segmentor=params['_segmentor']
-    ))
+
+    params = trainer.params["_lacss"]
+    params = freeze(
+        dict(
+            backbone=params["_backbone"],
+            lpn=params["_lpn"],
+            segmentor=params["_segmentor"],
+        )
+    )
 
     with open(cp.with_suffix(".pkl"), "wb") as f:
         pickle.dump((model, params), f)
+
+
+def dataclass_from_dict(klass, dikt):
+    try:
+        fieldtypes = {f.name: f.type for f in dataclasses.fields(klass)}
+        return klass(**{f: dataclass_from_dict(fieldtypes[f], dikt[f]) for f in dikt})
+    except:
+        return dikt

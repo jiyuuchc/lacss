@@ -1,23 +1,24 @@
 import math
-import typing as tp
 from functools import partial
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from ..ops import gather_patches
+from lacss.ops import gather_patches
+from lacss.types import *
+
 from .common import SpatialAttention
 
 
 class _Encoder(nn.Module):
     n_output_features: int
     input_patch_size: int
-    encoding_dims: tp.Tuple[int, int, int] = (8, 8, 4)
+    encoding_dims: Tuple[int, int, int] = (8, 8, 4)
     n_latent_features: int = -1
 
     @nn.compact
-    def __call__(self, feature, loc):
+    def __call__(self, feature: ArrayLike, loc: ArrayLike) -> Array:
         patch_center, _, _, _ = gather_patches(feature, loc, patch_size=2)
         encodings = patch_center.mean(axis=(-2, -3))
 
@@ -61,21 +62,23 @@ class Segmentor(nn.Module):
     """
 
     feature_level: int = 2
-    conv_spec: tp.Tuple[tp.Sequence[int], tp.Sequence[int]] = (
+    conv_spec: Tuple[Sequence[int], Sequence[int]] = (
         (384, 384, 384),
         (64,),
     )
     instance_crop_size: int = 96
     use_attention: bool = False
     learned_encoding: bool = True
-    encoder_dims: tp.Sequence[int] = (8, 8, 4)
+    encoder_dims: Sequence[int] = (8, 8, 4)
     # n_cls: int = -1
 
     # if not feature_level in (0,1,2):
     #     raise ValueError('feature_level should be 1,2 or 0')
 
     @nn.compact
-    def __call__(self, features: dict, locations: jnp.ndarray) -> dict:
+    def __call__(
+        self, features: Mapping[str, ArrayLike], locations: ArrayLike
+    ) -> DataDict:
         """
         Args:
             features: {'scale' [H, W, C]} feature dictionary from the backbone.

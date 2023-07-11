@@ -7,8 +7,8 @@
     "conv_spec": [[256, 256, 256, 256], []]
   },
   "detector": {
-  	"train_max_output": 2560,
-  	"test_max_output": 2560
+  	"train_max_output": 3072,
+  	"test_max_output": 3072
   },
   "segmentor": {
     "conv_spec": [[256, 256, 256], [64]]
