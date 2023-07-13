@@ -69,9 +69,12 @@ def get_box_its(pred, gt_b):
 
 
 def get_mask_its(pred, gt_m, box_its):
-    m = np.asarray(pred["instance_output"] >= 0.5)
-    yc = np.asarray(pred["instance_yc"]) + 1
-    xc = np.asarray(pred["instance_xc"]) + 1
+    m = pred["pred_masks"]
+    mask_sz = m.shape[-1]
+
+    yc, xc = np.mgrid[:mask_sz, :mask_sz]
+    yc = yc + 1 + pred["pred_masks_y0"][:, None, None]
+    xc = xc + 1 + pred["pred_masks_x0"][:, None, None]
 
     pred_ids, gt_ids = np.where(box_its > 0)
 
@@ -169,12 +172,24 @@ def main(
             scaling=scale,
         )
 
+        # transfer from GPU can be very slow. Try to minimize the amount
+        bm = np.array(pred["instance_mask"].squeeze((1, 2)))
+        pred = dict(
+            pred_locations=np.array(pred["pred_locations"]),
+            pred_bboxes=np.array(pred["pred_bboxes"]),
+            pred_scores=np.array(pred["pred_scores"]),
+            pred_masks=np.array(pred["instance_output"] >= 0.5),
+            pred_masks_y0=np.array(pred["instance_yc"][:, 0, 0]),
+            pred_masks_x0=np.array(pred["instance_xc"][:, 0, 0]),
+        )
+        pred = jax.tree_util.tree_map(lambda x: x[bm], pred)
+
         # recover masks from the compressed
         mi = data["masks"].numpy()
         n_instances = mi[:, 0].max() + 1
         img_h, img_w, _ = image.shape
-        masks = np.zeros([n_instances, img_h, img_w], dtype="uint8")
-        masks[tuple(mi.transpose())] = 1
+        masks = np.zeros([n_instances, img_h, img_w], dtype="bool")
+        masks[tuple(mi.transpose())] = True
 
         # compute ious matrix
         box_its, box_areas, gt_box_areas = get_box_its(pred, data["bboxes"].numpy())
@@ -186,7 +201,7 @@ def main(
         scores = np.asarray(pred["pred_scores"])
 
         # Dice
-        valid_predictions = pred["instance_mask"].squeeze() & (scores >= dice_score)
+        valid_predictions = scores >= dice_score
         valid_its = mask_its[valid_predictions]
         valid_areas = areas[valid_predictions]
 
@@ -194,10 +209,9 @@ def main(
         dice["all"].update(valid_its, valid_areas, gt_areas)
 
         # various APs
-        valid_predictions = pred["instance_mask"].squeeze() & (scores >= 0)
-        valid_ious = mask_ious[valid_predictions]
-        valid_box_ious = box_ious[valid_predictions]
-        valid_scores = scores[valid_predictions]
+        valid_ious = mask_ious
+        valid_box_ious = box_ious
+        valid_scores = scores
 
         mask_ap[t].update(valid_ious, valid_scores)
         mask_ap["all"].update(valid_ious, valid_scores)
