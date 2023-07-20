@@ -186,7 +186,15 @@ class Predictor:
                 the model will be recompiled for every new input image shape.
 
         """
-        self.model = load_from_pretrained(url)
+
+        if isinstance(url, tuple) and len(url) == 2:
+            self.model = url
+            if not isinstance(self.model[0], nn.Module):
+                raise ValueError(
+                    "Initiaize the Predictor with a tuple, but the first element is not a Module."
+                )
+        else:
+            self.model = load_from_pretrained(url)
 
         if precompile_shape is not None:
             logging.info("Prcompile the predictor for image shape {precompile_shape}.")
