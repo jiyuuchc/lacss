@@ -127,7 +127,8 @@ class LacssTrainer(Trainer):
         Args:
             config: configuration dictionary for Lacss model
             collaborator_config: configuration dictionary for the collaborator model used in
-                weakly-supervised training
+                weakly-supervised training. If set to None, then no collaborator model will be
+                created. In this case, training with weak-supervision will result in a error.
 
         Keyword Args:
             seed: RNG seed
@@ -212,9 +213,7 @@ class LacssTrainer(Trainer):
     def restore_from_checkpoint(
         self, checkpoint_manager: orbax.checkpoint.CheckpointManager, step: int = -1
     ) -> None:
-        """Restore train state
-
-        Restore train state from a checkpoint.
+        """Restore train state from a checkpoint.
 
         Args:
             checkpoint_manager: Orbax checkpoint manager
@@ -246,10 +245,10 @@ class LacssTrainer(Trainer):
         dataset: DataSource,
         val_dataset: DataSource = None,
         n_steps: int = 50000,
-        warmup_steps: int = 0,
         validation_interval: int = 5000,
         checkpoint_manager: Optional[orbax.checkpoint.CheckpointManager] = None,
         *,
+        warmup_steps: int = 0,
         sigma: float = 20.0,
         pi: float = 2.0,
     ) -> None:
@@ -265,17 +264,27 @@ class LacssTrainer(Trainer):
                         None: for point-supervised training
                         "gt_labels": A index-label image (H, W). For segmentation label.
                         "gt_image_mask": A binary image (H, W). For weakly supervised training
+            n_steps: Total training steps
+            validation_inteval: Step intervals to perform validation and checkpointing.
             val_dataset: If not None, performing validation on this dataset. The data should be in the
                 form of a tuple (x, y):
                     x is a dictionary with one key: "image"
                     y is a dictionary with two lables: "gt_bboxes" and "gt_locations"
-            n_steps: Total training steps
-            validation_inteval: Perform validation and checkpointing every this many steps
-            warmup_steps: Only used for point-supervised training. Pretraining steps, for which a large
-                sigma values is used. This should be multiples of validation_inteval
-            checkpoint_manager: If supplied, will be used to created checkpoints
+            checkpoint_manager: If supplied, will be used to created checkpoints. A checkpoint manager
+                can be obtained by calling:
+                ```
+                options = orbax.CheckpointManagerOptions(...)
+                manager = orbax.checkpoint.CheckpointManager(
+                    'path/to/directory/',
+                    trainer.get_checkpointer(),
+                    options = options
+                )
+                ```
+
 
         keyword Args:
+            warmup_steps: Only used for point-supervised training. Pretraining steps, for which a large
+                sigma values is used. This should be multiples of validation_inteval
             sigma: Only for point-supervised training. Expected cell size
             pi: Only for point-supervised training. Amplitude of the prior term.
         """
@@ -323,19 +332,7 @@ class LacssTrainer(Trainer):
 
     @classmethod
     def get_checkpointer(cls) -> orbax.checkpoint.Checkpointer:
-        """Returns a checkpointer obj for this Trainer.
-
-        Convienent function for creating a checkpoint manager
-
-        Example:
-            options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=3)
-            manager = orbax.checkpoint.CheckpointManager(
-                path_to_checkpoints,
-                LacssTrainer.get_checkpointer(),
-                options,
-            )
-            lacss_trainer.do_training(dataset, checkpoint_manager=manager)
-        """
+        """Returns a checkpointer obj for this Trainer. Convienent function for creating a checkpoint manager"""
 
         return {
             "config": orbax.checkpoint.Checkpointer(
@@ -383,9 +380,7 @@ class LacssTrainer(Trainer):
         return obj
 
     def pickle(self, save_path) -> None:
-        """Save a pickled copy of the Lacss model
-
-        In the form of (model_config:dict, weights:FrozenDict). Only save the principal model.
+        """Save a pickled copy of the Lacss model in the form of (model_config:dict, weights:FrozenDict). Only saves the principal model.
 
         Args:
             save_path: Path to the pkl file

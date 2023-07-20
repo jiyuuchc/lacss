@@ -154,7 +154,6 @@ class Predictor:
     Examples:
         The most common use case is to use a build-in pretrained model.
 
-            ```
             import lacss.deploy
 
             # look up the url of a build-in mode
@@ -166,14 +165,13 @@ class Predictor:
             # make a prediction
             label = predictor.predict_label(image)
 
-            ```
     Attributes:
         module: The underlying FLAX module
         params: Model weights.
         detector: The detector submodule for convinence. A common use case
             is to customize this submodule during inference. e.g.
             ```
-            predictor.detector['test_min_score"] = 0.5
+            predictor.detector.test_min_score = 0.5
             ```
             Detector submodule has no trained paramters.
     """
@@ -219,22 +217,28 @@ class Predictor:
     def predict(
         self,
         image: ArrayLike,
+        *,
         min_area: float = 0,
         remove_out_of_bound: bool = False,
         scaling: float = 1.0,
+        return_label: bool = False,
         **kwargs,
-    ) -> dict:
+    ) -> Union[dict, Array]:
         """Predict segmentation.
 
         Args:
             image: A ndarray of (h,w,c) format. Value of c must be 1-3
+
+        Keyword Args:
             min_area: Minimum area of a valid prediction.
             remove_out_of_bound: Whether to remove out-of-bound predictions. Default is False.
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
+            return_label: Whether to output full model prediction or segmentation label.
 
         Returns:
-            Model predictions with following elements:
+
+            If return_label is False, returns model predictions with following elements:
 
                 - pred_scores: The prediction scores of each instance.
                 - pred_bboxes: The bounding-boxes of detected instances in y0x0y1x1 format
@@ -242,6 +246,8 @@ class Predictor:
                 - instance_yc: The meshgrid y-coordinates of the instances.
                 - instance_xc: The meshgrid x-coordinates of the instances.
                 - instance_mask: a masking tensor. Invalid instances are maked with 0.
+
+            otherwise return a segmentation label.
         """
 
         module, params = self.model
@@ -270,7 +276,14 @@ class Predictor:
 
         preds["instance_mask"] = instance_mask.reshape(-1, 1, 1)
 
-        return preds
+        if return_label:
+            patches_to_label(
+                preds,
+                input_size=image.shape[:2],
+                score_threshold=0.5,
+            )
+        else:
+            return preds
 
     def predict_label(
         self, image: ArrayLike, *, score_threshold: float = 0.5, **kwargs
@@ -299,13 +312,13 @@ class Predictor:
         image: ArrayLike,
         gs: int,
         ss: int,
-        output_label: bool = False,
         *,
         scaling: float = 1,
         min_area: int = 0,
         nms_iou: float = 0.3,
         segmentation_threshold: float = 0.5,
         score_threshold: float = 0.5,
+        return_label: bool = False,
         **kwargs,
     ) -> Union[dict, ArrayLike]:
         """Make prediction on very large image by dividing into a grid.
@@ -319,8 +332,6 @@ class Predictor:
             gs: An int value. Grid size of the computation.
             ss: An int value of stepping size. Must be small than gs to produce valid
                 results.
-            output_label: Whether to output full model prediction or segmentation
-                label.
 
         Keyword Args:
             scaling: A image scaling factor.
@@ -329,9 +340,12 @@ class Predictor:
             min_area: Optional minimum area for the instance to be included in the results.
                 Default is 0.
             segmentation_threshold: Default is 0.5.
+            return_label: Whether to output full model prediction or segmentation
+                label.
 
-        Returns: Segmention label if output_label is True, otherwise a dict of full model
-            predictions.
+        Returns:
+            Segmention label if output_label is True, otherwise a dict of full model
+                predictions.
         """
 
         get_padding = lambda a, gs, ss: (a - 1) // ss * ss + gs - a
@@ -410,7 +424,7 @@ class Predictor:
 
             preds = jax.tree_util.tree_map(lambda x: x[selections], preds)
 
-        if output_label:
+        if return_label:
             logging.info(f"Generating label...")
 
             ps = preds["pred_masks"].shape[-1]

@@ -1,5 +1,3 @@
-""" Common data generators.
-"""
 from __future__ import annotations
 
 import glob
@@ -7,6 +5,7 @@ import json
 import typing as tp
 from functools import partial
 from os.path import join
+from typing import Iterator, Optional, Sequence
 
 import imageio.v2 as imageio
 import numpy as np
@@ -36,8 +35,8 @@ def _crop_and_resize(masks, boxes, target_shape):
 def coco_generator_full(
     annotation_file: str,
     image_path: str,
-    mask_shape: tp.Optional[tp.Tuple[int, int]] = None,
-):
+    mask_shape: Optional[tp.Tuple[int, int]] = None,
+) -> Iterator[dict]:
     """A generator function to produce coco-annotated data
 
     Args:
@@ -47,17 +46,16 @@ def coco_generator_full(
             the segmentations are uncropped (in original image size)
 
     Yields:
-        A data dictionary.
-            * id: data id
-            * filename: image filename
-            * image: an array [H, W, C]
-            * masks: segmentation masks. [N, H, W] or [N,] + mask_shape
-            * centroids: yx format.
-            * bboxes: y0x0y1x1 format.
-            * label: an array [H, W] representing pixel labels of all instances.
+        A data dictionary with thse keys:
 
+            - id: data id
+            - filename: image filename
+            - image: an array [H, W, C]
+            - masks: segmentation masks. [N, H, W] or [N,] + mask_shape
+            - centroids: yx format.
+            - bboxes: y0x0y1x1 format.
+            - label: an array [H, W] representing pixel labels of all instances.
     """
-
     from pycocotools.coco import COCO
 
     coco = COCO(annotation_file=annotation_file)
@@ -126,7 +124,7 @@ def coco_generator_full(
         }
 
 
-def coco_generator(annotation_file, image_path):
+def coco_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
     from pycocotools.coco import COCO
 
     coco = COCO(annotation_file=annotation_file)
@@ -166,8 +164,8 @@ def dataset_from_coco_annotations(
     image_path: str,
     image_shape: tuple = [None, None, 3],
     mask_shape: tuple = [48, 48],
-):
-    """Obtaining a tensowflow dataset from coco annotations. See [coco_generator_full()](api/lacss.data#lacss.data.coco_generator_full)
+) -> tf.Dataset:
+    """Obtaining a tensowflow dataset from coco annotations. See [coco_generator_full()](./#lacss.data.generator.coco_generator_full)
 
     Args:
         annotation_file: Path to coco annotation files
@@ -199,7 +197,7 @@ def dataset_from_coco_annotations(
     )
 
 
-def simple_generator(annotation_file: str, image_path: str):
+def simple_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
     """A simple generator function to produce image data labeled with points and image-level segmentaion.
 
     Args:
@@ -207,7 +205,8 @@ def simple_generator(annotation_file: str, image_path: str):
         image_path: Path to the image directory.
 
     Yields:
-        Data dictionary:
+        A data dictionary with thse keys:
+
             * img_id: data id
             * image: an array [H, W, C]
             * image_mask: segmentation masks for the image. [H, W]
@@ -245,9 +244,9 @@ def simple_generator(annotation_file: str, image_path: str):
 
 
 def dataset_from_simple_annotations(
-    annotation_file, image_path, image_shape=[None, None, 3], **kwargs
-):
-    """Obtaining a tensowflow dataset from simple annotatiion. See [simple_generator()](/api/lacss.data#lacss.data.simple_generator)
+    annotation_file: str, image_path: str, image_shape=[None, None, 3], **kwargs
+) -> tf.Dataset:
+    """Obtaining a tensowflow dataset from simple annotatiion. See [simple_generator()](./#lacss.data.generator.simple_generator)
 
     Args:
         annotation_file: Path to the json format annotation file.
@@ -269,7 +268,9 @@ def dataset_from_simple_annotations(
     )
 
 
-def img_mask_pair_generator(ds_files):
+def img_mask_pair_generator(
+    ds_files: tuple[Sequence[str], Sequence[str]]
+) -> Iterator[dict]:
     """A generator function to produce image data labeled with segmentation labels.
         In this case, one has paired input images and label images as files on disk.
 
@@ -278,7 +279,8 @@ def img_mask_pair_generator(ds_files):
             The image_list are pathes to images. The label_list are pathes to labels.
 
     Yields:
-        Data dictionary:
+        A data dictionary with thse keys:
+
             * img_id: data id
             * image: an array [H, W, C]
             * centroids: yx format.
@@ -311,10 +313,13 @@ def img_mask_pair_generator(ds_files):
 
 
 def dataset_from_img_mask_pairs(
-    imgfiles, maskfiles, image_shape=[None, None, 3], **kwargs
-):
+    imgfiles: Sequence[str],
+    maskfiles: Sequence[str],
+    image_shape=[None, None, 3],
+    **kwargs,
+) -> tf.Dataset:
     """Obtaining a tensowflow dataset from image/label pairs.
-            See [img_mask_pair_generator()](/api/lacss.data#lacss.data.img_mask_pair_generator)
+            See [img_mask_pair_generator()](./#lacss.data.generator.img_mask_pair_generator)
 
     Args:
         imgfiles: List of file pathes to input image file.

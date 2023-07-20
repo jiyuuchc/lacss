@@ -33,8 +33,7 @@ def _get_iterator(g):
 
 
 class Trainer:
-    """FLAX trainer
-    The design is to be minimal but help avoiding certain biolerplate code when train with FLAX
+    """A general purpose FLAX model trainer. Help avoiding most of the biolerplate code when trainning with FLAX.
 
     Attributes:
         model: A Flax module
@@ -64,7 +63,7 @@ class Trainer:
                 The model trains on the sum of all losses.
             optimizer: An optax optimzier
             seed: RNG seed.
-            strategy: Training backend. See [Traing backends](/api/train/#training-backends).
+            strategy: Training backend. See [Traing backends](./#training-backends).
 
         """
         self.model = model
@@ -122,7 +121,7 @@ class Trainer:
         Args:
             data: An iterator or generator function to produce training dataset. It is not
                 used if model is bound with weights already.
-                see [train()](/api/train#lacss.train.trainer.Trainer.train)
+                see [train()](./#lacss.train.trainer.Trainer.train)
             tx: Optional optax optimzier for when the object was constructed without an
                 optimizer
         """
@@ -158,8 +157,7 @@ class Trainer:
 
         Args:
             inputs: A tuple or a dict as the inputs for the model.
-            strategy: Optionally supply a differnt calling strategy as the default one
-                supplied at the constructor.
+            strategy: Optionally override the default strategy.
             **kwargs: Additional keyword args passed on to the model
 
         Returns:
@@ -367,10 +365,7 @@ class Trainer:
             yield metrics
 
     def test_and_compute(self, *args, **kwargs) -> dict:
-        """A convient function to compute all metrics.
-
-        Args:
-            same as the test() fucntion
+        """A convient function to compute all metrics. See [test() fucntion](./#lacss.train.trainer.Trainer.test)
 
         Returns:
             A metric dict. Keys are metric names.

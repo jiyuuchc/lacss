@@ -1,5 +1,4 @@
-""" A set of augmentation functions involving shape change
-"""
+from __future__ import annotations
 
 import tensorflow as tf
 
@@ -32,8 +31,20 @@ def _image_size(img):
     return (H, W)
 
 
-def resize(inputs, *, target_size, p=1.0):
-    """Resize image and labels"""
+def resize(inputs: dict, *, target_size: tuple[int, int], p: float = 1.0) -> dict:
+    """Resize image and labels
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+
+    Keyword Args:
+        target_size: target size
+        p: probability of applying transformation
+    """
 
     def _resize(inputs):
         H, W = _image_size(inputs["image"])
@@ -77,8 +88,28 @@ def resize(inputs, *, target_size, p=1.0):
         return _resize(inputs)
 
 
-def random_resize(inputs, *, scaling, keep_aspect_ratio=False, p=1.0):
-    """Random resize image by a range of scale"""
+def random_resize(
+    inputs: dict,
+    *,
+    scaling: float | tuple[float, float],
+    keep_aspect_ratio: bool = False,
+    p: float = 1.0,
+) -> dict:
+    """Resize image by a random amount
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+
+    Keyword Args:
+        scaling: range of scale, e.g, [0.8, 1.5]. If a single value (s), the range is [1-s, 1+s]
+        keep_aspect_ratio: Whether to scale x/y the same amount.
+        p: probability of applying transformation
+
+    """
 
     if p < 1.0 and tf.random.uniform([]) >= p:
         return inputs
@@ -104,8 +135,30 @@ def random_resize(inputs, *, scaling, keep_aspect_ratio=False, p=1.0):
         return resize(inputs, target_size=(target_h, target_w))
 
 
-def crop_to_roi(inputs, *, roi, area_ratio_threshold=1.0, p=1.0):
-    """Crop image to bounding-box ROI"""
+def crop_to_roi(
+    inputs: dict,
+    *,
+    roi: tuple[int, int, int, int],
+    area_ratio_threshold: float = 1.0,
+    p: float = 1.0,
+) -> dict:
+    """Crop image to bounding-box ROI
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+            * masks
+
+    Keyword Args:
+        roi: Rectangle roi in yxyx format
+        area_ratio_threshold: remove instances if the bbox's relative remaining area is below this threshold
+        p: probability of applying transformation
+
+    """
 
     def _crop_to_roi(inputs):
         y0, x0, y1, x1 = roi
@@ -185,8 +238,29 @@ def crop_to_roi(inputs, *, roi, area_ratio_threshold=1.0, p=1.0):
         return _crop_to_roi(inputs)
 
 
-def random_crop(inputs, *, target_size, area_ratio_threshold=1.0, p=1.0):
-    """Random crop to a set target size"""
+def random_crop(
+    inputs: dict,
+    *,
+    target_size: tuple[int, int],
+    area_ratio_threshold: float = 1.0,
+    p: float = 1.0,
+) -> dict:
+    """Random crop to a set target size
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+            * masks
+
+    Keyword Args:
+        target_size: the target size
+        area_ratio_threshold: remove instances if the bbox's relative remaining area is below this threshold
+        p: probability of applying transformation
+    """
 
     H, W = _image_size(inputs["image"])
 
@@ -206,8 +280,28 @@ def random_crop(inputs, *, target_size, area_ratio_threshold=1.0, p=1.0):
         )
 
 
-def pad(inputs, *, paddings, constant_values=0, p=1.0):
-    """Pad image and labels."""
+def pad(
+    inputs: dict,
+    *,
+    paddings: int | tuple[int, int],
+    constant_values: float = 0,
+    p: float = 1.0,
+) -> dict:
+    """Pad image and labels.
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+
+    Keyword Args:
+        paddings: either a tuple or a single value. If latter, use the same padding for both x and y axis
+        constant_values: the value to fill the padded area
+        p: probability of applying transformation
+    """
 
     def _pad(inputs):
         padding_y, padding_x = _value_pair(paddings)
@@ -253,7 +347,29 @@ def pad(inputs, *, paddings, constant_values=0, p=1.0):
         return _pad(inputs)
 
 
-def pad_to_size(inputs, *, target_size, constant_values=0, p=1.0):
+def pad_to_size(
+    inputs: dict,
+    *,
+    target_size: tuple[int, int],
+    constant_values: float = 0,
+    p: float = 1.0,
+) -> dict:
+    """Pad image and labels to a target size. Padding is applied so that the orginal scene is centered in the output.
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+
+    Keyword Args:
+        target_size: target image size
+        constant_values: the value to fill the padded area
+        p: probability of applying transformation
+    """
+
     if p < 1.0 and tf.random.uniform([]) >= p:
         return inputs
 
@@ -269,9 +385,30 @@ def pad_to_size(inputs, *, target_size, constant_values=0, p=1.0):
 
 
 def random_crop_or_pad(
-    inputs, *, target_size, constant_values=0, area_ratio_threshold=1.0, p=1.0
-):
-    """Random crop or pad image to target_size"""
+    inputs: dict,
+    *,
+    target_size: tuple[int, int],
+    constant_values: float = 0,
+    area_ratio_threshold: float = 1.0,
+    p: float = 1.0,
+) -> dict:
+    """Random crop or pad image to specified target_size.
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+            * masks
+
+    Keyword Args:
+        target_size: target size
+        constant_values: the value to fill the padded area
+        area_ratio_threshold: remove instances if the bbox's relative remaining area is below this threshold
+        p: probability of applying transformation
+    """
 
     if p < 1.0 and tf.random.uniform([]) >= p:
         return inputs
@@ -295,7 +432,22 @@ def random_crop_or_pad(
         return inputs
 
 
-def flip_left_right(inputs, *, p=1.0):
+def flip_left_right(inputs: dict, *, p: float = 1.0) -> dict:
+    """Flip image left-right
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+
+    Keyword Args:
+        p: probability of applying transformation
+
+    """
+
     def _flip_left_right(inputs):
         H, W = _image_size(inputs["image"])
 
@@ -326,7 +478,22 @@ def flip_left_right(inputs, *, p=1.0):
         return _flip_left_right(inputs)
 
 
-def flip_up_down(inputs, *, p=1.0):
+def flip_up_down(inputs: dict, *, p: float = 1.0) -> dict:
+    """Flip image up-down
+
+    Args:
+        inputs: data from TF dataset. Affected elements are:
+
+            * image
+            * image_mask
+            * centroids
+            * bboxes
+
+    Keyword Args:
+        p: probability of applying transformation
+
+    """
+
     def _flip_up_down(inputs):
         H, W = _image_size(inputs["image"])
 

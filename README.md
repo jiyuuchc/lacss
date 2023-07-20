@@ -45,3 +45,5 @@ If your data include nuclei counter-stain, the easist way to generate point labe
 
 * [Inference ![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/jiyuuchc/lacss/blob/main-jax/notebooks/inference.ipynb)
 
+### Documentation
+  [API documentation](https://jiyuuchc.github.io/lacss/api/deploy/)
