@@ -1,6 +1,11 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
+import ete3
+from ete3 import Tree, NodeStyle
+from ete3 import TreeStyle, TextFace
+import matplotlib.pyplot as plt
 
 
 def select_sample(chains):
@@ -182,3 +187,47 @@ def filter_ious(ious):
         ious[:, col] = -1
 
     return ious_out
+
+def generate_trees(tracked_df):
+  ## Plots Lineage Trees from Lacss Dataframe
+  ## Parameters:
+  ## tracked_df -> Lacss Dataframe output with Tracking
+  ## Returns:
+  ## Trees -> Array of ete3 Tree Object(s).
+
+  roots = list(set(tracked_df.loc[tracked_df['parent_idx'] == -1]['index']))
+  trees = list([])
+
+  for root in roots:
+    global tree
+    tree = Tree(name = int(root), dist = min(tracked_df.loc[df['index'] == root]['frame']))
+    end_frame = max(tracked_df.loc[tracked_df['index'] == root]['frame'])
+    node = tree.search_nodes(name = root)[0]
+    add_children(root, end_frame)
+    trees.append(tree)
+
+
+  return trees
+
+def add_children(node_id, last_frame):
+  ## recursive function used to add children to the root node
+  ## Parameters:
+  ## node_id -> root/first parent cell_id
+  ## last_frame -> last frame the parent exists (I don't remember why this is required)
+
+  node = tree.search_nodes(name = int(node_id))[0]
+
+  child_1 = list(set(df.loc[df['index'] == node_id]['child_idx_1']))[0]
+  child_2 = list(set(df.loc[df['index'] == node_id]['child_idx_2']))[0]
+
+  if child_1 == -1 or child_2 == -1:
+    return
+
+
+  node.add_child(name = int(child_1), dist = min(df.loc[df['index'] == int(child_1)]['frame']) - last_frame)
+
+  add_children(child_1, max(df.loc[df['index'] == int(child_1)]['frame']))
+
+  node.add_child(name = int(child_2), dist = min(df.loc[df['index'] == int(child_2)]['frame']) - last_frame)
+  add_children(child_2, max(df.loc[df['index'] == int(child_2)]['frame']))
+

@@ -15,6 +15,12 @@ import numpy as np
 import math
 from ete3 import Tree, NodeStyle
 
+def plot_tree(tree, save = False, fig_width = 25, fig_height = 50):
+    plt.figure(figsize=(fig_width, fig_height))
+    ax = plt.gca()
+    ax.get_yaxis().set_visible(False)
+    matplot_tree(tree)
+
 def round_sig(x, sig=2):
     return round(x, sig - int(math.floor(np.log10(abs(x)))) - 1)
 
