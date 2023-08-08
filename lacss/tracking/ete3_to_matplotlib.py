@@ -4,8 +4,8 @@
 # When cell type detection is added to the model
 
 
-
 from itertools import chain
+
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib import markers
@@ -13,8 +13,8 @@ from matplotlib.path import Path
 
 import numpy as np
 import math
-#import ete3
-from ete3 import Tree, NodeStyle
+
+from ete3 import Tree
 
 def plot_tree(tree, save = False, fig_width = 25, fig_height = 50):
     plt.figure(figsize=(fig_width, fig_height))
