@@ -202,17 +202,18 @@ def generate_trees(tracked_df):
     tree = Tree(name = int(root), dist = min(tracked_df.loc[tracked_df['index'] == root]['frame']))
     end_frame = max(tracked_df.loc[tracked_df['index'] == root]['frame'])
     node = tree.search_nodes(name = root)[0]
-    add_children(root, end_frame)
+    add_children(root, end_frame, tracked_df)
     trees.append(tree)
 
 
   return trees
 
-def add_children(node_id, last_frame):
+def add_children(node_id, last_frame, df):
   ## recursive function used to add children to the root node
   ## Parameters:
   ## node_id -> root/first parent cell_id
   ## last_frame -> last frame the parent exists (I don't remember why this is required)
+  ## df -> tracked lacss df
 
   node = tree.search_nodes(name = int(node_id))[0]
 
