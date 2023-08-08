@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import ete3
-from ete3 import Tree, NodeStyle
-from ete3 import TreeStyle, TextFace
+#from ete3 import Tree, NodeStyle
+#from ete3 import TreeStyle, TextFace
 import matplotlib.pyplot as plt
 
 
