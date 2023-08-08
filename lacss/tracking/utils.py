@@ -206,6 +206,7 @@ def generate_trees(tracked_df):
     trees.append(tree)
 
 
+  print("Number of Trees Generated: " + str(len(trees)))
   return trees
 
 def add_children(node_id, last_frame, df):
