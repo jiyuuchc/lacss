@@ -13,8 +13,8 @@ from matplotlib.path import Path
 
 import numpy as np
 import math
-import ete3
-#from ete3 import Tree, NodeStyle
+#import ete3
+from ete3 import Tree, NodeStyle
 
 def plot_tree(tree, save = False, fig_width = 25, fig_height = 50):
     plt.figure(figsize=(fig_width, fig_height))
