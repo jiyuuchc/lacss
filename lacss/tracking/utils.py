@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+import ete3
 from ete3 import Tree, NodeStyle, TreeStyle, TextFace
 import matplotlib.pyplot as plt
 
