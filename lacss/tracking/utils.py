@@ -199,7 +199,7 @@ def generate_trees(tracked_df):
 
   for root in roots:
     global tree
-    tree = Tree(name = int(root), dist = min(tracked_df.loc[df['index'] == root]['frame']))
+    tree = Tree(name = int(root), dist = min(tracked_df.loc[tracked_df['index'] == root]['frame']))
     end_frame = max(tracked_df.loc[tracked_df['index'] == root]['frame'])
     node = tree.search_nodes(name = root)[0]
     add_children(root, end_frame)
