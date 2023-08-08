@@ -226,8 +226,8 @@ def add_children(node_id, last_frame, df):
 
   node.add_child(name = int(child_1), dist = min(df.loc[df['index'] == int(child_1)]['frame']) - last_frame)
 
-  add_children(child_1, max(df.loc[df['index'] == int(child_1)]['frame']))
+  add_children(child_1, max(df.loc[df['index'] == int(child_1)]['frame']), df)
 
   node.add_child(name = int(child_2), dist = min(df.loc[df['index'] == int(child_2)]['frame']) - last_frame)
-  add_children(child_2, max(df.loc[df['index'] == int(child_2)]['frame']))
+  add_children(child_2, max(df.loc[df['index'] == int(child_2)]['frame']), df)
 
