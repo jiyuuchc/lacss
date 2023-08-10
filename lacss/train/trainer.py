@@ -380,7 +380,12 @@ class Trainer:
 
     @params.setter
     def params(self, new_params):
-        self.state = self.state.replace(params=new_params)
+        old_state = self.state
+        self.state = TrainState.create(
+            apply_fn=self.model.apply,
+            params=new_params,
+            tx=old_state.tx,
+        )
 
     @property
     def optimizer(self):
