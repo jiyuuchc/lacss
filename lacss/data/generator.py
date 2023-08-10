@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import glob
 import json
-import typing as tp
 from functools import partial
 from os.path import join
+from pathlib import Path
 from typing import Iterator, Optional, Sequence
 
 import imageio.v2 as imageio
@@ -35,7 +35,7 @@ def _crop_and_resize(masks, boxes, target_shape):
 def coco_generator_full(
     annotation_file: str,
     image_path: str,
-    mask_shape: Optional[tp.Tuple[int, int]] = None,
+    mask_shape: Optional[tuple[int, int]] = None,
 ) -> Iterator[dict]:
     """A generator function to produce coco-annotated data
 
@@ -209,8 +209,8 @@ def simple_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
 
             * img_id: data id
             * image: an array [H, W, C]
-            * image_mask: segmentation masks for the image. [H, W]
             * centroids: yx format.
+            * image_mask: segmentation masks for the image. [H, W]
     """
 
     with open(annotation_file, "r") as f:
@@ -222,11 +222,14 @@ def simple_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
             image = image[:, :, None]
         image = (image / 255.0).astype("float32")
 
-        binary_mask = imageio.imread(join(image_path, ann["mask_file"]))
+        if "mask_file" in ann:
+            binary_mask = imageio.imread(join(image_path, ann["mask_file"]))
 
-        if len(binary_mask.shape) == 3:
-            binary_mask = binary_mask[:, :, 0]
-        binary_mask = (binary_mask > 0).astype("float32")
+            if len(binary_mask.shape) == 3:
+                binary_mask = binary_mask[:, :, 0]
+            binary_mask = (binary_mask > 0).astype("float32")
+        else:
+            binary_mask = np.zeros(image.shape[:2], dtype="float32")
 
         locations = np.array(ann["locations"]).astype("float32")
 
@@ -238,13 +241,15 @@ def simple_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
         yield {
             "img_id": img_id,
             "image": image,
-            "image_mask": binary_mask,
             "centroids": locations,
+            "image_mask": binary_mask,
         }
 
 
 def dataset_from_simple_annotations(
-    annotation_file: str, image_path: str, image_shape=[None, None, 3], **kwargs
+    annotation_file: str,
+    image_path: str,
+    image_shape=[None, None, 3],
 ) -> tf.Dataset:
     """Obtaining a tensowflow dataset from simple annotatiion. See [simple_generator()](./#lacss.data.generator.simple_generator)
 
@@ -257,14 +262,17 @@ def dataset_from_simple_annotations(
         A tensorflow dataset object
 
     """
+
+    output_signature = {
+        "img_id": tf.TensorSpec([], dtype=tf.int64),
+        "image": tf.TensorSpec(image_shape, dtype=tf.float32),
+        "centroids": tf.TensorSpec([None, 2], dtype=tf.float32),
+        "image_mask": tf.TensorSpec(image_shape[:2], dtype=tf.float32),
+    }
+
     return tf.data.Dataset.from_generator(
-        lambda: simple_generator(annotation_file, image_path, **kwargs),
-        output_signature={
-            "img_id": tf.TensorSpec([], dtype=tf.int64),
-            "image": tf.TensorSpec(image_shape, dtype=tf.float32),
-            "image_mask": tf.TensorSpec(image_shape[:2], dtype=tf.float32),
-            "centroids": tf.TensorSpec([None, 2], dtype=tf.float32),
-        },
+        lambda: simple_generator(annotation_file, image_path),
+        output_signature=output_signature,
     )
 
 
