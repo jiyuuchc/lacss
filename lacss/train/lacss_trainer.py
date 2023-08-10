@@ -155,7 +155,7 @@ class LacssTrainer(Trainer):
         if self.optimizer is None:
             self.optimizer = optax.adamw(LacssTrainer.default_lr)
 
-        self._cp_step = 0
+        # self._cp_step = 0
 
     def _train_to_next_interval(
         self, train_iter, checkpoint_interval, checkpoint_dir, val_dataset
@@ -202,10 +202,13 @@ class LacssTrainer(Trainer):
 
     def _make_checkpoint(self, checkpoint_manager):
         if checkpoint_manager is not None:
-            self._cp_step += 1
+            lastest_step = checkpoint_manager.latest_step()
+            if lastest_step is None:
+                lastest_step = 0
+
             save_args = orbax_utils.save_args_from_target(self.state)
             checkpoint_manager.save(
-                self._cp_step,
+                lastest_step + 1,
                 {"config": asdict(self.model), "train_state": self.state},
                 save_kwargs={"train_state": {"save_args": save_args}},
             )
@@ -222,7 +225,7 @@ class LacssTrainer(Trainer):
         if step < 0:
             step = checkpoint_manager.latest_step()
 
-        restore_args = orbax_utils.restore_args_from_target(self.state, None)
+        # restore_args = orbax_utils.restore_args_from_target(self.state, None)
 
         restored = checkpoint_manager.restore(
             step,
@@ -230,7 +233,7 @@ class LacssTrainer(Trainer):
                 config={},
                 train_state=self.state,
             ),
-            restore_kwargs={"train_state": {"restore_args": restore_args}},
+            # restore_kwargs={"train_state": {"restore_args": restore_args}},
         )
         self.state = restored["train_state"]
 
@@ -238,7 +241,7 @@ class LacssTrainer(Trainer):
         # from lacss.utils import dataclass_from_dict
         # self.model = dataclass_from_dict(restored["config"])
 
-        self._cp_step = step
+        # self._cp_step = step
 
     def do_training(
         self,
@@ -342,7 +345,7 @@ class LacssTrainer(Trainer):
         }
 
     @classmethod
-    def from_checkpoint(cls, cp_path) -> Tuple[nn.Module, Params]:
+    def from_checkpoint(cls, cp_path) -> "LacssTrainer":
         """load the module and its weight from a checkpoint
             This utility static method allows use checkpoint as a model save. It ignores
             optstate.
@@ -351,7 +354,7 @@ class LacssTrainer(Trainer):
             cp_path: checkpoint location (a dir)
 
         Returns:
-            A tuple of module and weights.
+            LacssTrainer.
         """
         import json
 
@@ -369,12 +372,12 @@ class LacssTrainer(Trainer):
         )
         obj.initialize([fake_data], tx=optax.adam(cls.default_lr))
 
-        # restore_args = orbax_utils.restore_args_from_target(self.state, None)
+        # restore_args = orbax_utils.restore_args_from_target(obj.state, None)
         obj.state = orbax.checkpoint.PyTreeCheckpointer().restore(
             cp_path / "train_state",
             item=obj.state,
             # restore_args = restore_args,
-            transforms={},
+            # transforms={},
         )
 
         return obj
