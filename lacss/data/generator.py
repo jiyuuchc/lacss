@@ -277,14 +277,15 @@ def dataset_from_simple_annotations(
 
 
 def img_mask_pair_generator(
-    ds_files: tuple[Sequence[str], Sequence[str]]
+    imgfiles: Sequence[str | Path],
+    maskfiles: Sequence[str | Path],
 ) -> Iterator[dict]:
     """A generator function to produce image data labeled with segmentation labels.
         In this case, one has paired input images and label images as files on disk.
 
     Args:
-        ds_file: A tuple of (image_list, label_list).
-            The image_list are pathes to images. The label_list are pathes to labels.
+        imgfiles: List of file pathes to input image file.
+        maskfiles: List of file pathes to label image file.
 
     Yields:
         A data dictionary with thse keys:
@@ -295,7 +296,7 @@ def img_mask_pair_generator(
             * bboxes: y0x0y1x1 format.
             * label: an array [H, W] representing pixel labels of all instances.
     """
-    for k, (img_file, mask_file) in enumerate(ds_files):
+    for k, (img_file, mask_file) in enumerate(zip(imgfiles, maskfiles)):
         img = imageio.imread(img_file).astype("float32")
         img /= 255
         if len(img.shape) == 2:
@@ -320,11 +321,50 @@ def img_mask_pair_generator(
         }
 
 
+# def _bbox_from_label(label):
+#     import numpy as np
+#     from skimage.measure import regionprops
+
+#     bboxes = np.asarray([r["bbox"] for r in regionprops(label)])
+#     centroids = np.asarray([r["centroids"] for r in regionprops(label)])
+
+#     return bboxes, centroids
+
+
+def _mask_from_label(inputs, *, mask_shape=[48, 48]):
+    label = inputs["label"]
+
+    # if not "bboxes" in inputs or not "centroids" in inputs:
+    #     inputs["bboxes"], inputs["centroids"] = tf.numpy_func(
+    #         _bbox_from_label,
+    #         [label],
+    #         [tf.float32, tf.float32],
+    #         False,
+    #     )
+
+    n_instances = len(inputs["bboxes"])
+
+    label_expanded = tf.cast(
+        label == tf.range(1, n_instances + 1)[:, None, None],
+        tf.int32,
+    )
+
+    inputs["masks"] = _crop_and_resize(
+        label_expanded,
+        inputs["bboxes"],
+        mask_shape,
+    )
+
+    return inputs
+
+
 def dataset_from_img_mask_pairs(
-    imgfiles: Sequence[str],
-    maskfiles: Sequence[str],
-    image_shape=[None, None, 3],
-    **kwargs,
+    imgfiles: Sequence[str | Path],
+    maskfiles: Sequence[str | Path],
+    *,
+    image_shape: Sequence[int | None] = [None, None, 3],
+    generate_masks: bool = False,
+    mask_shape: tuple[int, int] = [48, 48],
 ) -> tf.Dataset:
     """Obtaining a tensowflow dataset from image/label pairs.
             See [img_mask_pair_generator()](./#lacss.data.generator.img_mask_pair_generator)
@@ -332,13 +372,19 @@ def dataset_from_img_mask_pairs(
     Args:
         imgfiles: List of file pathes to input image file.
         maskfiles: List of file pathes to label image file.
+
+    Keyword Args:
         image_shape: The expect image shapes. Use None to represent variable dimensions.
+        generate_masks: Whether to convert label images to indiviudal instance masks. This
+            should be True if your data augmentation pipeline include rescaling ops or cropping
+            ops., becasue these ops does not recompute the label image.
+        mask_shape: Only when generate_mask=True. The resolution of the generated masks.
 
     Returns:
         A tensorflow dataset object
     """
-    return tf.data.Dataset.from_generator(
-        lambda: img_mask_pair_generator(zip(imgfiles, maskfiles), **kwargs),
+    ds = tf.data.Dataset.from_generator(
+        lambda: img_mask_pair_generator(imgfiles, maskfiles),
         output_signature={
             "img_id": tf.TensorSpec([], dtype=tf.int64),
             "image": tf.TensorSpec(image_shape, dtype=tf.float32),
@@ -347,3 +393,8 @@ def dataset_from_img_mask_pairs(
             "label": tf.TensorSpec(image_shape[:2], dtype=tf.int32),
         },
     )
+
+    if generate_masks:
+        ds = ds.map(lambda x: _mask_from_label(x, mask_shape=mask_shape))
+
+    return ds

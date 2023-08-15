@@ -16,8 +16,8 @@ from flax.core.frozen_dict import freeze, unfreeze
 
 import lacss.modules
 from lacss.ops import patches_to_label, sorted_non_max_suppression
-from lacss.train import Inputs
 from lacss.types import *
+from lacss.utils import Inputs
 
 _cached_partial = lru_cache(partial)
 
@@ -285,7 +285,7 @@ class Predictor:
         preds["instance_mask"] = instance_mask.reshape(-1, 1, 1)
 
         if return_label:
-            patches_to_label(
+            return patches_to_label(
                 preds,
                 input_size=image.shape[:2],
                 score_threshold=0.5,

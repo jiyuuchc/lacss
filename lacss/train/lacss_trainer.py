@@ -243,6 +243,39 @@ class LacssTrainer(Trainer):
 
         # self._cp_step = step
 
+    def reset(
+        self,
+        warmup_steps: int = 0,
+        sigma: float = 20.0,
+        pi: float = 2.0,
+    ) -> None:
+        cur_step = self.state.step
+
+        if cur_step >= warmup_steps:
+            col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
+            col_seg_loss.name = "collaborator_segm_loss"
+            self.losses = [
+                lacss.losses.lpn_loss,
+                segmentation_loss,
+                col_seg_loss,
+                collaborator_border_loss,
+                mc_loss,
+            ]
+        else:
+            pre_seg_loss = partial(segmentation_loss, pretraining=True)
+            pre_seg_loss.name = "segmentation_loss"
+            pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
+            pre_col_seg_loss.name = "collaborator_segm_loss"
+            self.losses = [
+                lacss.losses.lpn_loss,
+                pre_seg_loss,
+                pre_col_seg_loss,
+                collaborator_border_loss,
+                mc_loss,
+            ]
+
+        super().reset()
+
     def do_training(
         self,
         dataset: DataSource,
@@ -291,17 +324,6 @@ class LacssTrainer(Trainer):
             sigma: Only for point-supervised training. Expected cell size
             pi: Only for point-supervised training. Amplitude of the prior term.
         """
-        pre_seg_loss = partial(segmentation_loss, pretraining=True)
-        pre_seg_loss.name = "segmentation_loss"
-        pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
-        pre_col_seg_loss.name = "collaborator_segm_loss"
-        self.losses = [
-            lacss.losses.lpn_loss,
-            pre_seg_loss,
-            pre_col_seg_loss,
-            collaborator_border_loss,
-            mc_loss,
-        ]
         train_iter = self.train(dataset, rng_cols=["droppath"], training=True)
 
         while self.state.step < n_steps:
@@ -312,18 +334,11 @@ class LacssTrainer(Trainer):
                 * validation_interval
             )
 
-            if cur_step >= warmup_steps:
-                col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
-                col_seg_loss.name = "collaborator_segm_loss"
-                self.losses = [
-                    lacss.losses.lpn_loss,
-                    segmentation_loss,
-                    col_seg_loss,
-                    collaborator_border_loss,
-                    mc_loss,
-                ]
-
-            self.reset()
+            self.reset(
+                warmup_steps=warmup_steps,
+                sigma=sigma,
+                pi=pi,
+            )
 
             print(f"Current step {cur_step} going to {next_cp_step}")
             for _ in tqdm(range(cur_step, next_cp_step)):

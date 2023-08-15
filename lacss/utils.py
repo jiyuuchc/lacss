@@ -8,7 +8,7 @@ from flax import struct
 
 from .ops import bboxes_of_patches
 
-InputLike = tp.Union[tp.Any, tp.Tuple[tp.Any, ...], tp.Dict[str, tp.Any], "Inputs"]
+InputLike = tp.Any
 
 
 def _unique_name(
