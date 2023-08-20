@@ -8,6 +8,7 @@ from tqdm import tqdm
 from lacss.deploy import Predictor
 from lacss.types import *
 
+from .data import *
 from .lacss_trainer import LacssTrainer
 from .trainer import _get_iterator
 
@@ -30,18 +31,21 @@ class LacssMTTrainer(LacssTrainer):
         while True:
             yield next(labeled_dataset)
 
-            img = next(unlabeled_dataset)
-            if isinstance(img, dict):
-                img = img["image"]
-            pred = self.predictor.predict(img)
+            x, y, sw = unpack_x_y_sample_weight(next(unlabeled_dataset))
+
+            if isinstance(x, dict):
+                x = x["image"]
+
+            pred = self.predictor.predict(x)
             locs = np.asarray(pred["pred_locations"])
             scores = np.asarray(pred["pred_scores"])
             locs = np.where(scores[:, None] >= 0.5, locs, -1)
 
-            yield dict(
-                image=img,
+            x = dict(
+                image=x,
                 gt_locations=locs,
             )
+            yield pack_x_y_sample_weight(x, y, sw)
 
     def do_training(
         self,

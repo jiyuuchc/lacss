@@ -1,5 +1,6 @@
 from dataclasses import asdict
-from functools import partial
+
+# from functools import partial
 from pathlib import Path
 
 import flax.linen as nn
@@ -9,87 +10,87 @@ import orbax.checkpoint
 from flax.training import orbax_utils
 from tqdm import tqdm
 
-import lacss.losses
 import lacss.metrics
+from lacss.losses import *
 from lacss.modules import Lacss, LacssCollaborator
 from lacss.types import *
 
+from .loss import partial_loss_func
 from .strategy import JIT
 from .trainer import Trainer
 
+# def segmentation_loss(preds, labels, inputs, pretraining=False):
+#     if labels is None:
+#         labels = {}
 
-def segmentation_loss(preds, labels, inputs, pretraining=False):
-    if labels is None:
-        labels = {}
-
-    if "gt_labels" in labels or "gt_masks" in labels:  # supervised
-        return lacss.losses.supervised_instance_loss(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
-        )
-    elif "gt_image_mask" in labels:  # supervised by point + imagemask
-        return lacss.losses.weakly_supervised_instance_loss(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
-        )
-    else:  # point-supervised
-        return lacss.losses.self_supervised_instance_loss(
-            preds=preds, labels=labels, inputs=inputs, soft_label=not pretraining
-        )
-
-
-def collaborator_segm_loss(preds, labels, inputs, sigma, pi):
-    if not "fg_pred" in preds:
-        return 0.0
-
-    if labels is None:
-        labels = {}
-
-    if "gt_image_mask" in labels or "gt_labels" in labels:
-        return lacss.losses.supervised_segmentation_loss(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
-        )
-
-    else:
-        return lacss.losses.self_supervised_segmentation_loss(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
-            offset_sigma=sigma,
-            offset_scale=pi,
-        )
+#     if "gt_labels" in labels or "gt_masks" in labels:  # supervised
+#         return lacss.losses.supervised_instance_loss(
+#             preds=preds,
+#             labels=labels,
+#             inputs=inputs,
+#         )
+#     elif "gt_image_mask" in labels:  # supervised by point + imagemask
+#         return lacss.losses.weakly_supervised_instance_loss(
+#             preds=preds,
+#             labels=labels,
+#             inputs=inputs,
+#         )
+#     else:  # point-supervised
+#         return lacss.losses.self_supervised_instance_loss(
+#             preds=preds, labels=labels, inputs=inputs, soft_label=not pretraining
+#         )
 
 
-def collaborator_border_loss(preds, labels, inputs):
-    if not "edge_pred" in preds:
-        return 0.0
+# def collaborator_segm_loss(preds, labels, inputs, sigma, pi):
+#     if not "fg_pred" in preds:
+#         return 0.0
 
-    if labels is None:
-        labels = {}
+#     if labels is None:
+#         labels = {}
 
-    if "gt_labels" in labels or "gt_masks" in labels:
-        return 0.0
+#     if "gt_image_mask" in labels or "gt_labels" in labels:
+#         return lacss.losses.supervised_segmentation_loss(
+#             preds=preds,
+#             labels=labels,
+#             inputs=inputs,
+#         )
 
-    else:
-        return lacss.losses.self_supervised_edge_loss(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
-        )
+#     else:
+#         return lacss.losses.self_supervised_segmentation_loss(
+#             preds=preds,
+#             labels=labels,
+#             inputs=inputs,
+#             offset_sigma=sigma,
+#             offset_scale=pi,
+#         )
 
 
-def mc_loss(preds, labels, inputs):
-    if labels is None:
-        labels = {}
+# def collaborator_border_loss(preds, labels, inputs):
+#     if not "edge_pred" in preds:
+#         return 0.0
 
-    if "gt_labels" in labels or "gt_masks" in labels:
-        return 0.0
-    else:
-        return lacss.losses.aux_size_loss(preds=preds, labels=labels, inputs=inputs)
+#     if labels is None:
+#         labels = {}
+
+#     if "gt_labels" in labels or "gt_masks" in labels:
+#         return 0.0
+
+#     else:
+#         return lacss.losses.self_supervised_edge_loss(
+#             preds=preds,
+#             labels=labels,
+#             inputs=inputs,
+#         )
+
+
+# def mc_loss(preds, labels, inputs):
+#     if labels is None:
+#         labels = {}
+
+#     if "gt_labels" in labels or "gt_masks" in labels:
+#         return 0.0
+#     else:
+#         return lacss.losses.aux_size_loss(preds=preds, labels=labels, inputs=inputs)
 
 
 class _CKSModel(nn.Module):
@@ -252,26 +253,28 @@ class LacssTrainer(Trainer):
         cur_step = self.state.step
 
         if cur_step >= warmup_steps:
-            col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
-            col_seg_loss.name = "collaborator_segm_loss"
+            col_seg_loss = partial_loss_func(collaborator_segm_loss, sigma=sigma, pi=pi)
+            # col_seg_loss.name = "collaborator_segm_loss"
             self.losses = [
-                lacss.losses.lpn_loss,
+                lpn_loss,
                 segmentation_loss,
                 col_seg_loss,
                 collaborator_border_loss,
-                mc_loss,
+                aux_size_loss,
             ]
         else:
-            pre_seg_loss = partial(segmentation_loss, pretraining=True)
-            pre_seg_loss.name = "segmentation_loss"
-            pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
-            pre_col_seg_loss.name = "collaborator_segm_loss"
+            pre_seg_loss = partial_loss_func(segmentation_loss, pretraining=True)
+            # pre_seg_loss.name = "segmentation_loss"
+            pre_col_seg_loss = partial_loss_func(
+                collaborator_segm_loss, sigma=100.0, pi=1.0
+            )
+            # pre_col_seg_loss.name = "collaborator_segm_loss"
             self.losses = [
-                lacss.losses.lpn_loss,
+                lpn_loss,
                 pre_seg_loss,
                 pre_col_seg_loss,
                 collaborator_border_loss,
-                mc_loss,
+                aux_size_loss,
             ]
 
         super().reset()
@@ -397,16 +400,16 @@ class LacssTrainer(Trainer):
 
         return obj
 
-    def pickle(self, save_path) -> None:
-        """Save a pickled copy of the Lacss model in the form of (model_config:dict, weights:FrozenDict). Only saves the principal model.
+    def save(self, save_path) -> None:
+        """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.
 
         Args:
             save_path: Path to the pkl file
         """
         import pickle
 
-        _cfg = self.model.principal.get_config(0)
+        _module = self.model.principal
         _params = self.params["principal"]
 
         with open(save_path, "wb") as f:
-            pickle.dump((_cfg, _params), f)
+            pickle.dump((_module, _params), f)

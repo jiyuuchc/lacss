@@ -7,13 +7,18 @@ import jax.tree_util as jtu
 from flax.training.train_state import TrainState
 
 from ..utils import Inputs
-from .loss import Loss, LossLog
+from .loss import LossLog
 
 
 class Eager:
     @classmethod
-    def loss_fn(cls, params, state, loss_logs, inputs, labels, rngs):
+    def loss_fn(cls, params, state, loss_logs, batch, rngs):
+        inputs, labels, sample_weight = batch
+        if sample_weight is None:
+            sample_weight = 1.0
+
         inputs_obj = Inputs.from_value(inputs)
+
         preds = state.apply_fn(
             {"params": params},
             *inputs_obj.args,
@@ -27,8 +32,8 @@ class Eager:
             inputs=inputs,
         )
 
-        losses, loss_logs = zip(*[loss_fn.update(**args) for loss_fn in loss_logs])
-        total_loss = sum(losses)
+        losses, loss_logs = zip(*[loss_log.update(**args) for loss_log in loss_logs])
+        total_loss = sum(losses) * sample_weight
 
         return total_loss, (state, loss_logs, preds)
 
@@ -54,18 +59,15 @@ class Eager:
         cls,
         state: TrainState,
         loss_logs: tp.Sequence[LossLog],
-        inputs: tp.Any,
-        labels: tp.Any,
+        batch: tp.Any,
         rngs: tp.Optional[dict],
     ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print('JIT train_step')
-
         grads, (state, loss_logs, preds) = jax.grad(cls.loss_fn, has_aux=True)(
             state.params,
             state,
             loss_logs,
-            inputs,
-            labels,
+            batch,
             rngs,
         )
         state = state.apply_gradients(grads=grads)
@@ -95,8 +97,7 @@ class _Distributed(Eager):
         cls,
         state: TrainState,
         loss_logs: tp.Sequence[LossLog],
-        inputs: tp.Any,
-        labels: tp.Any,
+        batch: tp.Any,
         rngs: tp.Optional[dict],
     ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print("JITTTTING")
@@ -109,8 +110,7 @@ class _Distributed(Eager):
             state.params,
             state,
             loss_logs,
-            inputs,
-            labels,
+            batch,
             rngs,
         )
 

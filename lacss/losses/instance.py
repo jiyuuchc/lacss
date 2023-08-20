@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import optax
 
 from ..ops import sub_pixel_samples
-from ..train.loss import Loss
+
+# from ..train.loss import Loss
 
 EPS = jnp.finfo("float32").eps
 
@@ -169,26 +170,48 @@ def weakly_supervised_instance_loss(
     return _mean_over_boolean_mask(loss, instance_mask)
 
 
-class SupervisedInstanceLoss(Loss):
-    def call(self, preds: dict, labels: dict, **kwargs):
-        return supervised_instance_loss(preds, labels)
+# class SupervisedInstanceLoss(Loss):
+#     def call(self, preds: dict, labels: dict, **kwargs):
+#         return supervised_instance_loss(preds, labels)
 
 
-class SelfSupervisedInstanceLoss(Loss):
-    def __init__(self, soft_label: bool = True, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.soft_label = soft_label
+# class SelfSupervisedInstanceLoss(Loss):
+#     def __init__(self, soft_label: bool = True, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.soft_label = soft_label
 
-    def call(self, preds: dict, **kwargs):
-        return self_supervised_instance_loss(preds, soft_label=self.soft_label)
+#     def call(self, preds: dict, **kwargs):
+#         return self_supervised_instance_loss(preds, soft_label=self.soft_label)
 
 
-class WeaklySupervisedInstanceLoss(Loss):
-    def __init__(self, ignore_mask: bool = False, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.ignore_mask = ignore_mask
+# class WeaklySupervisedInstanceLoss(Loss):
+#     def __init__(self, ignore_mask: bool = False, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.ignore_mask = ignore_mask
 
-    def call(self, *, preds, labels, inputs):
+#     def call(self, *, preds, labels, inputs):
+#         return weakly_supervised_instance_loss(
+#             preds, labels, inputs, ignore_mask=self.ignore_mask
+#         )
+
+
+def segmentation_loss(preds, labels, inputs, pretraining=False):
+    if labels is None:
+        labels = {}
+
+    if "gt_labels" in labels or "gt_masks" in labels:  # supervised
+        return supervised_instance_loss(
+            preds=preds,
+            labels=labels,
+            inputs=inputs,
+        )
+    elif "gt_image_mask" in labels:  # supervised by point + imagemask
         return weakly_supervised_instance_loss(
-            preds, labels, inputs, ignore_mask=self.ignore_mask
+            preds=preds,
+            labels=labels,
+            inputs=inputs,
+        )
+    else:  # point-supervised
+        return self_supervised_instance_loss(
+            preds=preds, labels=labels, inputs=inputs, soft_label=not pretraining
         )

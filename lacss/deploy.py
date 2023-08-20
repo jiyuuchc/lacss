@@ -383,7 +383,10 @@ class Predictor:
                 )
 
                 logging.info(f"Transfer result...")
-                boolean_mask = np.array(pred["instance_mask"].squeeze((1, 2)))
+                boolean_mask = np.asarray(
+                    pred["instance_mask"].squeeze((1, 2))
+                    & (pred["pred_scores"] >= score_threshold)
+                )
                 pred = dict(
                     pred_scores=np.array(pred["pred_scores"]),
                     pred_locations=np.array(
@@ -408,7 +411,7 @@ class Predictor:
             & (preds["pred_locations"][:, 0] < h)
             & (preds["pred_locations"][:, 1] < w)
         )
-        valid_locs = valid_locs & (preds["pred_scores"] >= score_threshold)
+        # valid_locs = valid_locs & (preds["pred_scores"] >= score_threshold)
         # valid_locs = valid_locs & (np.count_nonzero(preds["pred_masks"]) >= min_area)
 
         preds = jax.tree_util.tree_map(lambda x: x[valid_locs], preds)

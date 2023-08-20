@@ -1,6 +1,4 @@
-# original implementation is from treex https://github.com/cgarciae/treex
-# which is itself based on Tensorflow Keras:
-# https://github.com/tensorflow/tensorflow/blob/v2.2.0/tensorflow/python/keras/losses.py#L44-L201
+from __future__ import annotations
 
 import functools
 import typing as tp
@@ -51,88 +49,88 @@ class Reduction(Enum):
             raise ValueError("Invalid Reduction Key %s." % key)
 
 
-class Loss:
-    """
-    Loss base class.
+# class Loss:
+#     """
+#     Loss base class.
 
-    To be implemented by subclasses:
+#     To be implemented by subclasses:
 
-    * `call()`: Contains the logic for loss calculation.
+#     * `call()`: Contains the logic for loss calculation.
 
-    Example subclass implementation:
+#     Example subclass implementation:
 
-    ```python
-    class MeanSquaredError(Loss):
-        def call(self, target, preds):
-            return jnp.mean(jnp.square(preds - target), axis=-1)
-    ```
+#     ```python
+#     class MeanSquaredError(Loss):
+#         def call(self, target, preds):
+#             return jnp.mean(jnp.square(preds - target), axis=-1)
+#     ```
 
-    Please see the [Modules, Losses, and Metrics Guide]
-    (https://poets-ai.github.io/elegy/guides/modules-losses-metrics/#losses) for more
-    details on this.
-    """
+#     Please see the [Modules, Losses, and Metrics Guide]
+#     (https://poets-ai.github.io/elegy/guides/modules-losses-metrics/#losses) for more
+#     details on this.
+#     """
 
-    def __init__(
-        self,
-        reduction: tp.Optional[Reduction] = None,
-        weight: tp.Optional[ScalarLike] = None,
-        on: tp.Optional[IndexLike] = None,
-        name: tp.Optional[str] = None,
-    ):
-        """
-        Initializes `Loss` class.
+#     def __init__(
+#         self,
+#         reduction: tp.Optional[Reduction] = None,
+#         weight: tp.Optional[ScalarLike] = None,
+#         on: tp.Optional[IndexLike] = None,
+#         name: tp.Optional[str] = None,
+#     ):
+#         """
+#         Initializes `Loss` class.
 
-        Arguments:
-            reduction: (Optional) Type of `tx.losses.Reduction` to apply to
-                loss. Default value is `SUM_OVER_BATCH_SIZE`. For almost all cases
-                this defaults to `SUM_OVER_BATCH_SIZE`.
-            weight: Optional weight contribution for the total loss. Defaults to `1`.
-            on: A string or integer, or iterable of string or integers, that
-                indicate how to index/filter the `target` and `preds`
-                arguments before passing them to `call`. For example if `on = "a"` then
-                `target = target["a"]`. If `on` is an iterable
-                the structures will be indexed iteratively, for example if `on = ["a", 0, "b"]`
-                then `target = target["a"][0]["b"]`, same for `preds`. For more information
-                check out [Keras-like behavior](https://poets-ai.github.io/elegy/guides/modules-losses-metrics/#keras-like-behavior).
-            name: Optional name for the instance, if not provided lower snake_case version
-                of the name of the class is used instead.
-        """
-        self.name = name if name is not None else _get_name(self)
-        self.weight = (
-            jnp.asarray(weight, dtype=jnp.float32)
-            if weight is not None
-            else jnp.array(1.0, dtype=jnp.float32)
-        )
-        self._reduction = reduction if reduction is not None else Reduction.NONE
-        self._labels_filter = (on,) if isinstance(on, (str, int)) else on
-        self._signature_f = self.call
+#         Arguments:
+#             reduction: (Optional) Type of `tx.losses.Reduction` to apply to
+#                 loss. Default value is `SUM_OVER_BATCH_SIZE`. For almost all cases
+#                 this defaults to `SUM_OVER_BATCH_SIZE`.
+#             weight: Optional weight contribution for the total loss. Defaults to `1`.
+#             on: A string or integer, or iterable of string or integers, that
+#                 indicate how to index/filter the `target` and `preds`
+#                 arguments before passing them to `call`. For example if `on = "a"` then
+#                 `target = target["a"]`. If `on` is an iterable
+#                 the structures will be indexed iteratively, for example if `on = ["a", 0, "b"]`
+#                 then `target = target["a"][0]["b"]`, same for `preds`. For more information
+#                 check out [Keras-like behavior](https://poets-ai.github.io/elegy/guides/modules-losses-metrics/#keras-like-behavior).
+#             name: Optional name for the instance, if not provided lower snake_case version
+#                 of the name of the class is used instead.
+#         """
+#         self.name = name if name is not None else _get_name(self)
+#         self.weight = (
+#             jnp.asarray(weight, dtype=jnp.float32)
+#             if weight is not None
+#             else jnp.array(1.0, dtype=jnp.float32)
+#         )
+#         self._reduction = reduction if reduction is not None else Reduction.NONE
+#         self._labels_filter = (on,) if isinstance(on, (str, int)) else on
+#         self._signature_f = self.call
 
-    def __call__(
-        self,
-        **kwargs,
-    ) -> jnp.ndarray:
+#     def __call__(
+#         self,
+#         **kwargs,
+#     ) -> jnp.ndarray:
 
-        if self._labels_filter is not None:
-            if "target" in kwargs and kwargs["target"] is not None:
-                for index in self._labels_filter:
-                    kwargs["target"] = kwargs["target"][index]
+#         if self._labels_filter is not None:
+#             if "target" in kwargs and kwargs["target"] is not None:
+#                 for index in self._labels_filter:
+#                     kwargs["target"] = kwargs["target"][index]
 
-            if "preds" in kwargs and kwargs["preds"] is not None:
-                for index in self._labels_filter:
-                    kwargs["preds"] = kwargs["preds"][index]
+#             if "preds" in kwargs and kwargs["preds"] is not None:
+#                 for index in self._labels_filter:
+#                     kwargs["preds"] = kwargs["preds"][index]
 
-        sample_weight: tp.Optional[jnp.ndarray] = kwargs.pop("sample_weight", None)
+#         sample_weight: tp.Optional[jnp.ndarray] = kwargs.pop("sample_weight", None)
 
-        values = self.call(**kwargs)
+#         values = self.call(**kwargs)
 
-        return reduce_loss(values, sample_weight, self.weight, self._reduction)
+#         return reduce_loss(values, sample_weight, self.weight, self._reduction)
 
-    def __hash__(self):
-        return hash(self.name)
+#     def __hash__(self):
+#         return hash(self.name)
 
-    @abstractmethod
-    def call(self, *args, **kwargs) -> jnp.ndarray:
-        ...
+#     @abstractmethod
+#     def call(self, *args, **kwargs) -> jnp.ndarray:
+#         ...
 
 
 def reduce_loss(
@@ -209,3 +207,38 @@ def on(func, filters: dict):
         return func(**kwargs)
 
     return wrapper
+
+
+def _lower_snake_case(s: str) -> str:
+    import re
+
+    s = re.sub(r"(?<!^)(?=[A-Z])", "_", s).lower()
+    parts = s.split("_")
+    output_parts = []
+
+    for i in range(len(parts)):
+        if i == 0 or len(parts[i - 1]) > 1:
+            output_parts.append(parts[i])
+        else:
+            output_parts[-1] += parts[i]
+
+    return "_".join(output_parts)
+
+
+def _get_name(obj) -> str:
+    if hasattr(obj, "name") and obj.name:
+        return obj.name
+    elif hasattr(obj, "__name__") and obj.__name__:
+        return _lower_snake_case(obj.__name__)
+    elif hasattr(obj, "__class__") and obj.__class__.__name__:
+        return _lower_snake_case(obj.__class__.__name__)
+    else:
+        raise ValueError(f"Could not get name for: {obj}")
+
+
+def partial_loss_func(func, /, *args, **kwargs):
+    new_func = functools.partial(func, *args, **kwargs)
+
+    new_func.name = _get_name(func)
+
+    return new_func

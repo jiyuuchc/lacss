@@ -4,7 +4,7 @@ from typing import Optional
 import jax
 import optax
 
-from ..train.loss import Loss
+# from ..train.loss import Loss
 
 jnp = jax.numpy
 
@@ -67,29 +67,29 @@ def lpn_loss(preds, gamma=2.0, w1=1.0, w2=1.0, **kwargs):
     return detection_loss(preds, gamma=gamma) * w1 + localization_loss(preds) * w2
 
 
-class DetectionLoss(Loss):
-    def __init__(self, gamma=2.0, **kwargs):
-        super().__init__(**kwargs)
-        self.gamma = gamma
+# class DetectionLoss(Loss):
+#     def __init__(self, gamma=2.0, **kwargs):
+#         super().__init__(**kwargs)
+#         self.gamma = gamma
 
-    def call(self, preds: dict, **kwargs) -> jnp.ndarray:
-        return detection_loss(preds=preds, gamma=self.gamma)
-
-
-class LocalizationLoss(Loss):
-    def __init__(self, delta=1.0, **kwargs):
-        super().__init__(**kwargs)
-        self.delta = delta
-
-    def call(self, preds: dict, **kwrags) -> jnp.ndarray:
-        return localization_loss(preds, delta=self.delta)
+#     def call(self, preds: dict, **kwargs) -> jnp.ndarray:
+#         return detection_loss(preds=preds, gamma=self.gamma)
 
 
-class LPNLoss(Loss):
-    def __init__(self, delta=1.0, gamma=2.0, **kwargs):
-        super().__init__(**kwargs)
-        self.det_loss = DetectionLoss(gamma=gamma)
-        self.loc_loss = LocalizationLoss(delta=delta)
+# class LocalizationLoss(Loss):
+#     def __init__(self, delta=1.0, **kwargs):
+#         super().__init__(**kwargs)
+#         self.delta = delta
 
-    def call(self, preds: dict, **kwargs):
-        return self.det_loss.call(preds=preds) + self.loc_loss(preds=preds)
+#     def call(self, preds: dict, **kwrags) -> jnp.ndarray:
+#         return localization_loss(preds, delta=self.delta)
+
+
+# class LPNLoss(Loss):
+#     def __init__(self, delta=1.0, gamma=2.0, **kwargs):
+#         super().__init__(**kwargs)
+#         self.det_loss = DetectionLoss(gamma=gamma)
+#         self.loc_loss = LocalizationLoss(delta=delta)
+
+#     def call(self, preds: dict, **kwargs):
+#         return self.det_loss.call(preds=preds) + self.loc_loss(preds=preds)

@@ -1,4 +1,5 @@
 import pathlib
+import pickle
 from functools import lru_cache, partial
 from pathlib import Path
 
@@ -168,11 +169,9 @@ class Trainer:
 
         predict_fn = strategy.predict
 
-        state = self.state
-        if len(kwargs) > 0:
-            state = state.replace(
-                apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
-            )
+        state = self.state = self.state.replace(
+            apply_fn=_cached_partial(self.model.apply, **kwargs)
+        )
         preds = predict_fn(state, inputs)
 
         return preds
@@ -223,11 +222,17 @@ class Trainer:
         if not self._initialized:
             raise ValueError("Try to run uninitialized trainer")
 
+        train_fn = strategy.train_step
+
+        self.state = self.state.replace(
+            apply_fn=_cached_partial(self.model.apply, **kwargs)
+        )
+
         self.reset()
 
         self.seed, seed = jax.random.split(self.seed)
         for step, data in enumerate(_get_iterator(dataset)):
-            inputs, labels, _ = unpack_x_y_sample_weight(data)
+            batch = unpack_x_y_sample_weight(data)
 
             if rng_cols is not None:
                 key = jax.random.fold_in(seed, step)
@@ -236,44 +241,39 @@ class Trainer:
             else:
                 rngs = None
 
-            train_fn = strategy.train_step
-
-            state = self.state.replace(
-                apply_fn=_cached_partial(self.state.apply_fn, **kwargs)
+            self.state, self.loss_logs, preds = train_fn(
+                self.state, self.loss_logs, batch, rngs
             )
-            state, self.loss_logs, preds = train_fn(
-                state, self.loss_logs, inputs, labels, rngs
-            )
-            self.state = state.replace(apply_fn=self.state.apply_fn)
 
             batch_logs = self.compute_loss_log()
 
             yield batch_logs
 
-    # def save_model(self, path: _PathLike, sub_module: Optional[str] = None) -> None:
-    #     """Save the model in a pickled file. The pickle is a tuple of
-    #         (module, weights).
+    def save_model(self, path, sub_module: Optional[str] = None) -> None:
+        """Save the model in a pickled file. The pickle is a tuple of
+            (module, weights).
 
-    #     Args:
-    #         path: The file path.
-    #         sub_module: Optionally only save a sub_module of the model
-    #             by specifying the name
-    #     """
-    #     module = self.model
-    #     params = self.params
+        Args:
+            path: The file path.
+            sub_module: Optionally only save a sub_module of the model
+                by specifying the name
+        """
+        module = self.model
+        params = self.params
 
-    #     if sub_module is not None:
-    #         module = module.bind(dict(params=params))
-    #         module = getattr(module, sub_module)
-    #         module, params = module.unbind()
-    #         params = params["params"]
+        if sub_module is not None:
+            module = module.bind(dict(params=params))
+            module = getattr(module, sub_module)
+            module, params = module.unbind()
+            params = params["params"]
 
-    #     if isinstance(path, str):
-    #         path = pathlib.Path(path)
+        if isinstance(path, str):
+            path = Path(path)
 
-    #     path.parent.mkdir(parents=True, exist_ok=True)
-    #     with open(path, "wb") as f:
-    #         cloudpickle.dump((module, params), f)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "wb") as f:
+            pickle.dump((module, params), f)
 
     def pickle(self, path: PathLike) -> None:
         """Make a pickle save of the trainer. This saves the model as well as
@@ -282,8 +282,6 @@ class Trainer:
         Args:
             path: The file path.
         """
-        import pickle
-
         if isinstance(path, str):
             path = pathlib.Path(path)
 

@@ -5,7 +5,8 @@ import jax.numpy as jnp
 import optax
 
 from ..ops import sorbel_edges
-from ..train.loss import Loss
+
+# from ..train.loss import Loss
 from .detection import _binary_focal_crossentropy
 
 EPS = jnp.finfo("float32").eps
@@ -106,8 +107,14 @@ def self_supervised_segmentation_loss(
     return loss
 
 
-def aux_size_loss(preds, inputs, *, weight=0.01, **kwargs):
+def aux_size_loss(preds, labels, inputs, *, weight=0.01, **kwargs):
     """Auxillary loss to prevent model collapse"""
+
+    if labels is None:
+        labels = {}
+
+    if "gt_labels" in labels or "gt_masks" in labels:
+        return 0.0
 
     height, width = inputs["image"].shape[:2]
 
@@ -144,50 +151,92 @@ def supervised_segmentation_loss(preds, labels, **kwargs):
     return optax.sigmoid_binary_cross_entropy(preds["fg_pred"], mask).mean()
 
 
-class AuxEdgeLoss(Loss):
-    def call(
-        self,
-        inputs: dict,
-        preds: dict,
-        **kwargs,
-    ):
-        if not "training_locations" in preds:
-            return 0.0
+# class AuxEdgeLoss(Loss):
+#     def call(
+#         self,
+#         inputs: dict,
+#         preds: dict,
+#         **kwargs,
+#     ):
+#         if not "training_locations" in preds:
+#             return 0.0
 
-        return self_supervised_edge_loss(preds, inputs)
-
-
-class AuxSizeLoss(Loss):
-    def __init__(self, alpha=1e-2):
-        super().__init__()
-        self.a = alpha
-
-    def call(self, inputs, preds, **kwargs):
-
-        return aux_size_loss(preds, inputs, weight=self.a)
+#         return self_supervised_edge_loss(preds, inputs)
 
 
-class AuxSegLoss(Loss):
-    def __init__(self, offset_sigma=10.0, offset_scale=5.0, **kwargs):
-        super().__init__(**kwargs)
-        try:
-            offset_sigma[0]
-        except:
-            offset_sigma = (offset_sigma,)
+# class AuxSizeLoss(Loss):
+#     def __init__(self, alpha=1e-2):
+#         super().__init__()
+#         self.a = alpha
 
-        try:
-            offset_scale[0]
-        except:
-            offset_scale = (offset_scale,)
+#     def call(self, inputs, preds, **kwargs):
 
-        self.offset_scale = jnp.array(offset_scale)
-        self.offset_sigma = jnp.array(offset_sigma)
+#         return aux_size_loss(preds, inputs, weight=self.a)
 
-    def call(self, inputs, preds, **kwargs):
 
+# class AuxSegLoss(Loss):
+#     def __init__(self, offset_sigma=10.0, offset_scale=5.0, **kwargs):
+#         super().__init__(**kwargs)
+#         try:
+#             offset_sigma[0]
+#         except:
+#             offset_sigma = (offset_sigma,)
+
+#         try:
+#             offset_scale[0]
+#         except:
+#             offset_scale = (offset_scale,)
+
+#         self.offset_scale = jnp.array(offset_scale)
+#         self.offset_sigma = jnp.array(offset_sigma)
+
+#     def call(self, inputs, preds, **kwargs):
+
+#         return self_supervised_segmentation_loss(
+#             preds,
+#             inputs,
+#             offset_scale=self.offset_scale,
+#             offset_sigma=self.offset_sigma,
+#         )
+
+
+def collaborator_segm_loss(preds, labels, inputs, sigma, pi):
+    if not "fg_pred" in preds:
+        return 0.0
+
+    if labels is None:
+        labels = {}
+
+    if "gt_image_mask" in labels or "gt_labels" in labels:
+        return supervised_segmentation_loss(
+            preds=preds,
+            labels=labels,
+            inputs=inputs,
+        )
+
+    else:
         return self_supervised_segmentation_loss(
-            preds,
-            inputs,
-            offset_scale=self.offset_scale,
-            offset_sigma=self.offset_sigma,
+            preds=preds,
+            labels=labels,
+            inputs=inputs,
+            offset_sigma=sigma,
+            offset_scale=pi,
+        )
+
+
+def collaborator_border_loss(preds, labels, inputs):
+    if not "edge_pred" in preds:
+        return 0.0
+
+    if labels is None:
+        labels = {}
+
+    if "gt_labels" in labels or "gt_masks" in labels:
+        return 0.0
+
+    else:
+        return self_supervised_edge_loss(
+            preds=preds,
+            labels=labels,
+            inputs=inputs,
         )
