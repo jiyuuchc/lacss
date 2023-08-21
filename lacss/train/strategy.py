@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing as tp
 from functools import partial
 
@@ -6,16 +8,17 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from flax.training.train_state import TrainState
 
-from ..utils import Inputs
 from .loss import LossLog
+from .utils import Inputs
 
 
 class Eager:
     @classmethod
     def loss_fn(cls, params, state, loss_logs, batch, rngs):
-        inputs, labels, sample_weight = batch
-        if sample_weight is None:
-            sample_weight = 1.0
+        # inputs, labels, sample_weight = batch
+        inputs = batch[0] if isinstance(batch, tuple) else batch
+        # if sample_weight is None:
+        #     sample_weight = 1.0
 
         inputs_obj = Inputs.from_value(inputs)
 
@@ -27,13 +30,12 @@ class Eager:
         )
 
         args = dict(
-            preds=preds,
-            labels=labels,
-            inputs=inputs,
+            batch=batch,
+            prediction=preds,
         )
 
         losses, loss_logs = zip(*[loss_log.update(**args) for loss_log in loss_logs])
-        total_loss = sum(losses) * sample_weight
+        total_loss = sum(losses)
 
         return total_loss, (state, loss_logs, preds)
 
@@ -135,7 +137,7 @@ class Distributed(_Distributed):
     train_step = jax.pmap(
         _Distributed._train_step,
         axis_name="mapped",
-        in_axes=(None, None, 0, 0, None),
+        in_axes=(None, None, 0, None),
         out_axes=(None, None, 0),
     )
 
@@ -151,7 +153,7 @@ class VMapped(_Distributed):
         jax.vmap(
             _Distributed._train_step,
             axis_name="mapped",
-            in_axes=(None, None, 0, 0, None),
+            in_axes=(None, None, 0, None),
             out_axes=(None, None, 0),
         )
     )

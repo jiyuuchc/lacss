@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lacss.types import *
+from ..typing import *
 
 
 def box_area(box: ArrayLike) -> ArrayLike:

@@ -7,7 +7,7 @@ from jax.scipy.signal import convolve
 
 jnp = jax.numpy
 
-from lacss.types import *
+from ..typing import *
 
 
 def sorbel_edges(image: ArrayLike) -> Array:

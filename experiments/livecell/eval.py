@@ -13,8 +13,9 @@ from data import (
 )
 from tqdm import tqdm
 
-import lacss
+import lacss.data
 import lacss.deploy
+import lacss.ops
 from lacss.metrics import AP, LoiAP
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -131,7 +132,7 @@ def main(
 
     mask_ap = {"all": AP(_th)}
     box_ap = {"all": AP(_th)}
-    loi_ap = {"all": LoiAP([5, 2, 1])}
+    # loi_ap = {"all": LoiAP([5, 2, 1])}
     dice = {"all": Dice()}
 
     test_data = (
@@ -156,7 +157,7 @@ def main(
         if not t in mask_ap:
             mask_ap[t] = AP(_th)
             box_ap[t] = AP(_th)
-            loi_ap[t] = LoiAP([5, 2, 1])
+            # loi_ap[t] = LoiAP([5, 2, 1])
             dice[t] = Dice()
 
         # inference
@@ -165,8 +166,8 @@ def main(
             image = image - image.mean()
             image = image / image.std()
 
-        pred = model(
-            dict(image=image),
+        pred = model.predict(
+            image,
             # remove_out_of_bound=True,
             min_area=min_area,
             scaling=scale,
@@ -219,14 +220,14 @@ def main(
         box_ap[t].update(valid_box_ious, valid_scores)
         box_ap["all"].update(valid_box_ious, valid_scores)
 
-        gt_locs = data["centroids"].numpy()
-        loi_ap[t].update(pred, gt_locations=gt_locs)
-        loi_ap["all"].update(pred, gt_locations=gt_locs)
+        # gt_locs = data["centroids"].numpy()
+        # loi_ap[t].update(pred, gt_locations=gt_locs)
+        # loi_ap["all"].update(pred, gt_locations=gt_locs)
 
     for t in sorted(mask_ap.keys()):
         print()
         print(t)
-        print("LOIAP: ", _format(loi_ap[t].compute()))
+        # print("LOIAP: ", _format(loi_ap[t].compute()))
         print("BoxAP: ", _format(box_ap[t].compute()))
         print("MaskAP: ", _format(mask_ap[t].compute()))
         print("Dice: ", dice[t].compute())

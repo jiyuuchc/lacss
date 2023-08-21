@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from typing import Sequence
+
 import jax
 import jax.numpy as jnp
 
-from lacss.types import *
+from ..typing import *
+
+Shape = Sequence[int]
 
 
 def locations_to_labels(
     locations: ArrayLike, target_shape: Shape, threshold: float = 1.5
-) -> Tuple[Array, Array]:
+) -> tuple[Array, Array]:
     """Generate labels as LPN regression targets
     Args:
         locations: [N, 2] float32 true location values. scaled 0..1, masking out invalid with -1
@@ -70,7 +74,7 @@ def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> A
 
 def location_matching(
     pred_locations: ArrayLike, gt_locations: ArrayLike, threshold: float
-) -> Tuple[Array, Array]:
+) -> tuple[Array, Array]:
     """Match predicted location to gt locations
     Args:
       pred_locations:r [N, 2]

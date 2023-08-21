@@ -1,11 +1,13 @@
+from __future__ import annotations
+
+from collections import defaultdict
 from dataclasses import asdict, field
 
 import flax.linen as nn
 import jax.numpy as jnp
 
-from lacss.ops import *
-from lacss.utils import dataclass_from_dict
-
+from ..ops import *
+from ..typing import *
 from .convnext import ConvNeXt
 from .detector import Detector
 from .lpn import LPN
@@ -39,7 +41,15 @@ class Lacss(nn.Module):
             An Lacss instance.
 
         """
-        return dataclass_from_dict(cls, config)
+        config_ = defaultdict(lambda: {})
+        config_.update(config)
+        return Lacss(
+            backbone=ConvNeXt(**config_["backbone"]),
+            lpn=LPN(**config_["lpn"]),
+            detector=Detector(**config_["detector"]),
+            segmentor=Segmentor(**config_["segmentor"]),
+        )
+        # return dataclass_from_dict(cls, config)
 
     def get_config(self) -> dict:
         """Convert to a configuration dict. Can be serialized with json
@@ -51,10 +61,10 @@ class Lacss(nn.Module):
 
     def __call__(
         self,
-        image: jnp.ndarray,
-        gt_locations: jnp.ndarray = None,
+        image: ArrayLike,
+        gt_locations: ArrayLike | None = None,
         *,
-        training: bool = None,
+        training: bool | None = None,
     ) -> dict:
         """
         Args:

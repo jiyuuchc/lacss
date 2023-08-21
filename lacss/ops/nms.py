@@ -3,8 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from lacss.types import *
-
+from ..typing import *
 from .boxes import box_iou_similarity
 from .locations import distance_similarity
 

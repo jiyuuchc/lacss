@@ -1,20 +1,24 @@
+from __future__ import annotations
+
 import math
 from functools import partial
+from typing import Mapping, Sequence
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
 from lacss.ops import gather_patches
-from lacss.types import *
+from lacss.typing import *
 
+from ..typing import *
 from .common import SpatialAttention
 
 
 class _Encoder(nn.Module):
     n_output_features: int
     input_patch_size: int
-    encoding_dims: Tuple[int, int, int] = (8, 8, 4)
+    encoding_dims: tuple[int, int, int] = (8, 8, 4)
     n_latent_features: int = -1
 
     @nn.compact
@@ -62,7 +66,7 @@ class Segmentor(nn.Module):
     """
 
     feature_level: int = 2
-    conv_spec: Tuple[Sequence[int], Sequence[int]] = (
+    conv_spec: tuple[Sequence[int], Sequence[int]] = (
         (384, 384, 384),
         (64,),
     )

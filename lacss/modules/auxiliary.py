@@ -1,9 +1,12 @@
+from __future__ import annotations
+
+from typing import Optional, Sequence
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from lacss.types import *
-
+from ..typing import ArrayLike, DataDict
 from .common import *
 from .unet import UNet
 

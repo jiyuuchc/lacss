@@ -13,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 from pprint import pprint
+from typing import Iterator
 
 import optax
 import orbax.checkpoint
@@ -20,10 +21,10 @@ import typer
 from data import augment, get_cell_type_and_scaling, remove_redundant
 from flax.core.frozen_dict import freeze, unfreeze
 
-import lacss.data
-import lacss.train
-from lacss.deploy import load_from_pretrained
-from lacss.types import *
+from lacss.data import dataset_from_coco_annotations, resize
+from lacss.train import LacssTrainer, TFDatasetAdapter
+from lacss.typing import *
+from lacss.utils import load_from_pretrained
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -60,7 +61,7 @@ def train_data(
         )
 
     ds = (
-        lacss.data.dataset_from_coco_annotations(
+        dataset_from_coco_annotations(
             datapath / "annotations" / "LIVECell" / "livecell_coco_train.json",
             datapath / "images" / "livecell_train_val_images",
             [520, 704, 1],
@@ -76,7 +77,7 @@ def train_data(
     print("Train dataset is: ")
     pprint(ds.element_spec)
 
-    return lacss.train.TFDatasetAdapter(ds, steps=-1).get_dataset()
+    return TFDatasetAdapter(ds)
 
 
 def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
@@ -95,7 +96,7 @@ def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
         h, w, _ = inputs["image"].shape
         h = tf.round(h * default_scale)
         w = tf.round(w * default_scale)
-        inputs = lacss.data.resize(inputs, target_size=[h, w])
+        inputs = resize(inputs, target_size=[h, w])
 
         return dict(image=inputs["image"], cls_id=cell_type,), dict(
             gt_locations=inputs["centroids"],
@@ -103,7 +104,7 @@ def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
         )
 
     ds = (
-        lacss.data.dataset_from_coco_annotations(
+        dataset_from_coco_annotations(
             datapath / "annotations" / "LIVECell" / "livecell_coco_val.json",
             datapath / "images" / "livecell_train_val_images",
             [520, 704, 1],
@@ -117,7 +118,7 @@ def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
     print("Val dataset is:")
     pprint(ds.element_spec)
 
-    return lacss.train.TFDatasetAdapter(ds, steps=-1).get_dataset()
+    return TFDatasetAdapter(ds)
 
 
 @app.command()
@@ -150,7 +151,7 @@ def run_training(
 
     logging.info(f"Model configuration loaded from {config}")
 
-    trainer = lacss.train.LacssTrainer(
+    trainer = LacssTrainer(
         model_cfg,
         dict(n_cls=8),
         seed=seed,

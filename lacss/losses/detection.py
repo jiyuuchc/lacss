@@ -1,27 +1,30 @@
+from __future__ import annotations
+
 from functools import partial
 from typing import Optional
 
 import jax
 import optax
 
-# from ..train.loss import Loss
+from .common import binary_focal_crossentropy
 
 jnp = jax.numpy
 
 EPS = jnp.finfo("float32").eps
 
+# def _binary_focal_crossentropy(pred, gt, gamma=2.0):
+#     p_t = gt * pred + (1 - gt) * (1.0 - pred)
+#     focal_factor = (1.0 - p_t) ** gamma
 
-def _binary_focal_crossentropy(pred, gt, gamma=2.0):
-    p_t = gt * pred + (1 - gt) * (1.0 - pred)
-    focal_factor = (1.0 - p_t) ** gamma
+#     bce = -jnp.log(jnp.clip(p_t, EPS, 1.0))
 
-    bce = -jnp.log(jnp.clip(p_t, EPS, 1.0))
-
-    return focal_factor * bce
+#     return focal_factor * bce
 
 
-def detection_loss(preds, gamma=2.0, **kwargs):
+def detection_loss(batch, prediction, *, gamma=2.0):
     """LPN detection loss"""
+
+    preds = prediction
 
     scores = preds["lpn_scores"]
     gt_scores = preds["lpn_gt_scores"]
@@ -29,18 +32,19 @@ def detection_loss(preds, gamma=2.0, **kwargs):
     score_loss = 0.0
     cnt = EPS
     for k in scores:
-        score_loss += _binary_focal_crossentropy(
+        score_loss += binary_focal_crossentropy(
             scores[k],
             gt_scores[k],
-            gamma,
+            gamma=gamma,
         ).sum()
         cnt += preds["lpn_scores"][k].size
 
     return score_loss / cnt
 
 
-def localization_loss(preds, delta=1.0, **kwargs):
+def localization_loss(batch, prediction, *, delta=1.0):
     """LPN localization loss"""
+    preds = prediction
 
     regrs = preds["lpn_regressions"]
     gt_regrs = preds["lpn_gt_regressions"]
@@ -61,35 +65,10 @@ def localization_loss(preds, delta=1.0, **kwargs):
     return regr_loss / (cnt + EPS)
 
 
-def lpn_loss(preds, gamma=2.0, w1=1.0, w2=1.0, **kwargs):
+def lpn_loss(batch, prediction, *, gamma=2.0, w1=1.0, w2=1.0):
     """LPN loss"""
 
-    return detection_loss(preds, gamma=gamma) * w1 + localization_loss(preds) * w2
-
-
-# class DetectionLoss(Loss):
-#     def __init__(self, gamma=2.0, **kwargs):
-#         super().__init__(**kwargs)
-#         self.gamma = gamma
-
-#     def call(self, preds: dict, **kwargs) -> jnp.ndarray:
-#         return detection_loss(preds=preds, gamma=self.gamma)
-
-
-# class LocalizationLoss(Loss):
-#     def __init__(self, delta=1.0, **kwargs):
-#         super().__init__(**kwargs)
-#         self.delta = delta
-
-#     def call(self, preds: dict, **kwrags) -> jnp.ndarray:
-#         return localization_loss(preds, delta=self.delta)
-
-
-# class LPNLoss(Loss):
-#     def __init__(self, delta=1.0, gamma=2.0, **kwargs):
-#         super().__init__(**kwargs)
-#         self.det_loss = DetectionLoss(gamma=gamma)
-#         self.loc_loss = LocalizationLoss(delta=delta)
-
-#     def call(self, preds: dict, **kwargs):
-#         return self.det_loss.call(preds=preds) + self.loc_loss(preds=preds)
+    return (
+        detection_loss(batch, prediction, gamma=gamma) * w1
+        + localization_loss(batch, prediction) * w2
+    )

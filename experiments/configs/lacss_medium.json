@@ -1,19 +1,15 @@
 {
-    "backbone": {
-      "dims": [128, 256, 512, 1024],
-      "drop_path_rate": 0.4,
-      "output_channels": 512
-    },
-    "lpn": {
-      "conv_spec": [[512, 512, 512, 512], []]
-    },
-    "detector": {
-        "train_max_output": 2560,
-        "test_max_output": 2560
-    },
-    "segmentor": {
-      "conv_spec": [[512, 512, 512], [64]],
-      "encoder_dims": [8, 8, 8]
-    }  
-  }
+  "backbone": {
+    "dims": [128, 256, 512, 1024],
+    "drop_path_rate": 0.4,
+    "out_channels": 512
+  },
+  "lpn": {
+    "conv_spec": [[512, 512, 512, 512], []]
+  },
+  "segmentor": {
+    "conv_spec": [[512, 512, 512], [64]],
+    "encoder_dims": [8, 8, 8]
+  }  
+}
   

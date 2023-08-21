@@ -5,19 +5,24 @@ Attributes:
 from __future__ import annotations
 
 import logging
-import os
 import pickle
 from functools import lru_cache, partial
+from typing import Mapping, Optional, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax.core.frozen_dict import freeze, unfreeze
 
 import lacss.modules
-from lacss.ops import patches_to_label, sorted_non_max_suppression
-from lacss.types import *
-from lacss.utils import Inputs
+import lacss.ops
+
+from .ops import patches_to_label, sorted_non_max_suppression
+from .typing import *
+from .utils import load_from_pretrained
+
+Shape = Sequence[int]
 
 _cached_partial = lru_cache(partial)
 
@@ -64,56 +69,6 @@ def _remove_edge_instances(
     pred["instance_mask"] &= ~removal
 
     return pred
-
-
-def load_from_pretrained(pretrained):
-    """Load a saved model.
-
-    Args:
-        pretrained: The url to the saved model.
-
-    Returns: A tuple (module, parameters) representing the model.
-    """
-
-    if os.path.isdir(pretrained):
-        from lacss.train import LacssTrainer
-
-        trainer = LacssTrainer.from_checkpoint(pretrained)
-        module = trainer.model.principal
-        params = trainer.params["principal"]
-
-    else:
-
-        if os.path.isfile(pretrained):
-            with open(pretrained, "rb") as f:
-                thingy = pickle.load(f)
-
-        else:
-            import io
-            from urllib.request import Request, urlopen
-
-            headers = {"User-Agent": "Wget/1.13.4 (linux-gnu)"}
-            req = Request(url=pretrained, headers=headers)
-
-            bytes = urlopen(req).read()
-            thingy = pickle.loads(bytes)
-
-        if isinstance(thingy, lacss.train.Trainer):
-            module = thingy.model
-            params = thingy.params
-
-        else:
-            cfg, params = thingy
-
-            if isinstance(cfg, lacss.modules.Lacss):
-                module = cfg
-            else:
-                module = lacss.modules.Lacss(**cfg)
-
-    if "params" in params and len(params) == 1:
-        params = params["params"]
-
-    return module, freeze(params)
 
 
 @partial(jax.jit, static_argnums=(0, 3))
@@ -207,20 +162,6 @@ class Predictor:
             for shape in precompile_shape:
                 x = jnp.zeros(shape)
                 _ = self.predict(x)
-
-    def __call__(self, inputs, **kwargs):
-        """Do inference.
-
-        Args:
-            inputs: Model inputs.
-
-        Returns:
-            A dict of LACSS model outputs.
-        """
-
-        inputs_obj = Inputs.from_value(inputs)
-
-        return self.predict(*inputs_obj.args, **inputs_obj.kwargs, **kwargs)
 
     def predict(
         self,
@@ -496,15 +437,12 @@ class Predictor:
         else:
             raise ValueError(f"{new_detector} is not a Lacss Detector")
 
-    def pickle(self, save_path) -> None:
+    def save(self, save_path) -> None:
         """Save the model by pickling.
-            In the form of (model_config:dict, weights:FrozenDict).
+            In the form of (module, weights).
 
         Args:
             save_path: Path to the pkl file
         """
-        _cfg = self.model[0].get_config()
-        _params = self.model[1]
-
         with open(save_path, "wb") as f:
-            pickle.dump((_cfg, _params), f)
+            pickle.dump(self.model, f)

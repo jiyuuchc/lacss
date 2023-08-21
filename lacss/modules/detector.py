@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import partial
 from typing import List, Optional, Sequence, Tuple, Union
 
@@ -5,8 +7,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from lacss.ops import location_matching, sorted_non_max_suppression
-from lacss.types import *
+from ..ops import location_matching, sorted_non_max_suppression
+from ..typing import *
 
 
 class Detector(nn.Module):
@@ -31,12 +33,12 @@ class Detector(nn.Module):
 
     train_nms_threshold: float = 8.0
     train_pre_nms_topk: int = -1
-    train_max_output: int = 768
+    train_max_output: int = 2560
     train_min_score: float = 0.2
     max_proposal_offset: float = 12
     test_nms_threshold: float = 8.0
     test_pre_nms_topk: int = -1
-    test_max_output: int = 768
+    test_max_output: int = 2560
     test_min_score: float = 0.2
     # training: bool = True
 

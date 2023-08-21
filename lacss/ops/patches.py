@@ -5,20 +5,22 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lacss.types import *
-
+from ..typing import *
 from .boxes import box_iou_similarity
 from .image import sub_pixel_samples
+
+Shape = Sequence[int]
 
 
 def gather_patches(
     features: ArrayLike, locations: ArrayLike, patch_size: int
-) -> Tuple[Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array]:
     """extract feature patches according to a list of locations
 
     Args:
@@ -108,8 +110,8 @@ def bboxes_of_patches(
 
 
 def indices_of_patches(
-    pred: Union[Sequence, DataDict],
-    input_size: Tuple[int, int] = None,
+    pred: Sequence | DataDict,
+    input_size: tuple[int, int] = None,
     threshold: float = 0.5,
 ) -> Array:
     """Compute yx coodinates of all segmented instances
@@ -333,7 +335,7 @@ _sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
 def rescale_patches(
     pred: DataDict,
     scale: float,
-) -> Tuple[Array, Array, Array]:
+) -> tuple[Array, Array, Array]:
     """Rescale/resize instance outputs in a sub-pixel accurate way.
     If the input image was rescaled, this function take care of rescaling the predictions
     to the orginal coodinates.

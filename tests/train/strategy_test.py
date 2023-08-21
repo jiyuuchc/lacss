@@ -1,4 +1,4 @@
-from functools import partial
+from __future__ import annotations
 
 import flax.linen as nn
 import jax
@@ -8,9 +8,9 @@ import pytest
 import lacss.train
 
 
-class Mse(lacss.train.Loss):
-    def call(self, preds, labels, **kwargs):
-        return ((preds - labels) ** 2).mean()
+def mse(batch, prediction):
+    labels = batch[1]
+    return ((prediction - labels) ** 2).mean()
 
 
 def test_vmap_strategy():
@@ -24,7 +24,7 @@ def test_vmap_strategy():
             yield x, y
 
     def _run():
-        g = partial(gen, X=_X, Y=_Y)
+        g = gen(X=_X, Y=_Y)
 
         trainer.initialize(g)
 
@@ -34,20 +34,20 @@ def test_vmap_strategy():
 
     trainer = lacss.train.Trainer(
         model=nn.Dense(4),
-        losses=Mse(),
+        losses=mse,
         optimizer=optax.adam(0.01),
         seed=key,
-        strategy=lacss.train.strategy.Eager,
+        strategy=lacss.train.Eager,
     )
 
     eager_loss = _run()
 
     trainer = lacss.train.Trainer(
         model=nn.Dense(4),
-        losses=Mse(),
+        losses=mse,
         optimizer=optax.adam(0.01),
         seed=key,
-        strategy=lacss.train.strategy.VMapped,
+        strategy=lacss.train.VMapped,
     )
 
     vmap_loss = _run()

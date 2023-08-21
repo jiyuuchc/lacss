@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 from typing import Dict, List, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from ..typing import *
 from .common import *
 
 

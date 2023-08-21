@@ -1,7 +1,9 @@
-from dataclasses import asdict
+from __future__ import annotations
 
-# from functools import partial
+from dataclasses import asdict
+from functools import partial
 from pathlib import Path
+from typing import Iterable, Optional, Union
 
 import flax.linen as nn
 import jax.numpy as jnp
@@ -11,86 +13,18 @@ from flax.training import orbax_utils
 from tqdm import tqdm
 
 import lacss.metrics
-from lacss.losses import *
-from lacss.modules import Lacss, LacssCollaborator
-from lacss.types import *
+from lacss.losses import (
+    aux_size_loss,
+    collaborator_border_loss,
+    collaborator_segm_loss,
+    lpn_loss,
+    segmentation_loss,
+)
 
-from .loss import partial_loss_func
+from ..modules import Lacss, LacssCollaborator
+from ..typing import Array, Optimizer
+from .base_trainer import Trainer
 from .strategy import JIT
-from .trainer import Trainer
-
-# def segmentation_loss(preds, labels, inputs, pretraining=False):
-#     if labels is None:
-#         labels = {}
-
-#     if "gt_labels" in labels or "gt_masks" in labels:  # supervised
-#         return lacss.losses.supervised_instance_loss(
-#             preds=preds,
-#             labels=labels,
-#             inputs=inputs,
-#         )
-#     elif "gt_image_mask" in labels:  # supervised by point + imagemask
-#         return lacss.losses.weakly_supervised_instance_loss(
-#             preds=preds,
-#             labels=labels,
-#             inputs=inputs,
-#         )
-#     else:  # point-supervised
-#         return lacss.losses.self_supervised_instance_loss(
-#             preds=preds, labels=labels, inputs=inputs, soft_label=not pretraining
-#         )
-
-
-# def collaborator_segm_loss(preds, labels, inputs, sigma, pi):
-#     if not "fg_pred" in preds:
-#         return 0.0
-
-#     if labels is None:
-#         labels = {}
-
-#     if "gt_image_mask" in labels or "gt_labels" in labels:
-#         return lacss.losses.supervised_segmentation_loss(
-#             preds=preds,
-#             labels=labels,
-#             inputs=inputs,
-#         )
-
-#     else:
-#         return lacss.losses.self_supervised_segmentation_loss(
-#             preds=preds,
-#             labels=labels,
-#             inputs=inputs,
-#             offset_sigma=sigma,
-#             offset_scale=pi,
-#         )
-
-
-# def collaborator_border_loss(preds, labels, inputs):
-#     if not "edge_pred" in preds:
-#         return 0.0
-
-#     if labels is None:
-#         labels = {}
-
-#     if "gt_labels" in labels or "gt_masks" in labels:
-#         return 0.0
-
-#     else:
-#         return lacss.losses.self_supervised_edge_loss(
-#             preds=preds,
-#             labels=labels,
-#             inputs=inputs,
-#         )
-
-
-# def mc_loss(preds, labels, inputs):
-#     if labels is None:
-#         labels = {}
-
-#     if "gt_labels" in labels or "gt_masks" in labels:
-#         return 0.0
-#     else:
-#         return lacss.losses.aux_size_loss(preds=preds, labels=labels, inputs=inputs)
 
 
 class _CKSModel(nn.Module):
@@ -253,7 +187,7 @@ class LacssTrainer(Trainer):
         cur_step = self.state.step
 
         if cur_step >= warmup_steps:
-            col_seg_loss = partial_loss_func(collaborator_segm_loss, sigma=sigma, pi=pi)
+            col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
             # col_seg_loss.name = "collaborator_segm_loss"
             self.losses = [
                 lpn_loss,
@@ -263,12 +197,8 @@ class LacssTrainer(Trainer):
                 aux_size_loss,
             ]
         else:
-            pre_seg_loss = partial_loss_func(segmentation_loss, pretraining=True)
-            # pre_seg_loss.name = "segmentation_loss"
-            pre_col_seg_loss = partial_loss_func(
-                collaborator_segm_loss, sigma=100.0, pi=1.0
-            )
-            # pre_col_seg_loss.name = "collaborator_segm_loss"
+            pre_seg_loss = partial(segmentation_loss, pretraining=True)
+            pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
             self.losses = [
                 lpn_loss,
                 pre_seg_loss,
@@ -281,8 +211,8 @@ class LacssTrainer(Trainer):
 
     def do_training(
         self,
-        dataset: DataSource,
-        val_dataset: DataSource = None,
+        dataset: Iterable,
+        val_dataset: Iterable | None = None,
         n_steps: int = 50000,
         validation_interval: int = 5000,
         checkpoint_manager: Optional[orbax.checkpoint.CheckpointManager] = None,

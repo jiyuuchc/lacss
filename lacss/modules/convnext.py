@@ -1,11 +1,12 @@
-from typing import List, Sequence, Union
+from __future__ import annotations
+
+from typing import Optional, Sequence
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from lacss.types import *
-
+from ..typing import DataDict, Params
 from .common import *
 
 """ Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
@@ -20,7 +21,7 @@ class _Block(nn.Module):
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
 
-    drop_rate: int = 0.0
+    drop_rate: int = 0.4
     layer_scale_init_value: float = 1e-6
     kernel_size: int = 7
 
@@ -91,7 +92,7 @@ class ConvNeXt(nn.Module):
     @nn.compact
     def __call__(
         self, x: ArrayLike, *, training: Optional[bool] = None
-    ) -> Tuple[DataDict, DataDict]:
+    ) -> tuple[DataDict, DataDict]:
         """
         Args:
             x: Image input.

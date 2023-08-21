@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+from typing import Iterable, Optional, Union
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 import orbax
 from tqdm import tqdm
 
-from lacss.deploy import Predictor
-from lacss.types import *
-
-from .data import *
+from ..deploy import Predictor
+from ..typing import Array, Optimizer
+from ..utils import pack_x_y_sample_weight, unpack_x_y_sample_weight
 from .lacss_trainer import LacssTrainer
-from .trainer import _get_iterator
+
+
+def _get_iterator(g):
+    try:
+        it = iter(g)
+    except:
+        it = iter(g())
+
+    return it
 
 
 class LacssMTTrainer(LacssTrainer):
@@ -49,8 +59,8 @@ class LacssMTTrainer(LacssTrainer):
 
     def do_training(
         self,
-        datasets: tuple[DataSource, DataSource],
-        val_dataset: DataSource = None,
+        datasets: tuple[Iterable, Iterable],
+        val_dataset: Iterable = None,
         n_steps: int = 50000,
         validation_interval: int = 5000,
         checkpoint_manager: Optional[orbax.checkpoint.CheckpointManager] = None,

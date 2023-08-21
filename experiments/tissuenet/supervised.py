@@ -22,7 +22,7 @@ from data import tfds_from_data_path
 
 import lacss.data
 import lacss.train
-from lacss.deploy import load_from_pretrained
+from lacss.utils import load_from_pretrained
 
 app = typer.Typer(pretty_exceptions_enable=False)
 

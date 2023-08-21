@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Mapping, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from lacss.ops import locations_to_labels
-from lacss.types import *
+from ..ops import locations_to_labels
+from ..typing import *
 
 
 class LPN(nn.Module):

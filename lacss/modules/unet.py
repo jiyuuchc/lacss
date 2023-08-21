@@ -4,8 +4,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from lacss.types import *
-
+from ..typing import *
 from .common import *
 
 
@@ -20,7 +19,7 @@ class UNet(nn.Module):
             raise ValueError("patch_size must be eith 1, 2 or 4")
 
     @nn.compact
-    def __call__(self, x: ArrayLike) -> Tuple[DataDict, DataDict]:
+    def __call__(self, x: ArrayLike) -> tuple[DataDict, DataDict]:
 
         encoder_out = []
         fs = max(self.patch_size, 3)
