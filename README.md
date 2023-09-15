@@ -4,8 +4,8 @@ _LACSS is a deep-learning model for single-cell segmentation from microscopy ima
 
 References: 
 
-- https://www.nature.com/articles/s42003-023-04608-5
-- https://arxiv.org/abs/2304.10671
+- [IEEE TMI doi:10.1109/TMI.2023.3312988](https://arxiv.org/abs/2304.10671)
+- [Communications Biology 6,232 (2023)](https://www.nature.com/articles/s42003-023-04608-5)
 
 ### Installation
 ```
