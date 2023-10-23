@@ -22,11 +22,12 @@ def _crop_and_resize(masks, boxes, target_shape):
     dh = box_h / target_shape[0] / 2
     dw = box_w / target_shape[1] / 2
     boxes = tf.stack([dh, dw, -dh, -dw], axis=-1) + boxes - 0.5
-    H, W = masks.shape[1:3]
+    H = tf.shape(masks)[1]
+    W = tf.shape(masks)[2]
     segs = tf.image.crop_and_resize(
         masks[..., None],
         boxes / [H - 1, W - 1, H - 1, W - 1],
-        tf.range(len(boxes)),
+        tf.range(tf.shape(boxes)[0]),
         target_shape,
     )
     return tf.squeeze(segs, axis=-1)
@@ -342,7 +343,7 @@ def _mask_from_label(inputs, *, mask_shape=[48, 48]):
     #         False,
     #     )
 
-    n_instances = len(inputs["bboxes"])
+    n_instances = tf.shape(inputs["bboxes"])[0]
 
     label_expanded = tf.cast(
         label == tf.range(1, n_instances + 1)[:, None, None],

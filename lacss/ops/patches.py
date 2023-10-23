@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Sequence
+from typing import Optional, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -73,9 +73,7 @@ def _get_patch_data(pred):
     return patches, yc, xc
 
 
-def bboxes_of_patches(
-    pred: Union[Sequence, DataDict], threshold: float = 0.5
-) -> jnp.ndarray:
+def bboxes_of_patches(pred: Sequence | DataDict, threshold: float = 0.5) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
     Args:

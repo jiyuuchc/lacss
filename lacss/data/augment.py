@@ -40,6 +40,7 @@ def resize(inputs: dict, *, target_size: tuple[int, int], p: float = 1.0) -> dic
             * image
             * image_mask
             * centroids
+            * bboxes
 
     Keyword Args:
         target_size: target size
@@ -50,8 +51,8 @@ def resize(inputs: dict, *, target_size: tuple[int, int], p: float = 1.0) -> dic
         H, W = _image_size(inputs["image"])
         target_y, target_x = target_size
 
-        scaling_y = target_y / tf.cast(H, tf.float32)
-        scaling_x = target_x / tf.cast(W, tf.float32)
+        scaling_y = tf.cast(target_y, tf.float32) / tf.cast(H, tf.float32)
+        scaling_x = tf.cast(target_x, tf.float32) / tf.cast(W, tf.float32)
 
         inputs["image"] = tf.image.resize(
             inputs["image"],
@@ -105,7 +106,7 @@ def random_resize(
             * centroids
 
     Keyword Args:
-        scaling: range of scale, e.g, [0.8, 1.5]. If a single value (s), the range is [1-s, 1+s]
+        scaling: range of scale, e.g, [0.8, 1.5].
         keep_aspect_ratio: Whether to scale x/y the same amount.
         p: probability of applying transformation
 
@@ -115,10 +116,10 @@ def random_resize(
         return inputs
 
     else:
-        min_scale, max_scale = _value_pair(scaling)
-        if min_scale == max_scale and max_scale < 1:
-            min_scale = 1.0 - min_scale
-            max_scale = 1.0 + max_scale
+        min_scale, max_scale = scaling
+        # if min_scale == max_scale and max_scale < 1:
+        #     min_scale = 1.0 - min_scale
+        #     max_scale = 1.0 + max_scale
 
         H, W = _image_size(inputs["image"])
 

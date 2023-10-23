@@ -171,4 +171,4 @@ try:
             return g()
 
 except ImportError:
-    TFDatasetAdaptor = None
+    TFDatasetAdapter = None
