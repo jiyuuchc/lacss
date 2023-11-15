@@ -159,7 +159,7 @@ def sorted_non_max_suppression(
     threshold: float = 0.5,
     min_score: float = 0,
     return_selection: bool = False,
-) -> Sequence[Array]:
+) -> tuple[Array]:
     """non-maximum suppression for either bboxes or points.
 
     Assumption:

@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package trackmate.lacss;
+
+option java_outer_classname = "LacssMsg";
+option java_package = "fiji.plugin.trackmate.lacss";
+
+enum DType {
+    FLOAT32 = 0; // enforce float32 for now
+}
+
+message Image {
+    uint64 height = 1;
+    uint64 width = 2;
+    uint64 channel = 3;
+    DType dtype = 4;
+    bytes data = 5;
+}
+
+message Settings {
+    float min_cell_area = 1;
+	bool remove_out_of_bound = 2;
+	float scaling = 3;
+	float nms_iou = 4;
+    float detection_threshold = 5;
+	float segmentation_threshold = 6;    
+}
+
+message Input {
+    Settings settings = 1;
+    Image image = 2;
+}
+
+message Label {
+    uint64 height = 1;
+    uint64 width = 2;
+    bytes data = 6;
+}
+
+message Result {
+    Label score = 1;
+    Label label = 2;
+}

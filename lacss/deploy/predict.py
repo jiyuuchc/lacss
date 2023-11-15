@@ -18,9 +18,9 @@ from flax.core.frozen_dict import freeze, unfreeze
 import lacss.modules
 import lacss.ops
 
-from .ops import patches_to_label, sorted_non_max_suppression
-from .typing import *
-from .utils import load_from_pretrained
+from ..ops import patches_to_label, sorted_non_max_suppression
+from ..typing import *
+from ..utils import load_from_pretrained
 
 Shape = Sequence[int]
 
@@ -417,7 +417,7 @@ class Predictor:
     # in error. This is a hidden gotcha. Need to setup warning to the user.
     @detector.setter
     def detector(self, new_detector):
-        from .modules import Detector
+        from ..modules import Detector
 
         cur_module = self.module
 

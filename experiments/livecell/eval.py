@@ -14,7 +14,7 @@ from data import (
 from tqdm import tqdm
 
 import lacss.data
-import lacss.deploy
+import lacss.deploy.predict
 import lacss.ops
 from lacss.metrics import AP, LoiAP
 
@@ -121,7 +121,7 @@ def main(
     dice_score: float = 0.5,
     v1_scaling: bool = False,
 ):
-    model = lacss.deploy.Predictor(modelpath, [520, 704, 1])
+    model = lacss.deploy.predict.Predictor(modelpath, [520, 704, 1])
     print(f"Model loaded from {modelpath.resolve()}")
 
     model.detector.test_nms_threshold = nms
