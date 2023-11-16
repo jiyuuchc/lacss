@@ -20,6 +20,7 @@ plugins:
 
 nav:
   - About: index.md
+  - Installation: install.md
   - API Reference:
       - lacss.deploy: 'api/deploy.md'
       - lacss.train: 'api/train.md'

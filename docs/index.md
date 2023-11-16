@@ -5,12 +5,6 @@ References:
 - https://www.nature.com/articles/s42003-023-04608-5
 - https://arxiv.org/abs/2304.10671
 
-### Installation
-```
-pip install --upgrade pip
-pip install --upgrade "jax[cuda11_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-pip install lacss
-```
 
 ### Why LACSS?
 LACSS is designed to utilize point labels for model training. You have three options:
