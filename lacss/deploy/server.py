@@ -70,7 +70,8 @@ def main(modelpath: Path):
     while True:
         img, settings = read_input()
         img = img - img.min()
-        img = img / img.max()
+        # img = img / img.max()
+        img = img / img.std()
 
         print(f"received image {img.shape}", file=sys.stderr)
 

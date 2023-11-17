@@ -26,3 +26,8 @@ pip install https://whls.blob.core.windows.net/unstable/cuda118/jaxlib-0.4.11+cu
 pip install jax==0.4.11 ml-dtypes==0.2 flax==0.7.2
 pip install lacss
 ```
+
+#### Linux / Windows - CPU
+```
+pip install lacss
+```
