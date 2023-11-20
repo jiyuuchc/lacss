@@ -23,8 +23,11 @@ def read_input(st = sys.stdin.buffer):
 
     image = msg.image
     np_img = np.frombuffer(image.data, dtype=">f4").astype("float32")
-    np_img = np_img.reshape(image.channel, image.width, image.height)
-    np_img = np_img.transpose(2, 1, 0)
+    np_img = np_img.reshape(image.height, image.width, image.channel)
+    # np_img = np_img.transpose(2, 1, 0)
+
+    import imageio.v2 as imageio
+    imageio.imwrite("tmpin.tif", np_img)
 
     return np_img, msg.settings
 
@@ -62,6 +65,7 @@ def main(modelpath: Path):
 
     model = Predictor(modelpath)
     model.detector.test_max_output = 512
+    model.detector.test_min_score = 0.2
 
     print(f"lacss_server: loaded model from {modelpath}", file=sys.stderr)
 
@@ -97,7 +101,7 @@ def main(modelpath: Path):
             img.shape[:2],
             score_threshold=settings.detection_threshold,
             threshold=settings.segmentation_threshold,
-        ).astype(int)).transpose()
+        ).astype(int))
 
         # score image
         score = np.asarray(preds["pred_scores"])[label]
