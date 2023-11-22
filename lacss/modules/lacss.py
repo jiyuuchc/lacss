@@ -122,7 +122,7 @@ class Lacss(nn.Module):
 
             # segmentation
             locations = model_output[
-                "training_locations" if training else "pred_locations"
+                "training_locations" if gt_locations is not None else "pred_locations"
             ]
             scaled_locs = locations / jnp.array([height, width])
             model_output.update(

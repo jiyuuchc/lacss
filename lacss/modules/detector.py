@@ -185,7 +185,7 @@ class Detector(nn.Module):
         scores = jax.lax.stop_gradient(scores)
         regressions = jax.lax.stop_gradient(regressions)
 
-        if training:
+        if gt_locations is not None:
 
             if self.max_proposal_offset <= 0:
                 return dict(
