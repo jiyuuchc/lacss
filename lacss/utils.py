@@ -173,3 +173,32 @@ def unpack_x_y_sample_weight(data):
         return (data[0], data[1], data[2])
 
     raise ValueError("Data not understood.")
+
+def make_label_continuous(label, dtype=None):
+    """ Relabel a label image so that the label values are continuous. It is assumed that the
+    label starts with 0. If there is negative numbers in the input, they will be replaced by 0.
+
+    Args:
+        label: input label image
+    
+    Keyword Args:
+        dtype: the dtype of the output image. default is to keep the dtype of the input.
+    
+    Returns:
+        Relabeled image.
+    """
+    if not isinstance(label, np.ndarray) and dtype is None:
+        raise ValueError("A dtype must be specified if the input data is not a np array")
+    elif dtype is None:
+        dtype = label.dtype
+
+    label = np.asarray(label, dtype=dtype)
+
+    k = np.unique(label)
+    v = np.asarray(range(len(k)))
+
+    mapping_ar = np.zeros(k.max() + 1, dtype=dtype)
+    mapping_ar[k] = v
+
+    return mapping_ar[label]
+
