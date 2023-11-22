@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import logging
 import pickle
-from functools import lru_cache, partial
+from functools import lru_cache, partial, reduce
 from typing import Mapping, Optional, Sequence, Tuple, Union
 
+import cv2
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -27,10 +28,45 @@ Shape = Sequence[int]
 _cached_partial = lru_cache(partial)
 
 model_urls: Mapping[str, str] = {
-    "livecell": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/439e524f-e4e9-4f97-9f38-c22cb85adbd1/file_downloaded",
-    "tissuenet": "https://data.mendeley.com/public-files/datasets/sj3vrvm6w3/files/1e0a839d-f564-4ee0-a4f3-34792df7c613/file_downloaded",
+    "cnsp4-bf": "https://huggingface.co/jiyuuchc/lacss-cnsp4-bf/resolve/main/cnsp4_bf.bin?download=true",
+    "cnsp4-fl": "https://huggingface.co/jiyuuchc/lacss-cnsp4-fl/resolve/main/cnsp4_fl.bin?download=true",
+    "cnsp4-base": "https://huggingface.co/jiyuuchc/lacss-cnsp4-base/resolve/main/cnsp4_base.bin?download=true",
 }
+model_urls["default"] = model_urls["cnsp4-base"]
 
+
+def _to_polygons(patches, *, segmentation_threshold = 0.5, chain_appox = cv2.CHAIN_APPROX_SIMPLE)->tuple[list, list]:
+    mask = np.asarray(patches['instance_mask']).squeeze(axis=(1,2))
+    polygons = []
+    scores = []
+    for y0, x0, seg, score in zip(
+        np.asarray(patches["instance_yc"])[mask, 0, 0],
+        np.asarray(patches["instance_xc"])[mask, 0, 0],
+        np.asarray(patches["instance_output"])[mask],
+        np.asarray(patches["pred_scores"])[mask],
+    ):
+        seg = (seg >= segmentation_threshold).astype("uint8")
+        c, _ = cv2.findContours(seg, cv2.RETR_EXTERNAL, chain_appox)
+
+        if len(c) == 0:
+            continue
+
+        max_len_element = reduce(lambda a, b: a if len(a) >= len(b) else b, c)
+        polygons.append(np.asarray(max_len_element).astype("float32") + [y0, x0])
+        scores.append((float)(score))
+        
+    return scores, polygons
+
+
+def _draw_label(polygons, image_size) -> np.ndarray:
+    label = np.zeros(image_size, dtype="uint16")
+    color = len(polygons)
+    for polygon in polygons[::-1]:
+        polygon = np.round(polygon).astype(int)
+        cv2.fillPoly(label, [polygon], color)
+        color -= 1
+
+    return label
 
 def _remove_edge_instances(
     pred: dict,
