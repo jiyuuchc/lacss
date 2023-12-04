@@ -1,6 +1,6 @@
 """ 
 Attributes:
-    model_urls: URLs for build-in pretrain models. e.g model_urls["livecell"].
+    model_urls: URLs for build-in pretrain models. e.g model_urls["default"].
 """
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ class Predictor:
             import lacss.deploy
 
             # look up the url of a build-in mode
-            url = lacss.deploy.model_urls["livecell"]
+            url = lacss.deploy.model_urls["default"]
 
             # create the predictor instance
             predictor = lacss.deploy.Predictor(url)
