@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from zipfile import ZipFile
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import typer
@@ -68,6 +69,9 @@ def main(modelpath: Path):
     model.detector.test_min_score = 0.2
 
     print(f"lacss_server: loaded model from {modelpath}", file=sys.stderr)
+    print(f"lacss_server: default backend is {jax.default_backend()}", file=sys.stderr)
+    if (jax.default_backend() != "cpu"):
+        print(f"lacss_server: WARNING: No GPU configuration. This might be very slow ...", file=sys.stderr)
 
     # cnt = 0
 
