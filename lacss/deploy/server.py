@@ -70,7 +70,7 @@ def main(modelpath: Path):
 
     print(f"lacss_server: loaded model from {modelpath}", file=sys.stderr)
     print(f"lacss_server: default backend is {jax.default_backend()}", file=sys.stderr)
-    if (jax.default_backend() != "cpu"):
+    if (jax.default_backend() == "cpu"):
         print(f"lacss_server: WARNING: No GPU configuration. This might be very slow ...", file=sys.stderr)
 
     # cnt = 0
