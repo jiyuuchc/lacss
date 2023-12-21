@@ -23,6 +23,7 @@ pytest = "^7.2.2"
 jupyterlab = "^3.6.1"
 jax = {extras = ["cuda11-pip"], version = "^0.4.14"}
 tensorflow-cpu = "^2.13.0"
+protoc-wheel-0 = "^24.4"
 
 [tool.poetry.group.docs]
 optional = true

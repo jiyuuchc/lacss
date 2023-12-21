@@ -3226,6 +3226,22 @@ files = [
 ]
 
 [[package]]
+name = "protoc-wheel-0"
+version = "24.4"
+description = "Google Protocol buffers compiler"
+category = "dev"
+optional = false
+python-versions = "*"
+files = [
+    {file = "protoc_wheel_0-24.4-py2.py3-none-macosx_10_6_x86_64.whl", hash = "sha256:d9deb91ddb243a5c0720fcd8bb12907aef75c20065571d7a53b377f7ab2a6216"},
+    {file = "protoc_wheel_0-24.4-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:62e85fa8d33fc25a91a05187d23531d044c1016fb00c6e8dba165749e000a978"},
+    {file = "protoc_wheel_0-24.4-py2.py3-none-manylinux1_x86_64.whl", hash = "sha256:562ded41aaef05d2bd5ff8f570c503b831697c8785356e13f7b408b81c667d41"},
+    {file = "protoc_wheel_0-24.4-py2.py3-none-manylinux2014_aarch64.whl", hash = "sha256:23491af685f17939d319fbe08fd90271f8825c5f33d1239017b2c514bc701613"},
+    {file = "protoc_wheel_0-24.4-py2.py3-none-win32.whl", hash = "sha256:98fbc73c2c7e75f2b75b4da14c318d67359d7eb71c2123dea6b7d015b2894a49"},
+    {file = "protoc_wheel_0-24.4-py2.py3-none-win_amd64.whl", hash = "sha256:f1da4f54d304922edd47dcb0af53edadcd524ab0a357dfa9dabf4ede38815b65"},
+]
+
+[[package]]
 name = "psutil"
 version = "5.9.5"
 description = "Cross-platform lib for process and system monitoring in Python."
@@ -4955,4 +4971,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9, <3.11"
-content-hash = "1e803606c52b8e4da3c84ac1e72ad484509b27cb47a0dace20050d0b1b8a9805"
+content-hash = "69177c069577fc25033603539f5772cd3cf5f039e8af2c8c9b8397d2d5000a9e"
