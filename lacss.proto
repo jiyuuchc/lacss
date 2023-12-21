@@ -3,7 +3,7 @@ syntax = "proto3";
 package trackmate.lacss;
 
 option java_outer_classname = "LacssMsg";
-option java_package = "fiji.plugin.trackmate.lacss";
+option java_package = "fiji.plugin.trackmate.detector.lacss";
 
 enum DType {
     FLOAT32 = 0; // enforce float32 for now
@@ -23,7 +23,8 @@ message Settings {
 	float scaling = 3;
 	float nms_iou = 4;
     float detection_threshold = 5;
-	float segmentation_threshold = 6;    
+	float segmentation_threshold = 6;
+    bool return_polygon = 7;
 }
 
 message Input {
@@ -40,4 +41,18 @@ message Label {
 message Result {
     Label score = 1;
     Label label = 2;
+}
+
+message Point {
+    int64 x = 1;
+    int64 y = 2;
+}
+
+message Polygon {
+    float score = 1;
+    repeated Point points = 2;
+}
+
+message PolygonResult {
+    repeated Polygon polygons = 1;
 }
