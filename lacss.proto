@@ -44,8 +44,8 @@ message Result {
 }
 
 message Point {
-    int64 x = 1;
-    int64 y = 2;
+    float x = 1;
+    float y = 2;
 }
 
 message Polygon {

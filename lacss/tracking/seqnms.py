@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 # Slightly modified from https://github.com/tmoopenn/seq-nms
 
+import copy
+
 import numpy as np
-import copy 
 
 from lacss.ops import box_intersection
+
 
 # from compute_overlap import compute_overlap_areas_given, compute_area
 def compute_area(boxes):

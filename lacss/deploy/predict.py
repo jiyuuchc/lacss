@@ -68,7 +68,7 @@ def _to_polygons(pred, *, segmentation_threshold = 0.5, scaling = 1.0, chain_app
     return final_scores, polygons
 
 def _draw_label(polygons, image_size) -> np.ndarray:
-    label = np.zeros(image_size, dtype="uint16")
+    label = np.zeros(image_size, dtype=int)
     color = len(polygons)
     for polygon in polygons[::-1]:
         polygon = np.round(polygon).astype(int)
@@ -186,10 +186,11 @@ def _predict(context, params, image):
         label = lacss.ops.patches_to_label(
             preds,
             input_size=[h,w],
-            score_threshold=context["score_threshold"],
+            mask=output["instance_mask"],
+            score_threshold=0,
             threshold=context["segmentation_threshold"],
         )
-        output.update(dict(label=label))
+        output.update(dict(label=label.astype(int)))
 
     return output
 

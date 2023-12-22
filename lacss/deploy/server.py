@@ -42,13 +42,28 @@ def img_to_msg(msg, img):
     assert len(msg.data) == msg.height * msg.width * 2
 
 def write_result(label, score, st = sys.stdout.buffer):
-    if len(label.shape) != 2 :
-        raise ValueError(f"Expect 2D array as label. Got array of {label.shape}")
 
     msg = LacssMsg.Result()
     img_to_msg(msg.score, (score * 1000).astype(np.int16))
     img_to_msg(msg.label, label)
 
+    msg_size_bits = struct.pack(">i", msg.ByteSize())
+
+    st.write(msg_size_bits)
+    st.write(msg.SerializeToString())
+
+def write_polygon_result(polygons, scores, st = sys.stdout.buffer):
+    msg = LacssMsg.PolygonResult()
+    for polygon, score in zip(polygons, scores):
+        polygon_msg = LacssMsg.Polygon()
+        polygon_msg.score = score
+        for p in polygon:
+            point = LacssMsg.Point()
+            point.x = p[0]
+            point.y = p[1]
+            polygon_msg.points.append(point)
+        msg.polygons.append(polygon_msg)
+    
     msg_size_bits = struct.pack(">i", msg.ByteSize())
 
     st.write(msg_size_bits)
@@ -77,8 +92,9 @@ def main(modelpath: Path):
 
     while True:
         img, settings = read_input()
-        img = img - img.min()
+        # img = img - img.min()
         # img = img / img.max()
+        img -= img.mean()
         img = img / img.std()
 
         print(f"received image {img.shape}", file=sys.stderr)
@@ -88,37 +104,33 @@ def main(modelpath: Path):
             min_area=settings.min_cell_area,
             remove_out_of_bound=settings.remove_out_of_bound,
             scaling=settings.scaling,
+            nms_iou=settings.nms_iou,
+            output_type="contour" if settings.return_polygon else "label"
         )
 
-        # boxed based nms
-        # _, _, mask = sorted_non_max_suppression(
-        #     preds["pred_scores"],
-        #     preds["pred_bboxes"],
-        #     -1, # max number of output
-        #     threshold=settings.nms_iou,
-        #     min_score=settings.detection_threshold,
-        #     return_selection=True,
-        # )
+        if settings.return_polygon:
 
-        label = np.asarray(patches_to_label(
-            preds, 
-            img.shape[:2],
-            score_threshold=settings.detection_threshold,
-            threshold=settings.segmentation_threshold,
-        ).astype(int))
+            write_polygon_result(
+                preds["pred_contours"],
+                preds["pred_scores"],
+            )
 
-        # score image
-        score = np.asarray(preds["pred_scores"])[label]
-        assert score.shape == label.shape
+        else:
 
-        # make label continous
-        k = np.unique(label)
-        v = np.arange(len(k))
-        mapping_ar = np.zeros(k.max() + 1, dtype=np.uint16)
-        mapping_ar[k] = v
-        label = mapping_ar[label]
+            label = preds["pred_label"].astype("int")
+            scores = preds["pred_scores"]
 
-        write_result(label, score)
+            assert label.max() == len(scores)
+
+            assert len(label.shape) == 2
+
+            # score image
+            score_img = scores[label - 1]
+            score_img *= (label > 0)
+
+            assert score_img.shape == label.shape
+
+            write_result(label, score_img)
 
         # imageio.imwrite(f"p_{cnt}.tif", np.asarray(label))
         # cnt+=1

@@ -214,7 +214,6 @@ def patches_to_label(
     mask: Optional[ArrayLike] = None,
     score_threshold: float = 0.5,
     threshold: float = 0.5,
-    min_cell_area: int = 0,
 ) -> Array:
     """convert patch output to the image label
 
@@ -224,30 +223,31 @@ def patches_to_label(
         mask: boolean indicators masking out unwanted instances. Default is None (all cells)
         score_threshold: otional, min_score to be included. Default is .5.
         threshold: segmentation threshold.  Default .5
-        min_cell_area: optional minimal cell area to be plotted, default 0.
 
     Returns:
         label: [height, width]
     """
     label = jnp.zeros(input_size)
     pr = pred["instance_output"] > threshold
-    n_patches, patch_size, _ = pr.shape
 
     if mask is None:
-        mask = jnp.ones([n_patches], dtype=bool)
-    mask &= pred["instance_mask"].squeeze(axis=(1, 2))
-    if score_threshold > 0 and not "training_locations" in pred:
-        mask &= pred["pred_scores"] >= score_threshold
-    mask &= jnp.count_nonzero(pr, axis=(1, 2)) > min_cell_area
+        mask = pred["instance_mask"].squeeze(axis=(1, 2))
+    else:
+        mask &= pred["instance_mask"].squeeze(axis=(1, 2))
 
-    pr = (pr > threshold).astype(int) * jnp.arange(1, pr.shape[0] + 1)[:, None, None]
-    pr = jnp.where(mask[:, None, None], pr, 0)
-    pr = jnp.where(pr == 0, 0, pr.max() + 1 - pr)
+    if score_threshold > 0:
+        mask &= pred["pred_scores"] >= score_threshold
+
+    idx = jnp.cumsum(mask) * mask
+    idx = jnp.where(mask, idx.max() + 1 - idx, 0)
+    
+    pr = (pr > threshold).astype(int) * idx[:, None, None]
 
     yc = pred["instance_yc"]
     xc = pred["instance_xc"]
 
     label = label.at[yc, xc].max(pr)
+    label = jnp.where(label, label.max() + 1 - label, 0)
 
     return label
 
