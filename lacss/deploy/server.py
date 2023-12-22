@@ -81,7 +81,7 @@ def main(modelpath: Path):
 
     model = Predictor(modelpath)
     model.detector.test_max_output = 512
-    model.detector.test_min_score = 0.2
+    model.detector.test_min_score = 0
 
     print(f"lacss_server: loaded model from {modelpath}", file=sys.stderr)
     print(f"lacss_server: default backend is {jax.default_backend()}", file=sys.stderr)
@@ -105,6 +105,8 @@ def main(modelpath: Path):
             remove_out_of_bound=settings.remove_out_of_bound,
             scaling=settings.scaling,
             nms_iou=settings.nms_iou,
+            score_threshold=settings.detection_threshold,
+            segmentation_threshold=settings.segmentation_threshold,
             output_type="contour" if settings.return_polygon else "label"
         )
 
