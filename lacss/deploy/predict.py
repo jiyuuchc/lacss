@@ -35,25 +35,29 @@ model_urls: Mapping[str, str] = {
 model_urls["default"] = model_urls["cnsp4-base"]
 
 
-def _to_polygons(pred, *, segmentation_threshold = 0.5, scaling = 1.0, chain_approx = cv2.CHAIN_APPROX_SIMPLE)->list:
+def _to_polygons(
+    pred,
+    *,
+    segmentation_threshold=0.5,
+    scaling=1.0,
+    chain_approx=cv2.CHAIN_APPROX_SIMPLE,
+) -> list:
     polygons = []
     final_scores = []
 
-    y0s = np.asarray(pred['y0s'])
-    x0s = np.asarray(pred['x0s'])
-    scores = np.asarray(pred['scores'])
-    segs = np.asarray(pred['segmentations'] >= segmentation_threshold).astype("uint8")
+    y0s = np.asarray(pred["y0s"])
+    x0s = np.asarray(pred["x0s"])
+    scores = np.asarray(pred["scores"])
+    segs = np.asarray(pred["segmentations"] >= segmentation_threshold).astype("uint8")
 
     if "instance_mask" in pred:
-        mask = np.asarray(pred['instance_mask'])
+        mask = np.asarray(pred["instance_mask"])
         segs = segs[mask]
         y0x = y0s[mask]
         x0s = x0s[mask]
         scores = scores[mask]
 
-    for y0, x0, seg, score in zip(
-        y0s, x0s, segs, scores
-    ):
+    for y0, x0, seg, score in zip(y0s, x0s, segs, scores):
         c, _ = cv2.findContours(seg, cv2.RETR_EXTERNAL, chain_approx)
         if len(c) > 0:
             max_len_element = reduce(lambda a, b: a if len(a) >= len(b) else b, c)
@@ -61,14 +65,15 @@ def _to_polygons(pred, *, segmentation_threshold = 0.5, scaling = 1.0, chain_app
             final_scores.append(score)
 
     if scaling != 1.0:
-        polygons = [(c + 0.5)/scaling - 0.5 for c in polygons]
+        polygons = [(c + 0.5) / scaling - 0.5 for c in polygons]
     else:
         polygons = [c.astype("float") for c in polygons]
-    
+
     return final_scores, polygons
 
+
 def _draw_label(polygons, image_size) -> np.ndarray:
-    label = np.zeros(image_size, dtype=int)
+    label = np.zeros(image_size, dtype="int16")
     color = len(polygons)
     for polygon in polygons[::-1]:
         polygon = np.round(polygon).astype(int)
@@ -76,6 +81,7 @@ def _draw_label(polygons, image_size) -> np.ndarray:
         color -= 1
 
     return label
+
 
 def _remove_edge_instances(
     pred: dict,
@@ -89,19 +95,27 @@ def _remove_edge_instances(
 ):
     h, w = img_shape
     segs = pred["segmentations"] >= threshold
-    yc, xc = jnp.mgrid[:segs.shape[-2], :segs.shape[-1]]
+    yc, xc = jnp.mgrid[: segs.shape[-2], : segs.shape[-1]]
     yc += pred["y0s"][:, None, None]
     xc += pred["x0s"][:, None, None]
 
     removal = jnp.zeros([len(segs)], dtype=bool)
 
-    removal |= remove_top & (jnp.count_nonzero((yc <= 0) & segs, axis=(1, 2)) >= min_border_pixel)
+    removal |= remove_top & (
+        jnp.count_nonzero((yc <= 0) & segs, axis=(1, 2)) >= min_border_pixel
+    )
 
-    removal |= remove_bottom & (jnp.count_nonzero((yc >= h - 1) & segs, axis=(1, 2)) >= min_border_pixel)
+    removal |= remove_bottom & (
+        jnp.count_nonzero((yc >= h - 1) & segs, axis=(1, 2)) >= min_border_pixel
+    )
 
-    removal |= remove_left & (jnp.count_nonzero((xc <= 0) & segs, axis=(1, 2)) >= min_border_pixel)
+    removal |= remove_left & (
+        jnp.count_nonzero((xc <= 0) & segs, axis=(1, 2)) >= min_border_pixel
+    )
 
-    removal |= remove_right & (jnp.count_nonzero((xc >= w - 1) & segs, axis=(1, 2)) >= min_border_pixel)
+    removal |= remove_right & (
+        jnp.count_nonzero((xc >= w - 1) & segs, axis=(1, 2)) >= min_border_pixel
+    )
 
     removal = removal.reshape(pred["instance_mask"].shape)
 
@@ -129,7 +143,9 @@ def _predict(context, params, image):
     instance_mask &= preds["pred_scores"] >= context["score_threshold"]
 
     if context["min_area"] > 0:
-        areas = np.count_nonzero(preds["instance_output"] > context["segmentation_threshold"], axis=(1, 2))
+        areas = jnp.count_nonzero(
+            preds["instance_output"] > context["segmentation_threshold"], axis=(1, 2)
+        )
         instance_mask &= areas > context["min_area"]
 
     if context["remove_out_of_bound"]:
@@ -141,27 +157,27 @@ def _predict(context, params, image):
         instance_mask &= valid_locs
 
     output = dict(
-        instance_mask = instance_mask,
-        segmentations = preds["instance_output"],
-        y0s = preds['instance_yc'][:, 0, 0],
-        x0s = preds['instance_xc'][:, 0, 0],
-        scores = preds["pred_scores"],
+        instance_mask=instance_mask,
+        segmentations=preds["instance_output"],
+        y0s=preds["instance_yc"][:, 0, 0],
+        x0s=preds["instance_xc"][:, 0, 0],
+        scores=preds["pred_scores"],
     )
 
     need_to_comput_bbox = output_type == "bbox" or nms_iou > 0 or output_type == "grid"
 
     if need_to_comput_bbox:
         output["bboxes"] = lacss.ops.bboxes_of_patches(preds)
-    
+
     if output_type == "bbox":
         output["segmentations"] = jax.vmap(_comput_masks)(
-            output["segmentations"], 
-            output["y0s"], 
-            output["x0s"], 
+            output["segmentations"],
+            output["y0s"],
+            output["x0s"],
             output["bboxes"],
         )
 
-    if nms_iou > 0 and output_type != "grid": # need nms
+    if nms_iou > 0 and output_type != "grid":  # need nms
         boxes = output["bboxes"]
         mask = output["instance_mask"]
         boxes = jnp.where(mask[:, None], boxes, -1)
@@ -185,7 +201,7 @@ def _predict(context, params, image):
 
         label = lacss.ops.patches_to_label(
             preds,
-            input_size=[h,w],
+            input_size=[h, w],
             mask=output["instance_mask"],
             score_threshold=0,
             threshold=context["segmentation_threshold"],
@@ -194,18 +210,20 @@ def _predict(context, params, image):
 
     return output
 
-def _comput_masks(seg, y0, x0, bbox, mask_dim=[48,48]):
+
+def _comput_masks(seg, y0, x0, bbox, mask_dim=[48, 48]):
     by0 = bbox[0] - y0
     bx0 = bbox[1] - x0
     bh = bbox[2] - bbox[0]
     bw = bbox[3] - bbox[1]
 
-    mg = jnp.mgrid[:mask_dim[0], :mask_dim[1]].transpose((1,2,0)) + 0.5
+    mg = jnp.mgrid[: mask_dim[0], : mask_dim[1]].transpose((1, 2, 0)) + 0.5
     mg /= jnp.asarray(mask_dim)
 
     mg = mg * jnp.asarray([bh, bw]) + jnp.asarray([by0, bx0])
 
     return lacss.ops.sub_pixel_samples(seg, mg, edge_indexing=True)
+
 
 class Predictor:
     """Main class interface for model deployment. This is the only class you
@@ -292,7 +310,7 @@ class Predictor:
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
             output_type: "patch" | "label" | "contour"
-            score_threshold: Min score needed to be included in the output. 
+            score_threshold: Min score needed to be included in the output.
             segmentation_threshold: Threshold value for segmentation.
 
         Returns:
@@ -302,7 +320,7 @@ class Predictor:
 
                 - pred_scores: The prediction scores of each instance.
                 - pred_label: a 2D image label. 0 is background.
-            
+
             For "contour" output:
                 - pred_scores: The prediction scores of each instance.
                 - pred_contours: a list of polygon arrays in x-y format.
@@ -314,7 +332,9 @@ class Predictor:
                 - pred_masks: A 3d array representing segmentation within bboxes
         """
         if not output_type in ("bbox", "label", "contour"):
-            raise ValueError(f"output_type should be 'patch'|'label'|'contour'. Got {output_type} instead.")
+            raise ValueError(
+                f"output_type should be 'patch'|'label'|'contour'. Got {output_type} instead."
+            )
 
         module, params = self.model
 
@@ -323,57 +343,58 @@ class Predictor:
         else:
             apply_fn = module.apply
 
-        ctx = freeze(dict(
-                apply_fn = apply_fn,
-                output_type = output_type,
-                segmentation_threshold = segmentation_threshold,
-                score_threshold = score_threshold,
-                scaling = scaling,
-                min_area = min_area,
-                remove_out_of_bound = remove_out_of_bound,
-                nms_iou = nms_iou,
-        ))
+        ctx = freeze(
+            dict(
+                apply_fn=apply_fn,
+                output_type=output_type,
+                segmentation_threshold=segmentation_threshold,
+                score_threshold=score_threshold,
+                scaling=scaling,
+                min_area=min_area,
+                remove_out_of_bound=remove_out_of_bound,
+                nms_iou=nms_iou,
+            )
+        )
         preds = _predict(ctx, params, image)
         instance_mask = np.asarray(preds["instance_mask"])
 
         if output_type == "bbox":
             return dict(
-                pred_scores = np.asarray(preds["scores"])[instance_mask],
-                pred_bboxes = np.asarray(preds['bboxes'])[instance_mask] / scaling,
-                pred_masks = np.asarray(preds["segmentations"])[instance_mask],
+                pred_scores=np.asarray(preds["scores"])[instance_mask],
+                pred_bboxes=np.asarray(preds["bboxes"])[instance_mask] / scaling,
+                pred_masks=np.asarray(preds["segmentations"])[instance_mask],
             )
 
         elif output_type == "contour":
             scores, contours = _to_polygons(
-                preds, 
+                preds,
                 segmentation_threshold=segmentation_threshold,
-                scaling = scaling,
+                scaling=scaling,
             )
 
             return dict(
-                pred_scores = np.asarray(scores),
-                pred_contours = contours,
+                pred_scores=np.asarray(scores),
+                pred_contours=contours,
             )
 
-        else: # Label
+        else:  # Label
             if "label" in preds:
                 mask = np.asarray(preds["instance_mask"])
                 label = np.asarray(preds["label"])
                 scores = np.asarray(preds["scores"])[mask]
 
-            else: # compute via polygons
+            else:  # compute via polygons
                 scores, contours = _to_polygons(
-                    preds, 
+                    preds,
                     segmentation_threshold=segmentation_threshold,
-                    scaling = scaling,
+                    scaling=scaling,
                 )
                 label = _draw_label(contours, image.shape[:2])
-            
-            return dict(
-                pred_scores = np.asarray(scores),
-                pred_label = label,
-            )
 
+            return dict(
+                pred_scores=np.asarray(scores),
+                pred_label=label,
+            )
 
     def predict_on_large_image(
         self,
@@ -406,7 +427,7 @@ class Predictor:
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
             output_type: "patch" | "label" | "contour"
-            score_threshold: Min score needed to be included in the output. 
+            score_threshold: Min score needed to be included in the output.
             segmentation_threshold: Threshold value for segmentation.
 
         Returns:
@@ -416,7 +437,7 @@ class Predictor:
 
                 - pred_scores: The prediction scores of each instance.
                 - pred_label: a 2D image label. 0 is background.
-            
+
             For "contour" output:
                 - pred_scores: The prediction scores of each instance.
                 - pred_contours: a list of polygon arrays in x-y format.
@@ -429,7 +450,9 @@ class Predictor:
         """
 
         if not output_type in ("bbox", "label", "contour"):
-            raise ValueError(f"output_type should be 'patch'|'label'|'contour'. Got {output_type} instead.")
+            raise ValueError(
+                f"output_type should be 'patch'|'label'|'contour'. Got {output_type} instead."
+            )
 
         module, params = self.model
 
@@ -438,16 +461,18 @@ class Predictor:
         else:
             apply_fn = module.apply
 
-        ctx = freeze(dict(
-                apply_fn = apply_fn,
-                output_type = "grid",
-                segmentation_threshold = segmentation_threshold,
-                score_threshold = score_threshold,
-                scaling = scaling,
-                min_area = min_area,
+        ctx = freeze(
+            dict(
+                apply_fn=apply_fn,
+                output_type="grid",
+                segmentation_threshold=segmentation_threshold,
+                score_threshold=score_threshold,
+                scaling=scaling,
+                min_area=min_area,
                 remove_out_of_bound=True,
-                nms_iou = 0,
-        ))
+                nms_iou=0,
+            )
+        )
 
         get_padding = lambda a, gs, ss: (a - 1) // ss * ss + gs - a
 
@@ -511,37 +536,37 @@ class Predictor:
         if output_type == "bbox":
             logging.info("Generating masks...")
             segs = jax.vmap(_comput_masks)(
-                preds["segmentations"], 
-                preds["y0s"], 
-                preds["x0s"], 
+                preds["segmentations"],
+                preds["y0s"],
+                preds["x0s"],
                 preds["bboxes"],
             )
             return dict(
-                pred_scores = preds["scores"],
-                pred_bboxes = preds["bboxes"] / scaling,
-                pred_masks = segs,
+                pred_scores=preds["scores"],
+                pred_bboxes=preds["bboxes"] / scaling,
+                pred_masks=segs,
             )
 
         scores, contours = _to_polygons(
-            preds, 
+            preds,
             segmentation_threshold=segmentation_threshold,
-            scaling = scaling,
+            scaling=scaling,
         )
 
         if output_type == "label":
             logging.info(f"Generating label...")
-            
+
             label = _draw_label(contours, image.shape[:2])
-            
+
             return dict(
-                pred_scores = np.asarray(scores),
-                pred_label = label,
+                pred_scores=np.asarray(scores),
+                pred_label=label,
             )
 
         else:
             return dict(
-                pred_scores = np.asarray(scores),
-                pred_contours = contours,
+                pred_scores=np.asarray(scores),
+                pred_contours=contours,
             )
 
     @property
