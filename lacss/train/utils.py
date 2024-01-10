@@ -103,7 +103,7 @@ class Inputs(struct.PyTreeNode):
 
 
 try:
-    from .torch_dataloader_adapter import TorchDataLoaderAdapter
+    from torch.utils.data import DataLoader
 
     class TorchDataLoaderAdapter:
         """Convert torch dataloader into a python iterable suitable for [lacss.Trainer](./#lacss.train.base_trainer.Trainer)

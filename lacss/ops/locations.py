@@ -14,10 +14,12 @@ def locations_to_labels(
     locations: ArrayLike, target_shape: Shape, threshold: float = 1.5
 ) -> tuple[Array, Array]:
     """Generate labels as LPN regression targets
+    
     Args:
         locations: [N, 2] float32 true location values. scaled 0..1, masking out invalid with -1
         target_shape: (H, W)  int
         threshold: distance threshold for postive label
+    
     Returns:
         score_target: [H, W, 1] int32
         regression_target: [H, W, 2] float tensor
@@ -52,12 +54,15 @@ def locations_to_labels(
 
 def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> Array:
     """Compute distance similarity matrix
-    pairwise similarity = 1 / distance ^2
+
+        pairwise similarity = 1 / distance ^2
+
     Args:
-      pred_locations: [N, 2] use -1 to mask out invalid locations
-      gt_locations: [K, 2] use -1 to mask out invalid locations
+        pred_locations: [N, 2] use -1 to mask out invalid locations
+        gt_locations: [K, 2] use -1 to mask out invalid locations
+
     Returns:
-      similarity_matrix: [N, k]
+        similarity_matrix: [N, k]
     """
 
     distances_matrix = pred_locations[:, None, :] - gt_locations
@@ -76,10 +81,12 @@ def location_matching(
     pred_locations: ArrayLike, gt_locations: ArrayLike, threshold: float
 ) -> tuple[Array, Array]:
     """Match predicted location to gt locations
+
     Args:
       pred_locations:r [N, 2]
       gt_locations: [K, 2]
       threshold: float. Maximum distance to be matched
+    
     Returns:
       matches: [N], indices of the matches location in gt list
       indicators: [N] bool

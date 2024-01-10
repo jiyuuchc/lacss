@@ -33,7 +33,7 @@ class LacssCollaborator(nn.Module):
         assert cls_id is not None or self.n_cls == 1
         c = cls_id.astype(int).squeeze() if cls_id is not None else 0
 
-        net = UNet(self.conv_spec, self.patch_size)
+        net = UNet(self.unet_spec, self.patch_size)
         _, unet_out = net(image)
 
         y = unet_out[str(net.start_level)]
@@ -45,7 +45,7 @@ class LacssCollaborator(nn.Module):
             fg = jax.image.resize(fg, image.shape[:-1], "linear")
 
         y = image
-        for n_features in self.unet_spec:
+        for n_features in self.conv_spec:
             y = nn.Conv(n_features, (3, 3), use_bias=False)(y)
             y = nn.GroupNorm(num_groups=None, group_size=1, use_scale=False)(
                 y[None, ...]

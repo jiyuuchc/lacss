@@ -12,16 +12,7 @@ from .common import binary_focal_factor_loss, mean_over_boolean_mask
 
 
 def supervised_instance_loss(batch, prediction):
-    """LACSS instance loss, supervised with segmentation label
-
-    Args:
-        preds: Model predictions
-        labels: Label dictionary. Two types of segmentation labels are accepted.
-            If ```labels["gt_labels"]``` is provided, its value is treated as pixel
-            labels of the image. Otherwisde, one much supply both ```labels["gt_bboxes"]```
-            and ```labels["gt_masks"]```. The gt_masks is a 3D array representing all
-            segmentation resized to a fixed dimension.
-    """
+    """LACSS instance loss, supervised with segmentation label"""
     preds = prediction
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
@@ -72,13 +63,7 @@ def supervised_instance_loss(batch, prediction):
 
 
 def self_supervised_instance_loss(batch, prediction, *, soft_label: bool = True):
-    """Unsupervised instance loss
-
-    Args:
-        preds: Model prediction dict.
-        soft_label: If False, it convertes image mask prediction to hard label
-            (ie. 0 or 1), before computing loss.
-    """
+    """Unsupervised instance loss"""
     preds = prediction
     _, labels, _ = unpack_x_y_sample_weight(batch)
 

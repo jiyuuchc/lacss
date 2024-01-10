@@ -5,6 +5,7 @@ from typing import Sequence, Union
 import jax.numpy as jnp
 from flax import struct
 
+from ..typing import LossFunc
 from .utils import _get_name
 
 

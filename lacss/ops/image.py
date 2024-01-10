@@ -109,12 +109,14 @@ def sub_pixel_samples(
 def sub_pixel_crop_and_resize(
     img: ArrayLike, bbox: ArrayLike, output_shape: Shape, out_of_bound_value: float = 0
 ) -> Array:
-    """Retrieve image values of a bbox resize output. Used for ROI-Align
+    """Retrieve image values of a bbox. Resize output to output_shape. Used for ROI-Align.
+
     Args:
         img: Array of shape [H, W, ...]
         bbox: [y0, x0, y1, x1]
         output_shape: [h, w]
         out_of_bound_value: optional float constant, defualt 0.
+
     Returns:
         values: [h, w, ...], float
     """

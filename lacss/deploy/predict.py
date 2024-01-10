@@ -43,7 +43,6 @@ def _to_polygons(
     chain_approx=cv2.CHAIN_APPROX_SIMPLE,
 ) -> list:
     polygons = []
-    final_scores = []
 
     y0s = np.asarray(pred["y0s"])
     x0s = np.asarray(pred["x0s"])
@@ -59,25 +58,30 @@ def _to_polygons(
 
     for y0, x0, seg, score in zip(y0s, x0s, segs, scores):
         c, _ = cv2.findContours(seg, cv2.RETR_EXTERNAL, chain_approx)
-        if len(c) > 0:
-            max_len_element = reduce(lambda a, b: a if len(a) >= len(b) else b, c)
-            polygons.append(max_len_element.squeeze(1) + [x0, y0])
-            final_scores.append(score)
+
+        max_len_element = reduce(
+            lambda a, b: a if len(a) >= len(b) else b,
+            c,
+            np.zeros([0, 1, 2], dtype=int),
+        )
+
+        polygon = max_len_element.squeeze(1).astype(float) + [x0, y0]
+
+        polygons.append(polygon)
 
     if scaling != 1.0:
         polygons = [(c + 0.5) / scaling - 0.5 for c in polygons]
-    else:
-        polygons = [c.astype("float") for c in polygons]
 
-    return final_scores, polygons
+    return polygons
 
 
 def _draw_label(polygons, image_size) -> np.ndarray:
-    label = np.zeros(image_size, dtype="int16")
+    label = np.zeros(image_size, dtype="int32")
     color = len(polygons)
     for polygon in polygons[::-1]:
-        polygon = np.round(polygon).astype(int)
-        cv2.fillPoly(label, [polygon], color)
+        if len(polygon) > 0:
+            polygon = np.round(polygon).astype(int)
+            cv2.fillPoly(label, [polygon], color)
         color -= 1
 
     return label
@@ -130,7 +134,7 @@ def _predict(context, params, image):
     apply_fn = context["apply_fn"]
     output_type = context["output_type"]
     nms_iou = context["nms_iou"]
-    h, w, c = image.shape
+    h, w = image.shape[:2]
 
     if scaling != 1:
         image = jax.image.resize(
@@ -150,7 +154,7 @@ def _predict(context, params, image):
 
     if context["remove_out_of_bound"]:
         pred_locations = preds["pred_locations"]
-        h, w, _ = image.shape
+        h, w = image.shape[:2]
         valid_locs = (pred_locations >= 0).all(axis=-1)
         valid_locs &= pred_locations[:, 0] < h
         valid_locs &= pred_locations[:, 1] < w
@@ -241,7 +245,7 @@ class Predictor:
             predictor = lacss.deploy.Predictor(url)
 
             # make a prediction
-            label = predictor.predict_label(image)
+            label = predictor.predict(image)
 
     Attributes:
         module: The underlying FLAX module
@@ -305,23 +309,22 @@ class Predictor:
             image: A ndarray of (h,w,c) format. Value of c must be 1-3
 
         Keyword Args:
+            output_type: "label" | "contour" | "bbox"
             min_area: Minimum area of a valid prediction.
-            remove_out_of_bound: Whether to remove out-of-bound predictions. Default is False.
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
-            output_type: "patch" | "label" | "contour"
             score_threshold: Min score needed to be included in the output.
             segmentation_threshold: Threshold value for segmentation.
+            nms_iou: IOU threshold value for non-max-supression durint post-processing
 
         Returns:
-            A dictionary of values.
-
             For "label" output:
 
                 - pred_scores: The prediction scores of each instance.
                 - pred_label: a 2D image label. 0 is background.
 
             For "contour" output:
+
                 - pred_scores: The prediction scores of each instance.
                 - pred_contours: a list of polygon arrays in x-y format.
 
@@ -366,7 +369,7 @@ class Predictor:
             )
 
         elif output_type == "contour":
-            scores, contours = _to_polygons(
+            contours = _to_polygons(
                 preds,
                 segmentation_threshold=segmentation_threshold,
                 scaling=scaling,
@@ -384,7 +387,7 @@ class Predictor:
                 scores = np.asarray(preds["scores"])[mask]
 
             else:  # compute via polygons
-                scores, contours = _to_polygons(
+                contours = _to_polygons(
                     preds,
                     segmentation_threshold=segmentation_threshold,
                     scaling=scaling,
@@ -408,8 +411,10 @@ class Predictor:
         segmentation_threshold: float = 0.5,
         score_threshold: float = 0.5,
         output_type: str = "label",
+        min_cells_per_patch: int = 0,
+        disable_padding: bool = False,
         **kwargs,
-    ) -> Union[dict, ArrayLike]:
+    ) -> dict:
         """Make prediction on very large image by dividing into a grid.
 
         Direct model prediction on large image may cause out-of-memory error. This
@@ -423,22 +428,22 @@ class Predictor:
                 results.
 
         Keyword Args:
+            output_type: label" | "contour" | "bbox"
             min_area: Minimum area of a valid prediction.
             scaling: A image scaling factor. If not 1, the input image will be resized internally before fed
                 to the model. The results will be resized back to the scale of the orginal input image.
-            output_type: "patch" | "label" | "contour"
             score_threshold: Min score needed to be included in the output.
             segmentation_threshold: Threshold value for segmentation.
+            nms_iou: IOU threshold value for non-max-supression durint post-processing
 
         Returns:
-            A dictionary of values.
-
             For "label" output:
 
                 - pred_scores: The prediction scores of each instance.
                 - pred_label: a 2D image label. 0 is background.
 
             For "contour" output:
+
                 - pred_scores: The prediction scores of each instance.
                 - pred_contours: a list of polygon arrays in x-y format.
 
@@ -464,7 +469,7 @@ class Predictor:
         ctx = freeze(
             dict(
                 apply_fn=apply_fn,
-                output_type="grid",
+                output_type="bbox" if output_type == "bbox" else "grid",
                 segmentation_threshold=segmentation_threshold,
                 score_threshold=score_threshold,
                 scaling=scaling,
@@ -474,12 +479,17 @@ class Predictor:
             )
         )
 
-        get_padding = lambda a, gs, ss: (a - 1) // ss * ss + gs - a
-
         h, w = image.shape[:2]
-        padded_img = np.pad(
-            image, [[0, get_padding(h, gs, ss)], [0, get_padding(w, gs, ss)], [0, 0]]
-        )
+
+        if not disable_padding:
+            get_padding = lambda a, gs, ss: (a - 1) // ss * ss + gs - a
+
+            padded_img = np.pad(
+                image,
+                [[0, get_padding(h, gs, ss)], [0, get_padding(w, gs, ss)], [0, 0]],
+            )
+        else:
+            padded_img = image
 
         preds = []
         for y0 in range(0, h, ss):
@@ -490,26 +500,60 @@ class Predictor:
                     params,
                     padded_img[y0 : y0 + gs, x0 : x0 + gs],
                 )
-                pred = jax.jit(_remove_edge_instances)(
+                pred = _remove_edge_instances(
                     pred,
                     [gs, gs],
-                    remove_top=y0 != 0,
-                    remove_bottom=(y0 + gs) != h,
-                    remove_left=x0 != 0,
-                    remove_right=(x0 + gs) != w,
+                    remove_top=y0 > 0,
+                    remove_bottom=(y0 + gs) < h,
+                    remove_left=x0 > 0,
+                    remove_right=(x0 + gs) < w,
                     threshold=segmentation_threshold,
                 )
 
                 logging.info(f"Transfer result...")
+
                 mask = np.asarray(pred["instance_mask"])
-                pred = dict(
-                    scores=np.array(pred["scores"])[mask],
-                    bboxes=np.array(pred["bboxes"])[mask] + [y0, x0, y0, x0],
-                    segmentations=np.array(pred["segmentations"])[mask],
-                    y0s=np.array(pred["y0s"])[mask] + y0,
-                    x0s=np.array(pred["x0s"])[mask] + x0,
-                )
-                preds.append(pred)
+
+                if np.count_nonzero(mask) > min_cells_per_patch:
+                    if output_type != "bbox":
+                        pred = dict(
+                            scores=np.array(pred["scores"])[mask],
+                            bboxes=np.array(pred["bboxes"])[mask] + [y0, x0, y0, x0],
+                            segmentations=np.array(pred["segmentations"])[mask],
+                            y0s=np.array(pred["y0s"])[mask] + y0,
+                            x0s=np.array(pred["x0s"])[mask] + x0,
+                        )
+
+                        polygons = _to_polygons(
+                            pred,
+                            segmentation_threshold=segmentation_threshold,
+                            scaling=scaling,
+                        )
+
+                        valid_polygons = np.asarray([len(p) > 0 for p in polygons])
+                        scores = np.where(valid_polygons, pred["scores"], -1)
+                        bboxes = np.where(
+                            valid_polygons[:, None], pred["bboxes"] / scaling, -1
+                        )
+
+                        preds.append(
+                            dict(
+                                scores=scores,
+                                polygons=np.fromiter(polygons, dtype=object),
+                                bboxes=bboxes,
+                            )
+                        )
+
+                    else:
+                        bboxes = np.array(pred["bboxes"])[mask] + [y0, x0, y0, x0]
+                        bboxes /= sclae
+                        preds.append(
+                            dict(
+                                scores=np.array(pred["scores"])[mask],
+                                bboxes=bboxes,
+                                segmentations=np.array(pred["segmentations"])[mask],
+                            )
+                        )
 
         logging.info(f"Postprocessing...")
         preds = jax.tree_util.tree_map(lambda *x: np.concatenate(x), *preds)
@@ -528,45 +572,34 @@ class Predictor:
                 boxes,
                 -1,
                 threshold=nms_iou,
+                min_score=0,
                 return_selection=True,
             )
 
             preds = jax.tree_util.tree_map(lambda x: x[selections], preds)
 
         if output_type == "bbox":
-            logging.info("Generating masks...")
-            segs = jax.vmap(_comput_masks)(
-                preds["segmentations"],
-                preds["y0s"],
-                preds["x0s"],
-                preds["bboxes"],
-            )
+
             return dict(
                 pred_scores=preds["scores"],
-                pred_bboxes=preds["bboxes"] / scaling,
+                pred_bboxes=preds["bboxes"],
                 pred_masks=segs,
             )
-
-        scores, contours = _to_polygons(
-            preds,
-            segmentation_threshold=segmentation_threshold,
-            scaling=scaling,
-        )
 
         if output_type == "label":
             logging.info(f"Generating label...")
 
-            label = _draw_label(contours, image.shape[:2])
+            label = _draw_label(preds["polygons"], image.shape[:2])
 
             return dict(
-                pred_scores=np.asarray(scores),
+                pred_scores=preds["scores"],
                 pred_label=label,
             )
 
-        else:
+        else:  # contours
             return dict(
-                pred_scores=np.asarray(scores),
-                pred_contours=contours,
+                pred_scores=preds["scores"],
+                pred_contours=preds["polygons"],
             )
 
     @property
@@ -610,8 +643,9 @@ class Predictor:
     #         raise ValueError(f"{new_detector} is not a Lacss Detector")
 
     def save(self, save_path) -> None:
-        """Save the model by pickling.
-            In the form of (module, weights).
+        """Re-save the model by pickling.
+
+        In the form of (module, weights).
 
         Args:
             save_path: Path to the pkl file
