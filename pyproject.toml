@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lacss"
-version = "0.7.2"
+version = "0.7.3"
 description = "Cell segmentation and tracking"
 authors = ["Ji Yu <jyu@uchc.edu>"]
 license = "MIT"
