@@ -25,14 +25,18 @@ class UNet(nn.Module):
         fs = max(self.patch_size, 3)
         st = self.patch_size
 
+        ra = tuple(range(x.ndim))
+
         for ch in self.model_spec:
 
             x = nn.Conv(ch, (fs, fs), (st, st), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x)
+            # x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x)
+            # x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             encoder_out.append(x)
@@ -49,11 +53,13 @@ class UNet(nn.Module):
             x = jnp.concatenate([x, y], axis=-1)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x)
+            # x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x)
+            # x = nn.LayerNorm(epsilon=1e-6)(x)
+            x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             decoder_out.insert(0, x)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pathlib
 import pickle
+import warnings
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional, Sequence, Union
@@ -9,6 +10,7 @@ from typing import Any, Iterable, Iterator, Optional, Sequence, Union
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
@@ -17,6 +19,7 @@ from .loss import LossLog
 from .strategy import JIT
 from .utils import Inputs, _get_name
 
+WeightedLossFunc = LossFunc | tuple[LossFunc, float | np.number]
 LOSSES = Union[LossFunc, Sequence[LossFunc]]
 METRICS = Union[Metric, Sequence[Metric]]
 
@@ -57,10 +60,12 @@ class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        losses: Optional[LOSSES] = None,
+        losses: LOSSES | None = None,
         optimizer: Optional[Optimizer] = None,
         seed: Union[int, Array] = 42,
         strategy: type = JIT,
+        *,
+        parameters: dict | None = None,
     ):
         """Constructor
 
@@ -76,14 +81,20 @@ class Trainer:
             strategy: Training backend. See [Traing backends](./#training-backends).
 
         """
+        if model.scope is not None:
+            model, variables = model.unbind()
+            if parameters is None and "params" in variables:
+                parameters = variables["params"]
+
         self.model = model
         self.losses = losses
 
         self.seed = seed if isinstance(seed, jnp.ndarray) else jax.random.PRNGKey(seed)
-        self._optimizer = optimizer
+        self.optimizer = optimizer
 
         self._strategy = strategy
-        self._initialized = False
+
+        self.parameters = parameters
 
     def reset(
         self,
@@ -100,8 +111,8 @@ class Trainer:
         if losses is None:
             losses = self.losses
 
-        if losses is None:
-            raise ValueError(f"No loss functions provided")
+            if losses is None:
+                raise ValueError(f"No loss functions provided")
 
         try:
             iter(losses)
@@ -122,43 +133,38 @@ class Trainer:
 
     @property
     def initialized(self):
-        return self._initialized
+        return self.parameters is not None
 
     def initialize(self, data: Iterable, tx: Optional[Optimizer] = None) -> None:
-        """Initialize the model weights and optimizer states.
+        """Generate initial model weights. Does nothing if self.parameters is not None.
 
         Args:
-            data: An iterator or iterable to produce training dataset. It is not
-                used if model is bound with weights already.
+            data: An iterable to produce training dataset.
                 see [train()](./#lacss.train.base_trainer.Trainer.train)
-            tx: Optional optax optimzier for when the object was constructed without an
+            tx: Depreciated. Optional optax optimzier for when the object was constructed without an
                 optimizer
         """
-        if tx is None:
-            tx = self.optimizer
-
-        if not self._initialized:
-            if self.model.scope is None:
-                peek = next(iter(data))
-                # inputs, _, _ = unpack_x_y_sample_weight(peek)
-                inputs = peek[0] if isinstance(peek, tuple) else peek
-
-                self.seed, key = jax.random.split(self.seed)
-                variables = self._strategy.init_fn(key, self.model, inputs)
-
-            else:
-                self.model, variables = self.model.unbind()
-
-            self.state = TrainState.create(
-                apply_fn=self.model.apply,
-                params=variables["params"],
-                tx=tx,
+        if tx is not None:
+            self.optimizer = tx
+            warnings.warn(
+                f"Using tx parameter in initialize() call is deprecated",
+                DeprecationWarning,
             )
 
-        else:
-            raise ValueError("Calling initialize() on already initialized Trainer")
+        if self.parameters is None:
+            peek = next(iter(data))
+            # inputs, _, _ = unpack_x_y_sample_weight(peek)
+            inputs = peek[0] if isinstance(peek, tuple) else peek
 
-        self._initialized = True
+            self.seed, key = jax.random.split(self.seed)
+            variables = self._strategy.init_fn(key, self.model, inputs)
+            self.parameters = variables["params"]
+
+        # self.state = TrainState.create(
+        #     apply_fn=self.model.apply,
+        #     params=variables["params"],
+        #     tx=tx,
+        # )
 
     def __call__(
         self, inputs: Any, *, strategy: Optional[type] = None, **kwargs
@@ -178,8 +184,8 @@ class Trainer:
 
         predict_fn = strategy.predict
 
-        state = self.state.replace(apply_fn=_cached_partial(self.model.apply, **kwargs))
-        preds = predict_fn(state, inputs)
+        apply_fn = _cached_partial(self.model.apply, **kwargs)
+        preds = predict_fn(apply_fn, self.parameters, inputs)
 
         return preds
 
@@ -194,6 +200,7 @@ class Trainer:
         dataset: Iterable,
         strategy: Optional[type] = None,
         rng_cols: Sequence[str] = None,
+        train_parameters: dict | None = None,
         **kwargs,
     ) -> Iterator:
         """Create the training iterator
@@ -217,34 +224,44 @@ class Trainer:
         if strategy is None:
             strategy = self._strategy
 
-        if not self._initialized:
-            raise ValueError("Try to run uninitialized trainer")
+        if self.parameters is None:
+            self.initialize()
+
+        assert self.parameters is not None
+
+        if train_parameters is None:
+            train_parameters = self.parameters
+
+        train_state = TrainState.create(
+            apply_fn=_cached_partial(self.model.apply, **kwargs),
+            params=train_parameters,
+            tx=self.optimizer,
+        )
 
         train_fn = strategy.train_step
-
-        self.state = self.state.replace(
-            apply_fn=_cached_partial(self.model.apply, **kwargs)
-        )
 
         self.reset()
 
         self.seed, seed = jax.random.split(self.seed)
-        for step, data in enumerate(dataset):
+
+        for batch in dataset:
             # batch = unpack_x_y_sample_weight(data)
-            batch = data
+            # batch = data
 
             if rng_cols is not None:
-                key = jax.random.fold_in(seed, step)
+                key = jax.random.fold_in(seed, train_state.step)
                 keys = jax.random.split(key, len(rng_cols))
                 rngs = {name: k for name, k in zip(rng_cols, keys)}
             else:
                 rngs = None
 
-            self.state, self.loss_logs, preds = train_fn(
-                self.state, self.loss_logs, batch, rngs
+            train_state, self.loss_logs, preds = train_fn(
+                train_state, self.parameters, self.loss_logs, batch, rngs
             )
 
             batch_logs = self.compute_loss_log()
+
+            self.parameters = self.parameters.copy(train_state.params)
 
             yield batch_logs
 
@@ -258,7 +275,7 @@ class Trainer:
                 by specifying the name
         """
         module = self.model
-        params = self.params
+        params = self.parameters
 
         if sub_module is not None:
             module = module.bind(dict(params=params))
@@ -274,42 +291,42 @@ class Trainer:
         with open(path, "wb") as f:
             pickle.dump((module, params), f)
 
-    def pickle_self(self, path: PathLike) -> None:
-        """Make a pickle save of the trainer. This saves the model as well as
-        the training states.
+    # def pickle_self(self, path: PathLike) -> None:
+    #     """Make a pickle save of the trainer. This saves the model as well as
+    #     the training states.
 
-        Args:
-            path: The file path.
-        """
-        path = pathlib.Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+    #     Args:
+    #         path: The file path.
+    #     """
+    #     path = pathlib.Path(path)
+    #     path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(path, "wb") as f:
-            pickle.dump(self, f)
+    #     with open(path, "wb") as f:
+    #         pickle.dump(self, f)
 
-    @staticmethod
-    def restore_from_pickle(path: PathLike):
-        """Restore from the a pickled saved.
+    # @staticmethod
+    # def restore_from_pickle(path: PathLike):
+    #     """Restore from the a pickled saved.
 
-        Args:
-            path: The pickle file path.
+    #     Args:
+    #         path: The pickle file path.
 
-        Returns:
-            A new trainer object.
-        """
-        path = pathlib.Path(path)
+    #     Returns:
+    #         A new trainer object.
+    #     """
+    #     path = pathlib.Path(path)
 
-        try:
-            _bytes = path.read_bytes()
-        except BaseException as e:
-            raise OSError(f"Could not load the checkpoint. Got exception: {e}")
+    #     try:
+    #         _bytes = path.read_bytes()
+    #     except BaseException as e:
+    #         raise OSError(f"Could not load the checkpoint. Got exception: {e}")
 
-        trainer = pickle.loads(_bytes)
+    #     trainer = pickle.loads(_bytes)
 
-        if not isinstance(trainer, Trainer):
-            raise TypeError("The saved obj is not a Trainer checkpoint")
+    #     if not isinstance(trainer, Trainer):
+    #         raise TypeError("The saved obj is not a Trainer checkpoint")
 
-        return trainer
+    #     return trainer
 
     def test(
         self,
@@ -343,13 +360,14 @@ class Trainer:
         except TypeError:
             metrics = [metrics]
 
-        state = self.state.replace(apply_fn=_cached_partial(self.model.apply, **kwargs))
+        apply_fn = (_cached_partial(self.model.apply, **kwargs),)
+
         predict_fn = strategy.predict
 
         for data in dataset:
             # inputs, labels, _ = unpack_x_y_sample_weight(data)
             inputs = data[0] if isinstance(data, tuple) else data
-            preds = predict_fn(state, inputs)
+            preds = predict_fn(apply_fn, self.parameters, inputs)
             kwargs = dict(
                 batch=data,
                 prediction=preds,
@@ -369,30 +387,30 @@ class Trainer:
             pass
         return {_get_name(m): m.compute() for m in metrics}
 
-    @property
-    def params(self) -> Params:
-        return self.state.params
+    # @property
+    # def params(self) -> Params:
+    #     return self.state.params
 
-    @params.setter
-    def params(self, new_params: Params) -> None:
-        old_state = self.state
-        self.state = TrainState.create(
-            apply_fn=self.model.apply,
-            params=new_params,
-            tx=old_state.tx,
-        )
+    # @params.setter
+    # def params(self, new_params: Params) -> None:
+    #     old_state = self.state
+    #     self.state = TrainState.create(
+    #         apply_fn=self.model.apply,
+    #         params=new_params,
+    #         tx=old_state.tx,
+    #     )
 
-    @property
-    def optimizer(self) -> Optimizer:
-        return self._optimizer
+    # @property
+    # def optimizer(self) -> Optimizer:
+    #     return self._optimizer
 
-    @optimizer.setter
-    def optimizer(self, tx: Optimizer) -> None:
-        self._optimizer = tx
+    # @optimizer.setter
+    # def optimizer(self, tx: Optimizer) -> None:
+    #     self._optimizer = tx
 
-        if self._initialized:
-            self.state = TrainState.create(
-                apply_fn=self.model.apply,
-                params=self.params,
-                tx=tx,
-            )
+    # if self._initialized:
+    #     self.state = TrainState.create(
+    #         apply_fn=self.model.apply,
+    #         params=self.params,
+    #         tx=tx,
+    #     )

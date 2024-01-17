@@ -14,15 +14,18 @@ from .utils import Inputs
 
 class Eager:
     @classmethod
-    def loss_fn(cls, params, state, loss_logs, batch, rngs):
+    def loss_fn(cls, train_params, params, loss_logs, batch, rngs, apply_fn):
         # inputs, labels, sample_weight = batch
+        params = params.copy(train_params)
+
         inputs = batch[0] if isinstance(batch, tuple) else batch
+
         # if sample_weight is None:
         #     sample_weight = 1.0
 
         inputs_obj = Inputs.from_value(inputs)
 
-        preds = state.apply_fn(
+        preds = apply_fn(
             {"params": params},
             *inputs_obj.args,
             **inputs_obj.kwargs,
@@ -37,7 +40,7 @@ class Eager:
         losses, loss_logs = zip(*[loss_log.update(**args) for loss_log in loss_logs])
         total_loss = sum(losses)
 
-        return total_loss, (state, loss_logs, preds)
+        return total_loss, (loss_logs, preds)
 
     @classmethod
     def init_fn(cls, key, model, inputs):
@@ -48,26 +51,29 @@ class Eager:
         return state
 
     @classmethod
-    def predict(cls, state, inputs):  # only if model is immutable
+    def predict(cls, apply_fn, params, inputs):  # only if model is immutable
         # print("JIT Predict")
         inputs_obj = Inputs.from_value(inputs)
-        preds = state.apply_fn(
-            {"params": state.params}, *inputs_obj.args, **inputs_obj.kwargs
-        )
+        preds = apply_fn({"params": params}, *inputs_obj.args, **inputs_obj.kwargs)
         return preds
 
     @classmethod
     def train_step(
         cls,
         state: TrainState,
+        params: dict,
         loss_logs: tp.Sequence[LossLog],
         batch: tp.Any,
         rngs: tp.Optional[dict],
     ) -> tp.Tuple[TrainState, tp.Sequence[LossLog], tp.Any]:
         # print('JIT train_step')
-        grads, (state, loss_logs, preds) = jax.grad(cls.loss_fn, has_aux=True)(
+        grad_fn = jax.grad(
+            partial(cls.loss_fn, apply_fn=state.apply_fn),
+            has_aux=True,
+        )
+        grads, (loss_logs, preds) = grad_fn(
             state.params,
-            state,
+            params,
             loss_logs,
             batch,
             rngs,
@@ -78,7 +84,7 @@ class Eager:
 
 
 class Core(Eager):
-    predict = jax.jit(Eager.predict)
+    predict = jax.jit(Eager.predict, static_argnames="apply_fn")
 
     @classmethod
     def init_fn(cls, key, model, inputs):
@@ -98,6 +104,7 @@ class _Distributed(Eager):
     def _train_step(
         cls,
         state: TrainState,
+        params: dict,
         loss_logs: tp.Sequence[LossLog],
         batch: tp.Any,
         rngs: tp.Optional[dict],
@@ -107,10 +114,14 @@ class _Distributed(Eager):
         rngs = jax.tree_util.tree_map(
             lambda key: jax.random.fold_in(key, axis_index), rngs
         )
+        grad_fn = jax.grad(
+            partial(cls.loss_fn, apply_fn=state.apply_fn),
+            has_aux=True,
+        )
 
-        grads, (state, loss_logs, preds) = jax.grad(cls.loss_fn, has_aux=True)(
+        grads, (loss_logs, preds) = grad_fn(
             state.params,
-            state,
+            params,
             loss_logs,
             batch,
             rngs,
@@ -137,14 +148,15 @@ class Distributed(_Distributed):
     train_step = jax.pmap(
         _Distributed._train_step,
         axis_name="mapped",
-        in_axes=(None, None, 0, None),
+        in_axes=(None, None, None, 0, None),
         out_axes=(None, None, 0),
     )
 
     predict = jax.pmap(
         Eager.predict,
         axis_name="mapped",
-        in_axes=(None, 0),
+        in_axes=(None, None, 0),
+        static_broadcasted_argnums=0,
     )
 
 
@@ -153,15 +165,16 @@ class VMapped(_Distributed):
         jax.vmap(
             _Distributed._train_step,
             axis_name="mapped",
-            in_axes=(None, None, 0, None),
+            in_axes=(None, None, None, 0, None),
             out_axes=(None, None, 0),
-        )
+        ),
     )
 
     predict = jax.jit(
         jax.vmap(
             Eager.predict,
             axis_name="mapped",
-            in_axes=(None, 0),
-        )
+            in_axes=(None, None, 0),
+        ),
+        static_argnames="apply_fn",
     )
