@@ -22,13 +22,24 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
     patch_edges = jnp.sqrt(jnp.clip(patch_edges, 1e-8, 1.0))  # avoid GPU error
     # patch_edges = jnp.where(patch_edges > 0, jnp.sqrt(patch_edges), 0)
     combined_edges = jnp.zeros([height + padding * 2, width + padding * 2])
+    combined_mask = jnp.zeros([height + padding * 2, width + padding * 2], dtype=bool)
+
     combined_edges = combined_edges.at[
         instance_yc + padding, instance_xc + padding
     ].add(patch_edges)
+    combined_mask = combined_mask.at[instance_yc + padding, instance_xc + padding].set(
+        True
+    )
+
     combined_edges = combined_edges[
         padding : padding + height, padding : padding + width
     ]
-    combined_edges = jnp.tanh(combined_edges)
+    combined_mask = combined_mask[padding : padding + height, padding : padding + width]
+    combined_edges = jnp.where(
+        combined_mask,
+        jnp.tanh(combined_edges),
+        -1,
+    )
 
     return combined_edges
 
@@ -48,7 +59,9 @@ def self_supervised_edge_loss(batch, prediction):
     )
     instance_edge_pred = jax.nn.sigmoid(preds["edge_pred"])
 
-    return optax.l2_loss(instance_edge_pred, instance_edge).mean()
+    return optax.l2_loss(instance_edge_pred, instance_edge).mean(
+        where=instance_edge >= 0
+    )
 
 
 def self_supervised_segmentation_loss(

@@ -16,9 +16,12 @@ class LossLog(struct.PyTreeNode):
     sum: jnp.ndarray = 0.0
 
     def update(self, **kwargs):
-        loss = self.loss_fn(**kwargs) * self.weight
-        new_log = self.replace(cnt=self.cnt + 1, sum=self.sum + loss)
-        return loss, new_log
+        loss = self.loss_fn(**kwargs)
+        if loss is None:
+            return 0.0, self
+        else:
+            loss *= self.weight
+            return loss, self.replace(cnt=self.cnt + 1, sum=self.sum + loss)
 
     def compute(self):
         return self.sum / self.cnt

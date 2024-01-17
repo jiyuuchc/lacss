@@ -144,7 +144,7 @@ class LoiAP(AP):
         col_mask = (gt >= 0).all(axis=-1)
         dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
 
-        dist2 = 1.0 / dist2
+        dist2 = 1.0 / (dist2 + 1e-8)
         dist2 = dist2[row_mask][:, col_mask]
         score = np.asarray(score)[row_mask]
 
