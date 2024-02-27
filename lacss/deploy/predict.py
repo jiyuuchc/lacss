@@ -134,7 +134,7 @@ def _predict(context, params, image):
     apply_fn = context["apply_fn"]
     output_type = context["output_type"]
     nms_iou = context["nms_iou"]
-    h, w = image.shape[:2]
+    h, w, c = image.shape
 
     if scaling != 1:
         image = jax.image.resize(
