@@ -55,14 +55,15 @@ def write_result(label, score, st = sys.stdout.buffer):
 def write_polygon_result(polygons, scores, st = sys.stdout.buffer):
     msg = LacssMsg.PolygonResult()
     for polygon, score in zip(polygons, scores):
-        polygon_msg = LacssMsg.Polygon()
-        polygon_msg.score = score
-        for p in polygon:
-            point = LacssMsg.Point()
-            point.x = p[0]
-            point.y = p[1]
-            polygon_msg.points.append(point)
-        msg.polygons.append(polygon_msg)
+        if len(polygon) > 1:
+            polygon_msg = LacssMsg.Polygon()
+            polygon_msg.score = score
+            for p in polygon:
+                point = LacssMsg.Point()
+                point.x = p[0]
+                point.y = p[1]
+                polygon_msg.points.append(point)
+            msg.polygons.append(polygon_msg)
     
     msg_size_bits = struct.pack(">i", msg.ByteSize())
 

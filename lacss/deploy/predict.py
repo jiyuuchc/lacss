@@ -52,7 +52,7 @@ def _to_polygons(
     if "instance_mask" in pred:
         mask = np.asarray(pred["instance_mask"])
         segs = segs[mask]
-        y0x = y0s[mask]
+        y0s = y0s[mask]
         x0s = x0s[mask]
         scores = scores[mask]
 
@@ -376,7 +376,7 @@ class Predictor:
             )
 
             return dict(
-                pred_scores=np.asarray(scores),
+                pred_scores=np.asarray(preds["scores"])[instance_mask],
                 pred_contours=contours,
             )
 
@@ -546,7 +546,7 @@ class Predictor:
 
                     else:
                         bboxes = np.array(pred["bboxes"])[mask] + [y0, x0, y0, x0]
-                        bboxes /= sclae
+                        bboxes /= scaling
                         preds.append(
                             dict(
                                 scores=np.array(pred["scores"])[mask],
@@ -578,7 +578,7 @@ class Predictor:
 
             preds = jax.tree_util.tree_map(lambda x: x[selections], preds)
 
-        if output_type == "bbox":
+        if output_type == "bbox": # FIXME unimplemented
 
             return dict(
                 pred_scores=preds["scores"],
