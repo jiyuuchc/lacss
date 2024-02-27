@@ -5,6 +5,10 @@ package trackmate.lacss;
 option java_outer_classname = "LacssMsg";
 option java_package = "fiji.plugin.trackmate.detector.lacss";
 
+service Lacss {
+    rpc RunDetection(Input) returns (PolygonResult) {}
+}
+
 enum DType {
     FLOAT32 = 0; // enforce float32 for now
 }
