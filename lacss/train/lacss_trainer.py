@@ -13,13 +13,8 @@ from flax.training import orbax_utils
 from tqdm import tqdm
 
 import lacss.metrics
-from lacss.losses import (
-    aux_size_loss,
-    collaborator_border_loss,
-    collaborator_segm_loss,
-    lpn_loss,
-    segmentation_loss,
-)
+from lacss.losses import (aux_size_loss, collaborator_border_loss,
+                          collaborator_segm_loss, lpn_loss, segmentation_loss)
 
 from ..modules import Lacss, LacssCollaborator
 from ..typing import Array, Optimizer
@@ -148,44 +143,43 @@ class LacssTrainer(Trainer):
                 save_kwargs={"train_state": {"save_args": save_args}},
             )
 
-    def restore_from_checkpoint(
-        self, checkpoint_manager: orbax.checkpoint.CheckpointManager, step: int = -1
-    ) -> None:
-        """Restore train state from a checkpoint.
+    # def restore_from_checkpoint(
+    #     self, checkpoint_manager: orbax.checkpoint.CheckpointManager, step: int = -1
+    # ) -> None:
+    #     """Restore train state from a checkpoint.
 
-        Args:
-            checkpoint_manager: Orbax checkpoint manager
-            step: The exact checkpoint to restore. Latest if unspecified.
-        """
-        if step < 0:
-            step = checkpoint_manager.latest_step()
+    #     Args:
+    #         checkpoint_manager: Orbax checkpoint manager
+    #         step: The exact checkpoint to restore. Latest if unspecified.
+    #     """
+    #     if step < 0:
+    #         step = checkpoint_manager.latest_step()
 
-        # restore_args = orbax_utils.restore_args_from_target(self.state, None)
+    #     # restore_args = orbax_utils.restore_args_from_target(self.state, None)
 
-        restored = checkpoint_manager.restore(
-            step,
-            items=dict(
-                config={},
-                train_state=self.state,
-            ),
-            # restore_kwargs={"train_state": {"restore_args": restore_args}},
-        )
-        self.state = restored["train_state"]
+    #     restored = checkpoint_manager.restore(
+    #         step,
+    #         items=dict(
+    #             config={},
+    #             train_state=self.state,
+    #         ),
+    #         # restore_kwargs={"train_state": {"restore_args": restore_args}},
+    #     )
+    #     self.state = restored["train_state"]
 
-        # reconstruct model or not?
-        # from lacss.utils import dataclass_from_dict
-        # self.model = dataclass_from_dict(restored["config"])
+    #     # reconstruct model or not?
+    #     # from lacss.utils import dataclass_from_dict
+    #     # self.model = dataclass_from_dict(restored["config"])
 
-        # self._cp_step = step
+    #     # self._cp_step = step
 
-    def reset(
+    def _reset(
         self,
+        cur_step,
         warmup_steps: int = 0,
         sigma: float = 20.0,
         pi: float = 2.0,
     ) -> None:
-        cur_step = self.state.step
-
         if cur_step >= warmup_steps:
             col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
             # col_seg_loss.name = "collaborator_segm_loss"
@@ -207,7 +201,7 @@ class LacssTrainer(Trainer):
                 aux_size_loss,
             ]
 
-        super().reset()
+        self.reset()
 
     def do_training(
         self,
@@ -258,16 +252,17 @@ class LacssTrainer(Trainer):
             pi: Only for point-supervised training. Amplitude of the prior term.
         """
         train_iter = self.train(dataset, rng_cols=["droppath"], training=True)
+        cur_step = 0
 
-        while self.state.step < n_steps:
-            cur_step = self.state.step
+        while cur_step < n_steps:
             next_cp_step = (
                 (cur_step + validation_interval)
                 // validation_interval
                 * validation_interval
             )
 
-            self.reset(
+            self._reset(
+                cur_step,
                 warmup_steps=warmup_steps,
                 sigma=sigma,
                 pi=pi,
@@ -277,8 +272,10 @@ class LacssTrainer(Trainer):
             for _ in tqdm(range(cur_step, next_cp_step)):
                 logs = next(train_iter)
 
+            cur_step = next_cp_step
+
             print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
-            self._make_checkpoint(checkpoint_manager)
+            # self._make_checkpoint(checkpoint_manager)
             self._validate(val_dataset)
 
     @classmethod
@@ -292,43 +289,43 @@ class LacssTrainer(Trainer):
             "train_state": orbax.checkpoint.PyTreeCheckpointer(),
         }
 
-    @classmethod
-    def from_checkpoint(cls, cp_path) -> "LacssTrainer":
-        """load the module and its weight from a checkpoint
-            This utility static method allows use checkpoint as a model save. It ignores
-            optstate.
+    # @classmethod
+    # def from_checkpoint(cls, cp_path) -> "LacssTrainer":
+    #     """load the module and its weight from a checkpoint
+    #         This utility static method allows use checkpoint as a model save. It ignores
+    #         optstate.
 
-        Args:
-            cp_path: checkpoint location (a dir)
+    #     Args:
+    #         cp_path: checkpoint location (a dir)
 
-        Returns:
-            LacssTrainer.
-        """
-        import json
+    #     Returns:
+    #         LacssTrainer.
+    #     """
+    #     import json
 
-        cp_path = Path(cp_path)
+    #     cp_path = Path(cp_path)
 
-        with open(cp_path / "config" / "metadata", "r") as f:
-            cfg = json.load(f)
+    #     with open(cp_path / "config" / "metadata", "r") as f:
+    #         cfg = json.load(f)
 
-        obj = cls(cfg["principal"], cfg["collaborator"])
+    #     obj = cls(cfg["principal"], cfg["collaborator"])
 
-        fake_data = dict(
-            image=jnp.zeros([64, 64, 3]),
-            gt_locations=jnp.zeros([8, 2]),
-            cls_id=jnp.asarray(0),
-        )
-        obj.initialize([fake_data], tx=optax.adam(cls.default_lr))
+    #     fake_data = dict(
+    #         image=jnp.zeros([64, 64, 3]),
+    #         gt_locations=jnp.zeros([8, 2]),
+    #         cls_id=jnp.asarray(0),
+    #     )
+    #     obj.initialize([fake_data], tx=optax.adam(cls.default_lr))
 
-        # restore_args = orbax_utils.restore_args_from_target(obj.state, None)
-        obj.state = orbax.checkpoint.PyTreeCheckpointer().restore(
-            cp_path / "train_state",
-            item=obj.state,
-            # restore_args = restore_args,
-            # transforms={},
-        )
+    #     # restore_args = orbax_utils.restore_args_from_target(obj.state, None)
+    #     obj.state = orbax.checkpoint.PyTreeCheckpointer().restore(
+    #         cp_path / "train_state",
+    #         item=obj.state,
+    #         # restore_args = restore_args,
+    #         # transforms={},
+    #     )
 
-        return obj
+    #     return obj
 
     def save(self, save_path) -> None:
         """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.
@@ -339,7 +336,7 @@ class LacssTrainer(Trainer):
         import pickle
 
         _module = self.model.principal
-        _params = self.params["principal"]
+        _params = self.parameters["principal"]
 
         with open(save_path, "wb") as f:
             pickle.dump((_module, _params), f)
