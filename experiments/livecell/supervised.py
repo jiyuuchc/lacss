@@ -193,9 +193,9 @@ def run_training(
 
     if transfer is not None:
         _, params = load_from_pretrained(transfer)
-        orig_params = unfreeze(trainer.params)
+        orig_params = unfreeze(trainer.parameters)
         orig_params["principal"] = params
-        trainer.params = freeze(orig_params)
+        trainer.parameters = freeze(orig_params)
 
         logging.info(f"Transfer model weights from {transfer}")
 

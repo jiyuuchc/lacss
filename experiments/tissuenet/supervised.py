@@ -147,7 +147,7 @@ def run_training(
 
     if transfer is not None:
         _, params = load_from_pretrained(transfer)
-        trainer.params = params
+        trainer.parameters = params
 
         logging.info(f"Transfer model configuration and weights from {transfer}")
 
