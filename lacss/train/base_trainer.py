@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pathlib
 import pickle
 import warnings
 from functools import lru_cache, partial
@@ -12,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
@@ -192,6 +192,26 @@ class Trainer:
 
         return preds
 
+    def _make_checkpoint(self, checkpoint_manager, lastest_step=None, *, train_state):
+        step = checkpoint_manager.latest_step() if lastest_step is None else lastest_step
+        if step is None:
+            step = 0
+        checkpoint_manager.save(
+            step + 1,
+            args=ocp.args.StandardSave(train_state),
+        )
+        return step + 1
+    
+    def _restore_checkpoint(self, checkpoint_manager, step=None, *, train_state):
+        if step is None:
+            step = checkpoint_manager.latest_step()
+        restored = checkpoint_manager.restore(
+            step,
+            ocp.args.StandardRestore(train_state),
+        )
+        
+        return restored, step
+
     def compute_loss_log(self) -> dict:
         return {
             _get_name(loss_log.loss_fn): loss_log.compute()
@@ -267,9 +287,28 @@ class Trainer:
 
             batch_logs = self.compute_loss_log()
 
-            self.parameters = self.parameters.copy(train_state.params)
+            self._params = train_state.params
 
-            yield batch_logs
+            op = yield batch_logs
+            while op is not None:
+                try:
+                    op_str, *arg = op
+                except:
+                    op = yield "Invalid op format."
+                else:
+                    try:
+                        if op_str == "checkpoint":
+                            cp_step = self._make_checkpoint(*arg, train_state=train_state)
+                            op = yield f"checkpoint - {cp_step}"
+                        elif op_str == "restore":
+                            train_state, step = self._restore_checkpoint(*arg, train_state=train_state)
+                            op = yield f"restored - {step}"
+                        elif op_str == "train_state":
+                            op = yield train_state
+                        else:
+                            op = yield f"Unknown operator {op_str}"
+                    except Exception as e:
+                        op = yield repr(e)
 
     def save_model(self, path: PathLike, sub_module: Optional[str] = None) -> None:
         """Save the model in a pickled file. The pickle is a tuple of
@@ -296,43 +335,6 @@ class Trainer:
 
         with open(path, "wb") as f:
             pickle.dump((module, params), f)
-
-    # def pickle_self(self, path: PathLike) -> None:
-    #     """Make a pickle save of the trainer. This saves the model as well as
-    #     the training states.
-
-    #     Args:
-    #         path: The file path.
-    #     """
-    #     path = pathlib.Path(path)
-    #     path.parent.mkdir(parents=True, exist_ok=True)
-
-    #     with open(path, "wb") as f:
-    #         pickle.dump(self, f)
-
-    # @staticmethod
-    # def restore_from_pickle(path: PathLike):
-    #     """Restore from the a pickled saved.
-
-    #     Args:
-    #         path: The pickle file path.
-
-    #     Returns:
-    #         A new trainer object.
-    #     """
-    #     path = pathlib.Path(path)
-
-    #     try:
-    #         _bytes = path.read_bytes()
-    #     except BaseException as e:
-    #         raise OSError(f"Could not load the checkpoint. Got exception: {e}")
-
-    #     trainer = pickle.loads(_bytes)
-
-    #     if not isinstance(trainer, Trainer):
-    #         raise TypeError("The saved obj is not a Trainer checkpoint")
-
-    #     return trainer
 
     def test(
         self,
@@ -403,18 +405,3 @@ class Trainer:
             self._params = freeze(new_params)
         else:
             self._params = None
-
-    # @property
-    # def optimizer(self) -> Optimizer:
-    #     return self._optimizer
-
-    # @optimizer.setter
-    # def optimizer(self, tx: Optimizer) -> None:
-    #     self._optimizer = tx
-
-    # if self._initialized:
-    #     self.state = TrainState.create(
-    #         apply_fn=self.model.apply,
-    #         params=self.params,
-    #         tx=tx,
-    #     )

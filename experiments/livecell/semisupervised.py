@@ -161,13 +161,9 @@ def run_training(
 
     cp_mngr = orbax.checkpoint.CheckpointManager(
         logpath,
-        trainer.get_checkpointer(),
     )
 
-    if len(cp_mngr.all_steps()) > 0:
-        trainer.restore_from_checkpoint(cp_mngr)
-
-    elif transfer is not None:
+    if transfer is not None:
         _, transfer_params = load_from_pretrained(transfer)
         params = unfreeze(trainer.params)
         params["principal"] = transfer_params

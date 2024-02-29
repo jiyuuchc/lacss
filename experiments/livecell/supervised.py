@@ -23,7 +23,8 @@ from data import augment, get_cell_type_and_scaling, remove_redundant
 from flax.core.frozen_dict import freeze, unfreeze
 from tqdm import tqdm
 
-from lacss.data import dataset_from_coco_annotations, random_crop_or_pad, resize
+from lacss.data import (dataset_from_coco_annotations, random_crop_or_pad,
+                        resize)
 from lacss.train import LacssTrainer, TFDatasetAdapter, VMapped
 from lacss.typing import *
 from lacss.utils import load_from_pretrained
@@ -188,13 +189,9 @@ def run_training(
 
     cp_mngr = orbax.checkpoint.CheckpointManager(
         logpath,
-        trainer.get_checkpointer(),
     )
 
-    if len(cp_mngr.all_steps()) > 0:
-        trainer.restore_from_checkpoint(cp_mngr)
-
-    elif transfer is not None:
+    if transfer is not None:
         _, params = load_from_pretrained(transfer)
         orig_params = unfreeze(trainer.params)
         orig_params["principal"] = params
