@@ -18,12 +18,14 @@ _AUTH_HEADER_KEY = "authorization"
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
+
 def process_input(msg):
     image = msg.image
     np_img = np.frombuffer(image.data, dtype=">f4").astype("float32")
     np_img = np_img.reshape(image.height, image.width, image.channel)
 
     return np_img, msg.settings
+
 
 def process_result(polygons, scores):
     msg = lacss_pb2.PolygonResult()
@@ -38,7 +40,8 @@ def process_result(polygons, scores):
                 polygon_msg.points.append(point)
             msg.polygons.append(polygon_msg)
 
-    return msg    
+    return msg
+
 
 class TokenValidationInterceptor(grpc.ServerInterceptor):
     def __init__(self, token):
@@ -59,6 +62,7 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
         else:
             return self._abort_handler
 
+
 class LacssServicer(lacss_pb2_grpc.LacssServicer):
     def __init__(self, model):
         self.model = model
@@ -74,7 +78,7 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
         logging.debug(f"making prediction")
 
         preds = self.model.predict(
-            img, 
+            img,
             min_area=settings.min_cell_area,
             remove_out_of_bound=settings.remove_out_of_bound,
             scaling=settings.scaling,
@@ -95,21 +99,24 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
 
         return result
 
+
 def get_predictor(modelpath):
     model = Predictor(modelpath)
 
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
-    model.detector.test_max_output = 512 # FIXME good default?
+    model.detector.test_max_output = 512  # FIXME good default?
     model.detector.test_min_score = 0.4
 
     return model
+
 
 @app.command()
 def main(
     modelpath: Path,
     port: int = 50051,
     workers: int = 10,
+    ip: str = "0.0.0.0",
     local: bool = False,
     token: bool = False,
     debug: bool = False,
@@ -120,8 +127,10 @@ def main(
 
     logging.info(f"lacss_server: default backend is {jax.default_backend()}")
 
-    if (jax.default_backend() == "cpu"):
-        logging.warn(f"lacss_server: WARNING: No GPU configuration. This might be very slow ...")
+    if jax.default_backend() == "cpu":
+        logging.warn(
+            f"lacss_server: WARNING: No GPU configuration. This might be very slow ..."
+        )
 
     if token:
         import secrets
@@ -129,7 +138,7 @@ def main(
         token = secrets.token_urlsafe()
 
         server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=workers), 
+            futures.ThreadPoolExecutor(max_workers=workers),
             interceptors=(TokenValidationInterceptor(token),),
         )
 
@@ -144,12 +153,13 @@ def main(
     if local:
         server.add_secure_port(f"localhost:{port}", grpc.local_server_credentials())
     else:
-        server.add_insecure_port(f"localhost:{port}")
+        server.add_insecure_port(f"{ip}:{port}")
 
     logging.info(f"lacss_server: listening on port {port}")
 
     server.start()
     server.wait_for_termination()
+
 
 if __name__ == "__main__":
     app()
