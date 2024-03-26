@@ -12,8 +12,13 @@ import orbax.checkpoint as ocp
 from tqdm import tqdm
 
 import lacss.metrics
-from lacss.losses import (aux_size_loss, collaborator_border_loss,
-                          collaborator_segm_loss, lpn_loss, segmentation_loss)
+from lacss.losses import (
+    aux_size_loss,
+    collaborator_border_loss,
+    collaborator_segm_loss,
+    lpn_loss,
+    segmentation_loss,
+)
 
 from ..modules import Lacss, LacssCollaborator
 from ..typing import Array, Optimizer
@@ -37,7 +42,7 @@ class _CKSModel(nn.Module):
         return outputs
 
 
-class LacssTrainer(Trainer):
+class LacssTrainer:
     """Main trainer class for Lacss"""
 
     default_lr: float = 0.001
@@ -71,97 +76,78 @@ class LacssTrainer(Trainer):
         else:
             collaborator = LacssCollaborator(**collaborator_config)
 
-        super().__init__(
-            model=_CKSModel(
-                principal=principal,
-                collaborator=collaborator,
-            ),
-            optimizer=optimizer,
-            seed=seed,
-            strategy=strategy,
+        self.model = _CKSModel(
+            principal=principal,
+            collaborator=collaborator,
         )
 
-        if self.optimizer is None:
-            self.optimizer = optax.adamw(LacssTrainer.default_lr)
+        self.optimizer = optimizer or optax.adamw(LacssTrainer.default_lr)
+        self.seed = seed
+        self.strategy = strategy
 
-        # self._cp_step = 0
+    def _train_to_next_interval(self, n_steps, trainer, train_iter, cpm, val_dataset):
+        for _ in tqdm(range(n_steps)):
+            next(train_iter)
 
-    def _train_to_next_interval(
-        self, train_iter, checkpoint_interval, checkpoint_dir, val_dataset
-    ):
-        cur_step = self.state.step
-        next_cp_step = (
-            (cur_step + checkpoint_interval)
-            // checkpoint_interval
-            * checkpoint_interval
-        )
+        print("Losses: " + repr(train_iter.loss_logs))
 
-        for _ in tqdm(range(cur_step, next_cp_step)):
-            logs = next(train_iter)
-
-        print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
-
-        if checkpoint_dir is not None:
-            cps = [int(p.name.split("-")[-1]) for p in checkpoint_dir.glob("chkpt-*")]
-            cp_cnt = max(cps) + 1
-            self.checkpoint(checkpoint_dir / f"chkpt-{cp_cnt}")
-
-        if val_dataset is not None:
-            val_metrics = [
-                lacss.metrics.LoiAP([5, 2, 1]),
-                lacss.metrics.BoxAP([0.5, 0.75]),
-            ]
-
-            var_logs = self.test_and_compute(val_dataset, metrics=val_metrics)
-            for k, v in var_logs.items():
-                print(f"{k}: {v}")
-
-    def _validate(self, val_dataset):
-        if val_dataset is not None:
-            val_metrics = [
-                lacss.metrics.LoiAP([5, 2, 1]),
-                lacss.metrics.BoxAP([0.5, 0.75]),
-            ]
-
-            var_logs = self.test_and_compute(
-                val_dataset, metrics=val_metrics, strategy=JIT
+        if cpm is not None:
+            cpm.save(
+                cpm.latest_step() + 1,
+                args=ocp.args.StandardSave(train_iter),
             )
+
+        if val_dataset is not None:
+            val_metrics = [
+                lacss.metrics.LoiAP([5, 2, 1]),
+                lacss.metrics.BoxAP([0.5, 0.75]),
+            ]
+
+            var_logs = trainer.compute_metrics(
+                val_dataset,
+                val_metrics,
+                dict(params=train_iter.parameters),
+            )
+
             for k, v in var_logs.items():
                 print(f"{k}: {v}")
 
-    def _make_checkpoint(self, train_iter, checkpoint_manager):
-        if checkpoint_manager is not None:
-            print(train_iter.send(("checkpoint", checkpoint_manager)))
+        train_iter.reset_loss_logs()
 
-    def _reset(
-        self,
-        cur_step,
-        warmup_steps: int = 0,
-        sigma: float = 20.0,
-        pi: float = 2.0,
-    ) -> None:
-        if cur_step >= warmup_steps:
-            col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
-            # col_seg_loss.name = "collaborator_segm_loss"
-            self.losses = [
-                lpn_loss,
-                segmentation_loss,
-                col_seg_loss,
-                collaborator_border_loss,
-                aux_size_loss,
-            ]
-        else:
-            pre_seg_loss = partial(segmentation_loss, pretraining=True)
-            pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
-            self.losses = [
-                lpn_loss,
-                pre_seg_loss,
-                pre_col_seg_loss,
-                collaborator_border_loss,
-                aux_size_loss,
-            ]
+    def _get_warmup_trainer(self, sigma, pi):
+        pre_seg_loss = partial(segmentation_loss, pretraining=True)
+        pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
+        losses = [
+            lpn_loss,
+            pre_seg_loss,
+            pre_col_seg_loss,
+            collaborator_border_loss,
+            aux_size_loss,
+        ]
+        return Trainer(
+            model=self.model,
+            loss=losses,
+            optimizer=self.optimizer,
+            seed=self.seed,
+            strategy=self.strategy,
+        )
 
-        self.reset()
+    def _get_trainer(self, sigma, pi):
+        col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
+        losses = [
+            lpn_loss,
+            segmentation_loss,
+            col_seg_loss,
+            collaborator_border_loss,
+            aux_size_loss,
+        ]
+        return Trainer(
+            model=self.model,
+            loss=losses,
+            optimizer=self.optimizer,
+            seed=self.seed,
+            strategy=self.strategy,
+        )
 
     def do_training(
         self,
@@ -213,6 +199,37 @@ class LacssTrainer(Trainer):
         train_iter = self.train(dataset, rng_cols=["droppath"], training=True)
         cur_step = 0
 
+        if cur_step < warmup_steps:
+            trainer = self._get_warmup_trainer(sigma, pi)
+            train_it = trainer.train(dataset, rng_cols=["droppath"], training=True)
+
+            while cur_step < warmup_steps:
+                next_cp_step = (
+                    (cur_step + validation_interval)
+                    // validation_interval
+                    * validation_interval
+                )
+
+                print(f"Current step {cur_step} going to {next_cp_step}")
+
+                self._train_to_next_interval(
+                    next_cp_step - cur_step,
+                    trainer,
+                    train_it,
+                    checkpoint_manager,
+                    val_dataset,
+                )
+
+                cur_step = next_cp_step
+
+        trainer = self._get_trainer(sigma, pi)
+        train_it = trainer.train(
+            dataset,
+            rng_cols=["droppath"],
+            init_vars=dict(params=train_it.parameters),
+            training=True,
+        )
+
         while cur_step < n_steps:
             next_cp_step = (
                 (cur_step + validation_interval)
@@ -220,25 +237,19 @@ class LacssTrainer(Trainer):
                 * validation_interval
             )
 
-            self._reset(
-                cur_step,
-                warmup_steps=warmup_steps,
-                sigma=sigma,
-                pi=pi,
-            )
-
             print(f"Current step {cur_step} going to {next_cp_step}")
-            for _ in tqdm(range(cur_step, next_cp_step)):
-                logs = next(train_iter)
+
+            self._train_to_next_interval(
+                next_cp_step - cur_step,
+                trainer,
+                train_it,
+                checkpoint_manager,
+                val_dataset,
+            )
 
             cur_step = next_cp_step
 
-            print(", ".join([f"{k}:{v:.4f}" for k, v in logs.items()]))
-            
-            self._make_checkpoint(train_iter, checkpoint_manager)
-            
-            self._validate(val_dataset)
-
+        self.parameters = train_it.parameters
 
     def save(self, save_path) -> None:
         """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.

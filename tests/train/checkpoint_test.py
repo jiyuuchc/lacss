@@ -37,30 +37,33 @@ def test_checkpoint(tmp_path):
     g = gen(X=_X, Y=_Y)
 
     train_it = trainer.train(g)
-    cpm = ocp.CheckpointManager(tmp_path)
+    for _ in range(8):
+        next(train_it)
 
-    for _ in range(16):
-        _ = next(train_it)
+    checkpointer = ocp.StandardCheckpointer()
+    cp_path = tmp_path.absolute()
 
-    result = train_it.send(("checkpoint", cpm))
+    checkpointer.save(cp_path / "test_cp", train_it)
 
-    assert result == "checkpoint - 1"
+    prev_loss = train_it.loss_logs[0].compute()
 
-    train_state = train_it.send(("train_state",))
+    for _ in range(8):
+        next(train_it)
+    new_loss = train_it.loss_logs[0].compute()
+    assert new_loss < prev_loss
 
-    assert train_state is not None
-    assert type(train_state) is TrainState
-    
-    restored = cpm.restore(
-        cpm.latest_step(),
-        args=ocp.args.StandardRestore(train_state),
+    restored = checkpointer.restore(
+        cp_path / "test_cp",
+        train_it,
     )
 
     assert restored is not None
-    assert type(restored) is TrainState
+    assert type(restored) is type(train_it)
 
-    assert restored is not train_state
+    restored_loss = restored.loss_logs[0].compute()
 
-    tree_is_same = jax.tree_util.tree_map(lambda x, y: jnp.allclose(x,y), train_state, restored)
+    assert restored_loss == prev_loss
 
-    assert jax.tree_util.tree_reduce(lambda x, y: x and y, tree_is_same, True)
+    # tree_is_same = jax.tree_util.tree_map(lambda x, y: jnp.allclose(x,y), train_state, restored)
+
+    # assert jax.tree_util.tree_reduce(lambda x, y: x and y, tree_is_same, True)

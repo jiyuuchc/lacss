@@ -81,7 +81,7 @@ def sub_pixel_samples(
         img: Array of shape [D1,D2,..,Dk, ...]
         locs: Array of shape [d1,d2,..,dn, k]
         out_of_bound_value: optional float constant, defualt 0.
-        edge_indexing: if True, the index for the first value in img is 0.5, otherwise 0. Default is False
+        edge_indexing: if True, the index for the top/left pixel is 0.5, otherwise 0. Default is False
 
     Returns:
         values: [d1,d2,..,dn, ...], float
@@ -107,7 +107,10 @@ def sub_pixel_samples(
 
 
 def sub_pixel_crop_and_resize(
-    img: ArrayLike, bbox: ArrayLike, output_shape: Shape, out_of_bound_value: float = 0
+    img: ArrayLike,
+    bbox: ArrayLike,
+    output_shape: tuple[int],
+    out_of_bound_value: float = 0,
 ) -> Array:
     """Retrieve image values of a bbox. Resize output to output_shape. Used for ROI-Align.
 

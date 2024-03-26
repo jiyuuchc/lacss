@@ -26,11 +26,9 @@ def test_vmap_strategy():
     def _run():
         g = gen(X=_X, Y=_Y)
 
-        trainer.initialize(g)
-
-        for log in trainer.train(g):
+        for _ in (it := trainer.train(g)):
             pass
-        return log["mse"]
+        return it.loss["mse"]
 
     trainer = lacss.train.Trainer(
         model=nn.Dense(4),

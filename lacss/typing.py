@@ -16,9 +16,12 @@ Optimizer = optax.GradientTransformation
 PathLike = Union[str, Path]
 
 
-class LossFunc(Protocol):
+class LossFunc_(Protocol):
     def __call__(self, batch: Any, prediction: Any) -> float:
         ...
+
+
+LossFunc = LossFunc_ | str
 
 
 class Metric(Protocol):

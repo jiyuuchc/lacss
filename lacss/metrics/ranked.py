@@ -51,8 +51,8 @@ def _unique_location_matching(similarity_matrix, threshold):
 
 def np_compute_ap(similarity_matrix, thresholds):
     # avoid edge cases
-    _, k = similarity_matrix.shape
-    if k == 0:
+    n, k = similarity_matrix.shape
+    if k == 0 or n == 0:
         return np.zeros([len(thresholds)], np.float32)
 
     apmks = []
@@ -84,7 +84,10 @@ class AP:
         self.cell_counts += sm.shape[1]
         self.scores.append(scores)
         for th, indicators in zip(self.thresholds, self.indicator_list):
-            _, ind = _unique_location_matching(sm, th)
+            if sm.shape[1] > 0:
+                _, ind = _unique_location_matching(sm, th)
+            else:
+                ind = np.zeros(sm.shape[0], dtype=np.int32)
             indicators.append(ind)
 
         self._result = None

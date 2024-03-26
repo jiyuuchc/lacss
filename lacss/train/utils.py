@@ -62,7 +62,9 @@ def _lower_snake_case(s: str) -> str:
 
 
 def _get_name(obj) -> str:
-    if hasattr(obj, "name") and obj.name:
+    if isinstance(obj, str):
+        return obj.split("/")[-1]
+    elif hasattr(obj, "name") and obj.name:
         return obj.name
     elif hasattr(obj, "func") and obj.func.__name__:
         return _lower_snake_case(obj.func.__name__)
@@ -117,27 +119,21 @@ try:
         def __init__(
             self,
             x: DataLoader,
-            steps: int = -1,
         ):
-            self.steps = steps
             self._dataset = x
-            self.current_step = 0
 
         def get_dataset(self):
             def parse_dataloader_gen():
-                self.current_step = 0
                 for batch in iter(self._dataset):
-                    self.current_step += 1
                     batch = jax.tree_util.tree_map(
                         lambda x: x.cpu().numpy(), list_to_tuple(batch)
                     )
                     yield batch
 
-            return parse_dataloader_gen
+            return parse_dataloader_gen()
 
         def __iter__(self):
-            g = self.get_dataset()
-            return g()
+            return self.get_dataset()
 
 except ImportError:
     TorchDataLoaderAdapter = None
@@ -155,20 +151,11 @@ try:
 
         """
 
-        def __init__(self, ds: Dataset, steps=-1):
+        def __init__(self, ds: Dataset):
             self._dataset = ds
 
-        def get_dataset(self):
-            def parse_tf_data_gen():
-                for batch in iter(self._dataset):
-                    batch = jax.tree_util.tree_map(lambda x: x.numpy(), batch)
-                    yield batch
-
-            return parse_tf_data_gen
-
         def __iter__(self):
-            g = self.get_dataset()
-            return g()
+            return self._dataset.as_numpy_iterator()
 
 except ImportError:
     TFDatasetAdapter = None
