@@ -6,11 +6,9 @@ from functools import partial
 import jax
 from flax.training.train_state import TrainState
 
-from lacss.utils import unpack_x_y_sample_weight
-
 from . import base_trainer
 from .loss import LossLog
-from .utils import Inputs
+from .utils import Inputs, unpack_prediction_and_state, unpack_x_y_sample_weight
 
 
 class Eager:
@@ -26,16 +24,18 @@ class Eager:
         variables = train_obj.variables
         variables["params"] = params
 
-        preds = train_obj.train_state.apply_fn(
+        model_out = train_obj.train_state.apply_fn(
             variables,
             *inputs_obj.args,
             **inputs_obj.kwargs,
             rngs=rngs,
         )
 
+        prediction, _ = unpack_prediction_and_state(model_out, train_obj.has_aux)
+
         args = dict(
             batch=batch,
-            prediction=preds,
+            prediction=prediction,
         )
 
         losses, loss_logs = zip(
@@ -43,7 +43,7 @@ class Eager:
         )
         total_loss = sum(losses)
 
-        return total_loss, (loss_logs, preds)
+        return total_loss, (loss_logs, model_out)
 
     @classmethod
     def init_fn(cls, key, model, inputs):

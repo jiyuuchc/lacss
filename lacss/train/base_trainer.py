@@ -16,12 +16,10 @@ from flax import struct
 from flax.core.scope import CollectionFilter
 from flax.training.train_state import TrainState
 
-from lacss.utils import unpack_x_y_sample_weight
-
 from ..typing import *
 from .loss import LossLog
 from .strategy import JIT
-from .utils import _get_name
+from .utils import _get_name, unpack_prediction_and_state, unpack_x_y_sample_weight
 
 WeightedLossFunc = LossFunc | tuple[LossFunc, float | np.number]
 LOSSES = Union[LossFunc, Sequence[LossFunc]]
@@ -78,6 +76,10 @@ class TrainIterator(Iterator):
     def loss(self):
         return self._compute_loss_log()
 
+    @property
+    def has_aux(self):
+        return self.ctx.mutable or self.ctx.capture_intermediates
+
     def _compute_loss_log(self) -> dict:
         return {
             _get_name(loss_log.loss_fn): loss_log.compute()
@@ -104,12 +106,7 @@ class TrainIterator(Iterator):
 
         train_state, loss_logs, preds = train_fn(self, batch)
 
-        # FIXME this is not safe, as the model could be returning a tuple.
-        try:
-            preds, variables = preds
-            variables.pop("params")
-        except:
-            variables = {}
+        preds, variables = unpack_prediction_and_state(preds, self.has_aux)
 
         # use the object hack until we upgrade flax
         object.__setattr__(self, "train_state", train_state)
@@ -179,6 +176,8 @@ class Trainer:
     model: nn.module
     losses: LOSSES
     optimizer: Optimizer
+    mutable: CollectionFilter = False
+    capture_intermediates: Union[bool, Callable[["Module", str], bool]] = False
     seed: int | RNG = 42
     strategy: type = JIT
 
@@ -195,8 +194,6 @@ class Trainer:
         rng_cols: Sequence[str] = [],
         init_vars: dict | None = None,
         frozen: dict | None = None,
-        mutable: CollectionFilter = False,
-        capture_intermediates: Union[bool, Callable[["Module", str], bool]] = False,
         **kwargs,
     ) -> TrainIterator:
         """Create the training iterator
@@ -240,20 +237,21 @@ class Trainer:
             init_vars = self._initialize(init_rngs, dataset)
 
         if frozen is None:
+            tx = self.optimizer
+        else:
             frozen = jax.tree_util.tree_map(lambda _: False, init_vars["params"])
-
-        optimizers = {True: optax.set_to_zero(), False: self.optimizer}
-        tx = optax.multi_transform(
-            optimizers,
-            frozen,
-        )
+            optimizers = {True: optax.set_to_zero(), False: self.optimizer}
+            tx = optax.multi_transform(
+                optimizers,
+                frozen,
+            )
 
         params = init_vars.pop("params")
         train_state = TrainState.create(
             apply_fn=_cached_partial(
                 self.model.apply,
-                mutable=mutable,
-                capture_intermediates=capture_intermediates,
+                mutable=self.mutable,
+                capture_intermediates=self.capture_intermediates,
                 **kwargs,
             ),
             params=params,

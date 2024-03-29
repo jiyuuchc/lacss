@@ -4,6 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import freeze, unfreeze
 
+from lacss.train.utils import unpack_x_y_sample_weight
+
 
 def _to_str(p):
     return "".join(p.astype(int).reshape(-1).astype(str).tolist())
@@ -160,19 +162,6 @@ def pack_x_y_sample_weight(x, y=None, sample_weight=None):
     else:
         return (x, y, sample_weight)
 
-
-def unpack_x_y_sample_weight(data):
-    """Unpacks user-provided data tuple."""
-    if not isinstance(data, tuple):
-        return (data, None, None)
-    elif len(data) == 1:
-        return (data[0], None, None)
-    elif len(data) == 2:
-        return (data[0], data[1], None)
-    elif len(data) == 3:
-        return (data[0], data[1], data[2])
-
-    raise ValueError("Data not understood.")
 
 def make_label_continuous(label, dtype=None):
     """ Relabel a label image so that the label values are continuous. It is assumed that the

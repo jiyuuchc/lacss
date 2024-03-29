@@ -82,6 +82,32 @@ def list_to_tuple(maybe_list):
     return maybe_list
 
 
+def unpack_x_y_sample_weight(data):
+    """Unpacks user-provided data tuple."""
+    if not isinstance(data, tuple):
+        return (data, None, None)
+    elif len(data) == 1:
+        return (data[0], None, None)
+    elif len(data) == 2:
+        return (data[0], data[1], None)
+    elif len(data) == 3:
+        return (data[0], data[1], data[2])
+
+    raise ValueError("Data not understood.")
+
+
+def unpack_prediction_and_state(pred, mutable=None):
+    if mutable is not None:
+        if mutable:
+            return pred[0], pred[1]
+        else:
+            return pred, {}
+    if isinstance(pred, tuple):
+        return pred[0], pred[1]
+    else:
+        return pred[0], {}
+
+
 class Inputs(struct.PyTreeNode):
     args: Tuple[Any, ...] = ()
     kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -159,3 +185,11 @@ try:
 
 except ImportError:
     TFDatasetAdapter = None
+
+
+class GeneratorAdapter:
+    def __init__(self, g):
+        self._generator = g
+
+    def __iter__(self):
+        return self._generator()
