@@ -3,15 +3,17 @@ from __future__ import annotations
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Iterable, Optional, Union, Sequence
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 from tqdm import tqdm
 
 import lacss.metrics
+
 from lacss.losses import (
     aux_size_loss,
     collaborator_border_loss,
@@ -20,11 +22,61 @@ from lacss.losses import (
     segmentation_loss,
 )
 
-from ..modules import Lacss, LacssCollaborator
+from ..modules import Lacss, UNet
 from ..typing import Array, Optimizer
 from .base_trainer import Trainer
 from .strategy import JIT
+from ..typing import *
 
+
+class LacssCollaborator(nn.Module):
+    """Collaborator module for semi-supervised Lacss training
+
+    Attributes:
+        conv_spec: conv-net specificaiton for cell border predicition
+        unet_spec: specification for unet, used to predict cell foreground
+        patch_size: patch size for the unet
+        n_cls: number of classes (cell types) of input images
+    """
+
+    conv_spec: Sequence[int] = (32, 32)
+    unet_spec: Sequence[int] = (16, 32, 64)
+    patch_size: int = 1
+    n_cls: int = 1
+
+    @nn.compact
+    def __call__(
+        self, image: ArrayLike, cls_id: Optional[ArrayLike] = None
+    ) -> DataDict:
+        assert cls_id is not None or self.n_cls == 1
+        c = cls_id.astype(int).squeeze() if cls_id is not None else 0
+
+        net = UNet(self.unet_spec, self.patch_size)
+        _, unet_out = net(image)
+
+        y = unet_out[str(net.start_level)]
+
+        fg = nn.Conv(self.n_cls, (3, 3))(y)
+        fg = fg[..., c]
+
+        if fg.shape != image.shape[:-1]:
+            fg = jax.image.resize(fg, image.shape[:-1], "linear")
+
+        y = image
+        for n_features in self.conv_spec:
+            y = nn.Conv(n_features, (3, 3), use_bias=False)(y)
+            y = nn.GroupNorm(num_groups=None, group_size=1, use_scale=False)(
+                y[None, ...]
+            )[0]
+            y = jax.nn.relu(y)
+
+        y = nn.Conv(self.n_cls, (3, 3))(y)
+        cb = y[..., c]
+
+        return dict(
+            fg_pred=fg,
+            edge_pred=cb,
+        )
 
 class _CKSModel(nn.Module):
     principal: Lacss
@@ -126,7 +178,7 @@ class LacssTrainer:
         ]
         return Trainer(
             model=self.model,
-            loss=losses,
+            losses=losses,
             optimizer=self.optimizer,
             seed=self.seed,
             strategy=self.strategy,
@@ -143,11 +195,21 @@ class LacssTrainer:
         ]
         return Trainer(
             model=self.model,
-            loss=losses,
+            losses=losses,
             optimizer=self.optimizer,
             seed=self.seed,
             strategy=self.strategy,
         )
+
+    def get_init_params(self, dataset):
+        trainer = self._get_trainer(20.0, 2.0)
+        train_it = trainer.train(
+            dataset, 
+            rng_cols=["droppath"],
+            training=True,
+        )
+        return train_it.parameters
+
 
     def do_training(
         self,
@@ -160,6 +222,7 @@ class LacssTrainer:
         warmup_steps: int = 0,
         sigma: float = 20.0,
         pi: float = 2.0,
+        init_vars = None,
     ) -> None:
         """Runing training.
 
@@ -196,12 +259,16 @@ class LacssTrainer:
             sigma: Only for point-supervised training. Expected cell size
             pi: Only for point-supervised training. Amplitude of the prior term.
         """
-        train_iter = self.train(dataset, rng_cols=["droppath"], training=True)
         cur_step = 0
 
         if cur_step < warmup_steps:
             trainer = self._get_warmup_trainer(sigma, pi)
-            train_it = trainer.train(dataset, rng_cols=["droppath"], training=True)
+            train_it = trainer.train(
+                dataset, 
+                rng_cols=["droppath"], 
+                init_vars=init_vars,
+                training=True,
+            )
 
             while cur_step < warmup_steps:
                 next_cp_step = (
@@ -222,11 +289,15 @@ class LacssTrainer:
 
                 cur_step = next_cp_step
 
+                self.parameters = train_it.parameters
+
+            init_vars = dict(params=train_it.parameters)
+
         trainer = self._get_trainer(sigma, pi)
         train_it = trainer.train(
             dataset,
             rng_cols=["droppath"],
-            init_vars=dict(params=train_it.parameters),
+            init_vars=init_vars,
             training=True,
         )
 
@@ -249,7 +320,7 @@ class LacssTrainer:
 
             cur_step = next_cp_step
 
-        self.parameters = train_it.parameters
+            self.parameters = train_it.parameters
 
     def save(self, save_path) -> None:
         """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.

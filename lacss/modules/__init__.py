@@ -1,4 +1,3 @@
-from .auxiliary import LacssCollaborator
 from .convnext import ConvNeXt
 from .detector import Detector
 from .lacss import Lacss
