@@ -19,7 +19,12 @@ from flax.training.train_state import TrainState
 from ..typing import *
 from .loss import LossLog
 from .strategy import JIT
-from .utils import _get_name, unpack_prediction_and_state, unpack_x_y_sample_weight
+from .utils import (
+    Peekable,
+    _get_name,
+    unpack_prediction_and_state,
+    unpack_x_y_sample_weight,
+)
 
 WeightedLossFunc = LossFunc | tuple[LossFunc, float | np.number]
 LOSSES = Union[LossFunc, Sequence[LossFunc]]
@@ -93,11 +98,8 @@ class TrainIterator(Iterator):
             loss_weights: Optional weights of individual loss functions. If not None, the
                 total loss is weighted sum.
         """
-        object.__setattr__(
-            self,
-            "loss_logs",
-            tuple(loss.reset() for loss in self.loss_logs),
-        )
+        for loss in self.loss_logs:
+            loss.reset()
 
     def __next__(self):
         train_fn = self.ctx.strategy.train_step
@@ -173,7 +175,7 @@ class Trainer:
 
     """
 
-    model: nn.module
+    model: nn.Module
     losses: LOSSES
     optimizer: Optimizer
     mutable: CollectionFilter = False
@@ -181,8 +183,8 @@ class Trainer:
     seed: int | RNG = 42
     strategy: type = JIT
 
-    def _initialize(self, rng: RNG, data: Iterable) -> dict:
-        peek = next(iter(data))
+    def _initialize(self, rng: RNG, data: Iterator) -> dict:
+        peek = data.peek()
         inputs, _, _ = unpack_x_y_sample_weight(peek)
 
         return self.strategy.init_fn(rng, self.model, inputs)
@@ -217,6 +219,8 @@ class Trainer:
         config = dataclasses.replace(self, strategy=strategy or self.strategy)
         assert config.strategy is not None
 
+        dataset_iter = Peekable(iter(dataset))
+
         seed = (
             self.seed
             if isinstance(self.seed, jnp.ndarray)
@@ -234,7 +238,7 @@ class Trainer:
             keys = jax.random.split(seed, len(rng_cols) + 1)
             init_rngs = dict(zip(rng_cols + ["params"], keys))
 
-            init_vars = self._initialize(init_rngs, dataset)
+            init_vars = self._initialize(init_rngs, dataset_iter)
 
         if frozen is None:
             tx = self.optimizer
@@ -267,7 +271,7 @@ class Trainer:
 
         return TrainIterator(
             ctx=config,
-            data=iter(dataset),
+            data=dataset_iter,
             train_state=train_state,
             rngs=rngs,
             loss_logs=loss_logs,

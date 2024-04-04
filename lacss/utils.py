@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import freeze, unfreeze
 
-from lacss.train.utils import unpack_x_y_sample_weight
+from lacss.train.utils import pack_x_y_sample_weight, unpack_x_y_sample_weight
 
 
 def _to_str(p):
@@ -151,16 +151,6 @@ def load_from_pretrained(pretrained: str):
         params = params["params"]
 
     return module, freeze(params)
-
-
-def pack_x_y_sample_weight(x, y=None, sample_weight=None):
-    """Packs user-provided data into a tuple."""
-    if y is None:
-        return (x,)
-    elif sample_weight is None:
-        return (x, y)
-    else:
-        return (x, y, sample_weight)
 
 
 def make_label_continuous(label, dtype=None):

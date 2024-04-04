@@ -1,5 +1,6 @@
 import dataclasses
 import re
+from collections import deque
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
 import jax
@@ -80,6 +81,16 @@ def list_to_tuple(maybe_list):
     if isinstance(maybe_list, list):
         return tuple(maybe_list)
     return maybe_list
+
+
+def pack_x_y_sample_weight(x, y=None, sample_weight=None):
+    """Packs user-provided data into a tuple."""
+    if y is None:
+        return (x,)
+    elif sample_weight is None:
+        return (x, y)
+    else:
+        return (x, y, sample_weight)
 
 
 def unpack_x_y_sample_weight(data):
@@ -193,3 +204,22 @@ class GeneratorAdapter:
 
     def __iter__(self):
         return self._generator()
+
+
+class Peekable:
+    def __init__(self, iterator):
+        self.iterator = iterator
+        self.peeked = deque()
+
+    def __iter__(self):
+        return self.iterator
+
+    def __next__(self):
+        if self.peeked:
+            return self.peeked.popleft()
+        return next(self.iterator)
+
+    def peek(self, ahead=0):
+        while len(self.peeked) <= ahead:
+            self.peeked.append(next(self.iterator))
+        return self.peeked[ahead]
