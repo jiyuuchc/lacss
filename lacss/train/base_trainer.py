@@ -292,9 +292,8 @@ class Trainer:
             dataset: An iterator or iterable to supply the testing data.
                 The iterator should yield a tupple of (inputs, labels).
             metrics: A list of Metric objects. They should have two functions:
-                m.update(preds, **kwargs):
-                    preds is the model output. the remaining kwargs are content of
-                    labels.
+                m.update(batch, prediction):
+                    prediction is the model output, batch is a tuple of (x, y_true)
                 m.compute():
                     which should return the accumulated metric value.
             variables: Model weights etc. typically get from TrainIterator
