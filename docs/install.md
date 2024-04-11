@@ -3,7 +3,7 @@
 # check nvidia driver version >= 450.80.02
 cat /proc/driver/nvidia/version
 
-# check python version is 3.8, 3.9 or 3.10
+# check python version is 3.10 or higher
 python --verison
 
 # install jax and lacss
