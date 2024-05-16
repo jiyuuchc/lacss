@@ -1,13 +1,9 @@
 import logging
-import struct
-import sys
 from concurrent import futures
 from pathlib import Path
-from zipfile import ZipFile
 
 import grpc
 import jax
-import jax.numpy as jnp
 import numpy as np
 import typer
 
