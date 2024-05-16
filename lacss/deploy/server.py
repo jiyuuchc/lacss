@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import typer
 
-import lacss.deploy.lacss_pb2 as LacssMsg
+import lacss.deploy.proto.lacss_pb2 as lacss_pb2
 from lacss.ops import patches_to_label, sorted_non_max_suppression
 
 from .predict import Predictor
@@ -19,7 +19,7 @@ def read_input(st = sys.stdin.buffer):
     msg_size = st.read(4)
     msg_size = struct.unpack(">i", msg_size)[0]
 
-    msg = LacssMsg.Input()
+    msg = lacss_pb2.Input()
     msg.ParseFromString(st.read(msg_size))
 
     image = msg.image
@@ -27,8 +27,8 @@ def read_input(st = sys.stdin.buffer):
     np_img = np_img.reshape(image.height, image.width, image.channel)
     # np_img = np_img.transpose(2, 1, 0)
 
-    import imageio.v2 as imageio
-    imageio.imwrite("tmpin.tif", np_img)
+    # import imageio.v2 as imageio
+    # imageio.imwrite("tmpin.tif", np_img)
 
     return np_img, msg.settings
 
@@ -43,7 +43,7 @@ def img_to_msg(msg, img):
 
 def write_result(label, score, st = sys.stdout.buffer):
 
-    msg = LacssMsg.Result()
+    msg = lacss_pb2.Result()
     img_to_msg(msg.score, (score * 1000).astype(np.int16))
     img_to_msg(msg.label, label)
 
@@ -53,7 +53,7 @@ def write_result(label, score, st = sys.stdout.buffer):
     st.write(msg.SerializeToString())
 
 def write_polygon_result(polygons, scores, st = sys.stdout.buffer):
-    msg = LacssMsg.PolygonResult()
+    msg = lacss_pb2.PolygonResult()
     for polygon, score in zip(polygons, scores):
         if len(polygon) > 1:
             polygon_msg = LacssMsg.Polygon()
