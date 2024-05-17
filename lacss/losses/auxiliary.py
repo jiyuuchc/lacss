@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import optax
 
 from ..ops import sorbel_edges
-from ..utils import unpack_x_y_sample_weight
 from .common import binary_focal_factor_loss
+from lacss.train.utils import unpack_x_y_sample_weight
 
 EPS = jnp.finfo("float32").eps
 

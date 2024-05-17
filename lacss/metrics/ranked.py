@@ -10,7 +10,7 @@ import numpy as np
 
 from ..ops import *
 from ..typing import *
-from ..utils import unpack_x_y_sample_weight
+from lacss.train.utils import unpack_x_y_sample_weight
 
 """
 BE CAREFUL making changes here. Very easy to make a mistake and resulting mismatch with

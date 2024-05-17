@@ -7,9 +7,8 @@ import jax.numpy as jnp
 import optax
 
 from ..ops import sub_pixel_samples
-from ..utils import unpack_x_y_sample_weight
 from .common import binary_focal_factor_loss, mean_over_boolean_mask
-
+from lacss.train.utils import unpack_x_y_sample_weight
 
 def supervised_instance_loss(batch, prediction):
     """LACSS instance loss, supervised with segmentation label"""
