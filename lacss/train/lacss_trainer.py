@@ -145,7 +145,7 @@ class LacssTrainer:
 
         if cpm is not None:
             cpm.save(
-                cpm.latest_step() + 1,
+                (cpm.latest_step() or 0) + 1,
                 args=ocp.args.StandardSave(train_iter),
             )
 
@@ -321,6 +321,7 @@ class LacssTrainer:
             cur_step = next_cp_step
 
             self.parameters = train_it.parameters
+
 
     def save(self, save_path) -> None:
         """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.
