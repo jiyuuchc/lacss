@@ -1,24 +1,19 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-import os
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-tf.config.set_visible_devices([], "GPU")
-
 import dataclasses
 import json
 import logging
+
 from pathlib import Path
 from pprint import pprint
 
+import jax
 import numpy as np
 import optax
 import orbax.checkpoint
 import typer
+
 from data import augment, get_cell_type_and_scaling, remove_redundant
 from flax.core.frozen_dict import freeze, unfreeze
 from tqdm import tqdm
@@ -40,6 +35,8 @@ def train_data(
     target_size=[544, 544],
     v1_scaling=False,
 ):
+    import tensorflow as tf
+
     v = 1 if v1_scaling else 2
 
     def _train_parser(inputs):
@@ -97,6 +94,8 @@ def val_data(
     target_size=[544, 544],
     v1_scaling=False,
 ):
+    import tensorflow as tf
+
     v = 1 if v1_scaling else 2
 
     def _val_parser(inputs, target_size=None):
@@ -155,8 +154,6 @@ def run_training(
     n_buckets: int = 4,
     v1_scaling: bool = False,
 ):
-    tf.random.set_seed(seed)
-
     logpath.mkdir(parents=True, exist_ok=True)
 
     logging.info(f"Logging to {logpath.resolve()}")
@@ -183,21 +180,24 @@ def run_training(
         model_cfg,
         seed=seed,
         strategy=VMapped,
+        optimizer=optax.adamw(schedule),
     )
 
-    trainer.initialize(train_gen, optax.adamw(schedule))
+    # trainer.initialize(train_gen, optax.adamw(schedule))
 
     cp_mngr = orbax.checkpoint.CheckpointManager(
-        logpath,
+        logpath.absolute(),
     )
 
     if transfer is not None:
-        _, params = load_from_pretrained(transfer)
-        orig_params = unfreeze(trainer.parameters)
-        orig_params["principal"] = params
-        trainer.parameters = freeze(orig_params)
+        _, transfer_params = load_from_pretrained(transfer)
+        params = trainer.get_init_params(train_gen)
+        params["principal"] = transfer_params
+        init_vars = dict(params = params)
 
         logging.info(f"Transfer model weights from {transfer}")
+    else:
+        init_vars = None
 
     print("Model configuration:")
     pprint(
@@ -211,9 +211,12 @@ def run_training(
         n_steps=n_steps,
         validation_interval=validation_interval,
         checkpoint_manager=cp_mngr,
+        init_vars=init_vars,
     )
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    logging.info(f"jax backend is: {jax.default_backend()}")
+
     app()

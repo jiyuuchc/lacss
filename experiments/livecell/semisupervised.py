@@ -1,13 +1,5 @@
 #!/usr/bin/env python
 
-import os
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
-import tensorflow as tf
-
-tf.config.set_visible_devices([], "GPU")
-
 import dataclasses
 import json
 import logging
@@ -15,6 +7,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Iterator
 
+import jax
 import optax
 import orbax.checkpoint
 import typer
@@ -35,6 +28,8 @@ def train_data(
     target_size=[544, 544],
     v1_scaling=False,
 ) -> Iterator:
+    import tensorflow as tf
+
     def _train_parser(inputs):
         ver = 1 if v1_scaling else 2
         cell_type, default_scale = tf.py_function(
@@ -81,6 +76,8 @@ def train_data(
 
 
 def val_data(datapath: Path, *, v1_scaling: bool = False) -> Iterator:
+    import tensorflow as tf
+
     def _val_parser(inputs):
         del inputs["masks"]
 
@@ -137,8 +134,6 @@ def run_training(
     size_loss: float = 0.01,
     v1_scaling: bool = False,
 ):
-    tf.random.set_seed(seed)
-
     logpath.mkdir(parents=True, exist_ok=True)
 
     logging.info(f"Logging to {logpath}")
@@ -155,21 +150,24 @@ def run_training(
         model_cfg,
         dict(n_cls=8),
         seed=seed,
+        optimizer=optax.adamw(lr),
     )
 
-    trainer.initialize(train_gen, optax.adamw(lr))
+    # trainer.initialize(train_gen, optax.adamw(lr))
 
     cp_mngr = orbax.checkpoint.CheckpointManager(
-        logpath,
+        logpath.absolute(),
     )
 
     if transfer is not None:
         _, transfer_params = load_from_pretrained(transfer)
-        params = unfreeze(trainer.parameters)
+        params = trainer.get_init_params(train_gen)
         params["principal"] = transfer_params
-        trainer.parameters = freeze(params)
+        init_vars = dict(params = params)
 
         logging.info(f"Transfer model configuration and weights from {transfer}")
+    else:
+        init_vars = None
 
     print("Model configuration:")
     pprint(
@@ -186,11 +184,13 @@ def run_training(
         checkpoint_manager=cp_mngr,
         sigma=offset_sigma,
         pi=offset_scale,
+        init_vars=init_vars,
     )
 
 
 if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
+    logging.info(f"jax backend is: {jax.default_backend()}")
 
     app()

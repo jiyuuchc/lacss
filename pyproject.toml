@@ -1,28 +1,32 @@
 [tool.poetry]
 name = "lacss"
 version = "0.0.0"
-description = "Cell segmentation and tracking"
+description = "Tools for cell segmentation"
 authors = ["Ji Yu <jyu@uchc.edu>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10, <3.12"
-flax = "^0.7.2"
+python = "^3.10"
 tqdm = "^4.65.0"
 imageio = "^2.9.0"
 scikit-image = ">=0.19.0"
-typer = ">=0.4.0"
 imagecodecs = "^2023.3.16"
 opencv-python = "^4.8.1.78"
-orbax-checkpoint = "^0.5"
+xtrain = "^0.3.2"
+protoc-wheel-0 = "^24.4"
+typer = "^0.12.3"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.2.2"
 jupyterlab = "^3.6.1"
-jax = {extras = ["cuda11-pip"], version = "^0.4.14"}
-tensorflow = "^2.13.0"
-protoc-wheel-0 = "^24.4"
+pytest = "^7.4.0"
+jax = {extras = ["cuda11_pip"], version = "^0.4, <=0.4.24"}
+nvidia-cudnn-cu11 = "^8.0" # bypass jax packaging error
+orbax-checkpoint = "0.5.3"
+ott-jax = "^0.4.0"
+tensorflow = "^2.16.1"
+ml-collections = "^0.1.1"
+matplotlib = "^3.8.4"
 
 [tool.poetry.group.docs]
 optional = true
@@ -31,10 +35,6 @@ optional = true
 mkdocs-material = "^9.2.3"
 mkdocstrings = {extras = ["python"], version = "^0.22.0"}
 mkdocs-gen-files = "^0.5.0"
-
-
-[tool.poetry.group.grpc.dependencies]
-grpcio-tools = "^1.62.0"
 
 [[tool.poetry.source]]
 name = "jax"
