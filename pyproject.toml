@@ -8,25 +8,21 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
+xtrain = { extras = ["cuda12"], version = "^0.3.3" }
+ml-collections = "^0.1.1"
+tensorflow = "^2.16.1"
+typer = "^0.12.3"
+matplotlib = "^3.8.4"
 tqdm = "^4.65.0"
 imageio = "^2.9.0"
 scikit-image = ">=0.19.0"
 imagecodecs = "^2023.3.16"
 opencv-python = "^4.8.1.78"
-xtrain = "^0.3.2"
-protoc-wheel-0 = "^24.4"
-typer = "^0.12.3"
 
 [tool.poetry.group.dev.dependencies]
 jupyterlab = "^3.6.1"
 pytest = "^7.4.0"
-jax = {extras = ["cuda11_pip"], version = "^0.4, <=0.4.24"}
-nvidia-cudnn-cu11 = "^8.0" # bypass jax packaging error
-orbax-checkpoint = "0.5.3"
-ott-jax = "^0.4.0"
-tensorflow = "^2.16.1"
-ml-collections = "^0.1.1"
-matplotlib = "^3.8.4"
+protoc-wheel-0 = "^24.4"
 
 [tool.poetry.group.docs]
 optional = true
