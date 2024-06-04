@@ -1,17 +1,15 @@
-#### Linux - GPU
+#### Linux
 ```
-# check nvidia driver version >= 450.80.02
+# check nvidia driver version >= 525.60.13
 cat /proc/driver/nvidia/version
 
 # check python version is 3.10 or higher
 python --verison
 
-# install jax and lacss
-pip install --upgrade "jax[cuda11_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 pip install lacss
 ```
 
-#### Windows - GPU
+#### Windows
   - Make sure nividia driver version >= 452.39, following [Nvidia-FAQ](https://www.nvidia.com/en-gb/drivers/drivers-faq/)
   - Make sure you have a python version >= 3.10 (python --version)
   - Install CUDA and cudnn following Nivida's step-by-step instructions [Nvidai-cudnn](https://docs.nvidia.com/deeplearning/cudnn/latest/installation/windows.html)
@@ -21,10 +19,5 @@ pip install lacss
 ```
 pip install <downloaded jaxlib wheel file>
 pip install jax==<jaxlib version> flax==0.7.2
-pip install lacss
-```
-
-#### Linux / Windows - CPU
-```
 pip install lacss
 ```
