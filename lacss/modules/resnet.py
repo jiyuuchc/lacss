@@ -109,13 +109,13 @@ class ResNet(nn.Module):
                 )
             encoder_out.append(x)
 
-        l_min = self.min_feature_level
-        out_channels = self.out_channels
+        # l_min = self.min_feature_level
+        # out_channels = self.out_channels
 
-        decoder_out = FPN(out_channels)(encoder_out[l_min:])
+        # decoder_out = FPN(out_channels)(encoder_out[l_min:])
 
-        keys = [str(k) for k in range(len(encoder_out))]
-        encoder_out = dict(zip(keys, encoder_out))
-        decoder_out = dict(zip(keys[l_min:], decoder_out))
+        # keys = [str(k) for k in range(len(encoder_out))]
+        # encoder_out = dict(zip(keys, encoder_out))
+        # decoder_out = dict(zip(keys[l_min:], decoder_out))
 
-        return encoder_out, decoder_out
+        return encoder_out

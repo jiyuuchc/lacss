@@ -6,8 +6,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from ..typing import DataDict, Params
-from .common import *
+from ..typing import DataDict, Array, ArrayLike
+from .common import DropPath
 
 """ Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
 Original implementation: https://github.com/facebookresearch/ConvNeXt
@@ -87,7 +87,6 @@ class ConvNeXt(nn.Module):
     dims: Sequence[int] = (96, 192, 384, 768)
     drop_path_rate: float = 0.0
     layer_scale_init_value: float = 1e-6
-    out_channels: int = 384
 
     @nn.compact
     def __call__(
@@ -99,9 +98,7 @@ class ConvNeXt(nn.Module):
             training: Whether run the network in training mode (i.e. with stochastic depth)
 
         Returns:
-            A tuple of (encoder_outputs, decoder_outputs). Both are dictionaries mapping
-                feature scale (e.g. "2") to features. If out_channels is -1, the decoder_output
-                is None.
+            A list of feture arrays at different scaling, from higest to lowest resolution.
         """
         dp_rate = 0
         outputs = []
@@ -120,98 +117,24 @@ class ConvNeXt(nn.Module):
 
             outputs.append(x)
 
-        keys = [str(k + 1 if self.patch_size == 2 else k + 2) for k in range(4)]
-        encoder_out = dict(zip(keys, outputs))
+        return outputs
 
-        if self.out_channels > 0:
-            decoder_out = FPN(self.out_channels)(outputs)
-            decoder_out = dict(zip(keys, decoder_out))
-        else:
-            decoder_out = None
+    @classmethod
+    def get_model_tiny(cls, patch_size=4):
+        return cls(patch_size, depths=(3, 3, 9, 3), dims=(96, 192, 384, 768))
 
-        return encoder_out, decoder_out
+    @classmethod
+    def get_model_small(cls, patch_size=4):
+        return cls(patch_size, depths=(3, 3, 27, 3), dims=(96, 192, 384, 768))
 
-    def _load_weight(self, jax_params, url):
-        import torch
-        from flax.core.frozen_dict import freeze, unfreeze
+    @classmethod
+    def get_model_base(cls, patch_size=4):
+        return cls(patch_size, depths=(3, 3, 27, 3), dims=(128, 256, 512, 1024))
 
-        def t(m, new_value):
-            new_value = jnp.array(new_value)
-            assert m.shape == new_value.shape
-            m = new_value
+    @classmethod
+    def get_model_large(cls, patch_size=4):
+        return cls(patch_size, depths=(3, 3, 27, 3), dims=(192, 384, 768, 1536))
 
-        checkpoint = torch.hub.load_state_dict_from_url(url=url, map_location="cpu")
-        params = checkpoint["model"]
-        jax_params = unfreeze(jax_params)
-
-        cnt = 0
-        for i in range(4):
-            for k in range(self.depths[i]):
-                block = jax_params[f"_Block_{cnt}"]
-                t(block["gamma"], params[f"stages.{i}.{k}.gamma"])
-                t(block["Conv_0"]["bias"], params[f"stages.{i}.{k}.dwconv.bias"])
-                t(
-                    block["Conv_0"]["kernel"],
-                    params[f"stages.{i}.{k}.dwconv.weight"].permute(2, 3, 1, 0),
-                )
-                t(block["LayerNorm_0"]["bias"], params[f"stages.{i}.{k}.norm.bias"])
-                t(block["LayerNorm_0"]["scale"], params[f"stages.{i}.{k}.norm.weight"])
-                t(block["Dense_0"]["bias"], params[f"stages.{i}.{k}.pwconv1.bias"])
-                t(
-                    block["Dense_0"]["kernel"],
-                    params[f"stages.{i}.{k}.pwconv1.weight"].transpose(0, 1),
-                )
-                t(block["Dense_1"]["bias"], params[f"stages.{i}.{k}.pwconv2.bias"])
-                t(
-                    block["Dense_1"]["kernel"],
-                    params[f"stages.{i}.{k}.pwconv2.weight"].transpose(0, 1),
-                )
-
-                cnt += 1
-
-        norm = jax_params[f"LayerNorm_0"]
-        t(norm["bias"], params["downsample_layers.0.1.bias"])
-        t(norm["scale"], params["downsample_layers.0.1.weight"])
-
-        conv = jax_params[f"Conv_0"]
-        t(conv["bias"], params["downsample_layers.0.0.bias"])
-        t(conv["kernel"], params["downsample_layers.0.0.weight"].permute(2, 3, 1, 0))
-
-        for i in range(1, 4):
-            norm = jax_params[f"LayerNorm_{i}"]
-            t(norm["bias"], params[f"downsample_layers.{i}.0.bias"])
-            t(norm["scale"], params[f"downsample_layers.{i}.0.weight"])
-            conv = jax_params[f"Conv_{i}"]
-            t(conv["bias"], params[f"downsample_layers.{i}.1.bias"])
-            t(
-                conv["kernel"],
-                params[f"downsample_layers.{i}.1.weight"].permute(2, 3, 1, 0),
-            )
-
-        return freeze(jax_params)
-
-    def get_imagenet_weights(self, model_type: str) -> Params:
-        """Get imagenet weights
-
-        Args:
-            model_type: The expected model specification. This must match the current
-                instance attributes.
-
-                * tiny: dims=(96, 192, 384, 768), depths=(3,3,9,3)
-                * small: dims=(96, 192, 384, 768), depths=(3,3,27,3)
-                * base: dims=(128, 256, 512, 1024), depths=(3,3,27,3)
-                * large: dims=(192, 384, 768, 1536), depths=(3,3,27,3)
-                * X-large: dims=(256, 512, 1024, 2048), depths=(3,3,27,3)
-
-        Returns:
-            A frozen dict representing weights of the current module
-        """
-
-        init_params = self.init(jax.random.PRNGKey(0), jnp.zeros([64, 64, 3]))
-        init_params = init_params["params"]
-        params = self._load_weight(
-            init_params,
-            _imagenet_weights_urls[f"convnext_{model_type}_22k"],
-        )
-
-        return params
+    @classmethod
+    def get_model_x_large(cls, patch_size=4):
+        return cls(patch_size, depths=(3, 3, 27, 3), dims=(256, 512, 1024, 2048))

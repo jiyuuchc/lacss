@@ -49,6 +49,7 @@ def resize(inputs: dict, *, target_size: tuple[int, int], p: float = 1.0) -> dic
 
     def _resize(inputs):
         H, W = _image_size(inputs["image"])
+
         target_y, target_x = target_size
 
         scaling_y = tf.cast(target_y, tf.float32) / tf.cast(H, tf.float32)

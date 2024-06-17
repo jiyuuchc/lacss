@@ -6,19 +6,20 @@ import jax
 import jax.numpy as jnp
 import optax
 
+from xtrain import unpack_x_y_sample_weight
+
 from ..ops import sub_pixel_samples
 from .common import binary_focal_factor_loss, mean_over_boolean_mask
-from lacss.train.utils import unpack_x_y_sample_weight
 
 def supervised_instance_loss(batch, prediction):
     """LACSS instance loss, supervised with segmentation label"""
-    preds = prediction
+    preds = prediction["predictions"]
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
-    instance_mask = preds["instance_mask"]
-    instance_logit = preds["instance_logit"]
-    yc = preds["instance_yc"]
-    xc = preds["instance_xc"]
+    instance_mask = preds["segmentation_is_valid"]
+    instance_logit = preds["segmentations"]
+    yc = preds["segmentation_y_coords"]
+    xc = preds["segmentation_x_coords"]
 
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
@@ -63,14 +64,14 @@ def supervised_instance_loss(batch, prediction):
 
 def self_supervised_instance_loss(batch, prediction, *, soft_label: bool = True):
     """Unsupervised instance loss"""
-    preds = prediction
+    preds = prediction["predictions"]
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
-    instance_mask = preds["instance_mask"]
-    instances = preds["instance_output"]
-    instance_logit = preds["instance_logit"]
-    yc = preds["instance_yc"]
-    xc = preds["instance_xc"]
+    instance_mask = preds["segmentation_is_valid"]
+    instance_logit = preds["segmentations"]
+    yc = preds["segmentation_y_coords"]
+    xc = preds["segmentation_x_coords"]
+    instances = jax.nn.sigmoid(instance_logit)
 
     patch_size = instances.shape[-1]
     padding_size = patch_size // 2 + 2
@@ -109,14 +110,14 @@ def self_supervised_instance_loss(batch, prediction, *, soft_label: bool = True)
 
 def weakly_supervised_instance_loss(batch, prediction, *, ignore_mask: bool = False):
     """Instance loss supervised by image mask instead of instance masks"""
-    preds = prediction
+    preds = prediction["predictions"]
     inputs, labels, _ = unpack_x_y_sample_weight(batch)
 
-    instance_mask = preds["instance_mask"]
-    instances = preds["instance_output"]
-    instance_logit = preds["instance_logit"]
-    yc = preds["instance_yc"]
-    xc = preds["instance_xc"]
+    instance_mask = preds["segmentation_is_valid"]
+    instance_logit = preds["segmentations"]
+    yc = preds["segmentation_y_coords"]
+    xc = preds["segmentation_x_coords"]
+    instances = jax.nn.sigmoid(instance_logit)
 
     patch_size = instances.shape[-1]
     padding_size = patch_size // 2 + 2
@@ -148,8 +149,7 @@ def weakly_supervised_instance_loss(batch, prediction, *, ignore_mask: bool = Fa
 
 
 def segmentation_loss(batch, prediction, *, pretraining=False):
-    preds = prediction
-    inputs, labels, _ = unpack_x_y_sample_weight(batch)
+    _, labels, _ = unpack_x_y_sample_weight(batch)
 
     if labels is None:
         labels = {}

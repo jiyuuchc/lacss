@@ -18,52 +18,11 @@ from .image import sub_pixel_samples
 Shape = Sequence[int]
 
 
-def gather_patches(
-    features: ArrayLike, locations: ArrayLike, patch_size: int
-) -> tuple[Array, Array, Array, Array]:
-    # """extract feature patches according to a list of locations
-
-    # Args:
-    #     features: [H,W,C] standard 2D feature map
-    #     locations: [N, 2] float32, scaled 0..1
-    #     patch_size: int
-
-    # Returns:
-    #     patches: [N, patch_size, patch_size, C]
-    #     y0: [N]: y0 coordinates of patches
-    #     x0: [N]: x0 coordinates of patches
-    # """
-    height, width, _ = features.shape
-
-    locations *= jnp.array([height, width])
-    # i_locations = (locations + .5).astype(int)
-    i_locations = locations.astype(int)
-    i_locations_x = jnp.clip(i_locations[:, 1], 0, width - 1)
-    i_locations_y = jnp.clip(i_locations[:, 0], 0, height - 1)
-    yy, xx = jnp.mgrid[:patch_size, :patch_size] - patch_size // 2
-    xx += i_locations_x[:, None, None]
-    yy += i_locations_y[:, None, None]
-    remainder = locations - jnp.stack([i_locations_y, i_locations_x], axis=-1)
-
-    # padding to avoid out-of-bound
-    padding_size = patch_size // 2 + 1
-    paddings = [
-        [padding_size, padding_size],
-        [padding_size, padding_size],
-        [0, 0],
-    ]
-    padded_features = jnp.pad(features, paddings)
-
-    patches = padded_features[yy + padding_size, xx + padding_size, :]
-
-    return patches, yy[:, 0, 0], xx[:, 0, 0], remainder
-
-
 def _get_patch_data(pred):
     if isinstance(pred, dict):
-        patches = pred["instance_output"]
-        yc = pred["instance_yc"]
-        xc = pred["instance_xc"]
+        patches = pred["segmentations"]
+        yc = pred["segmentation_y_coords"]
+        xc = pred["segmentation_x_coords"]
     else:
         patches, yc, xc = pred
 
@@ -73,12 +32,12 @@ def _get_patch_data(pred):
     return patches, yc, xc
 
 
-def bboxes_of_patches(pred: Sequence | DataDict, threshold: float = 0.5) -> jnp.ndarray:
+def bboxes_of_patches(pred: Sequence | DataDict, threshold: float = 0) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
     Args:
         pred: A model prediction dictionary:
-        threshold: for segmentation, default 0.5
+        threshold: for segmentation, default 0
 
     Returns:
         bboxes: [n, 4] bboox for empty patches are filled with -1
@@ -107,83 +66,8 @@ def bboxes_of_patches(pred: Sequence | DataDict, threshold: float = 0.5) -> jnp.
     return bboxes
 
 
-# def indices_of_patches(
-#     pred: Sequence | DataDict,
-#     input_size: tuple[int, int] = None,
-#     threshold: float = 0.5,
-# ) -> Array:
-#     """Compute yx coodinates of all segmented instances
-
-#     Args:
-#         pred: A model prediction dictionary
-#         threshold: float
-
-#     Returns:
-#         [N, 3] array. The first two columns are y-x coordinates. The third
-#             column is a index value for different instances.
-#     """
-#     patches, yy, xx = _get_patch_data(pred)
-
-#     indices = patches >= threshold
-#     yy = yy[indices]
-#     xx = xx[indices]
-#     rowids = jnp.argwhere(indices)[:, 0]
-
-#     if input_size is not None:
-#         height, width = input_size
-#         valid_coords = ((yy >= 0) & (yy < height)) & ((xx >= 0) & (xx < width))
-#         yy = yy[valid_coords]
-#         xx = xx[valid_coords]
-#         rowids = rowids[valid_coords]
-
-#     return jnp.stack([yy, xx, rowids], axis=-1)
-
-
-# def iou_patches_and_labels(
-#     pred: DataDict, labels: ArrayLike, BLOCK_SIZE: int = 128, threshold: float = 0.5
-# ) -> Array:
-#     """Compute iou between prediction and ground truth label.
-
-#     Args:
-#         pred: A model prediction dictionary
-#         labels: image label. bg_label = 0
-#         threshold: for segmentation. default is 0.5
-
-#     Returns:
-#         [n, m] array of iou values.
-#     """
-#     patches, yc, xc = _get_patch_data(pred)
-#     patches = patches >= threshold
-#     pred_areas = jnp.count_nonzero(patches, axis=(-1, -2))
-#     labels = labels.astype(int)
-
-#     pads = yc.shape[-1] // 2
-#     padded_labels = jnp.pad(labels, pads, constant_values=0)
-#     gt_patches = padded_labels[yc + pads, xc + pads]
-
-#     max_indices = ((labels.max() - 1) // BLOCK_SIZE + 1) * BLOCK_SIZE
-#     all_gt_areas = jnp.count_nonzero(
-#         labels[:, :, None] == jnp.arange(max_indices) + 1, axis=(0, 1)
-#     )
-
-#     ious = []
-#     # FIXME change to scan
-#     for k in range(1, labels.max() + 1, BLOCK_SIZE):
-#         gt_p = gt_patches == jnp.arange(k, k + BLOCK_SIZE).reshape(
-#             -1, 1, 1, 1
-#         )  # [B, N, s, s]
-#         gt_areas = all_gt_areas[k - 1 : k + BLOCK_SIZE - 1]
-#         intersect = jnp.count_nonzero(gt_p & patches, axis=(-1, -2))  # [B, N]
-#         ious.append(intersect / (pred_areas + gt_areas[:, None] - intersect + 1.0e-8))
-
-#     ious = jnp.concatenate(ious, axis=0).transpose()  # [N, B * b]
-#     ious = ious[:, : labels.max()]  # this breaks JIT
-
-#     return ious
-
-
 def patches_to_segmentations(
-    pred: DataDict, input_size: Shape, threshold: float = 0.5
+    pred: DataDict, input_size: Shape, threshold: float = 0
 ) -> Array:
     """Expand the predicted patches to the full image size.
     The default model segmentation output shows only a small patch around each instance. This
@@ -213,7 +97,7 @@ def patches_to_label(
     input_size: Shape,
     mask: Optional[ArrayLike] = None,
     score_threshold: float = 0.5,
-    threshold: float = 0.5,
+    threshold: float = 0,
 ) -> Array:
     """convert patch output to the image label
 
@@ -228,25 +112,24 @@ def patches_to_label(
         label: [height, width]
     """
     label = jnp.zeros(input_size)
-    pr = pred["instance_output"] > threshold
+    patches, yy, xx = _get_patch_data(pred)
+
+    pr = patches > threshold
 
     if mask is None:
-        mask = pred["instance_mask"].squeeze(axis=(1, 2))
+        mask = pred["segmentation_is_valid"].squeeze(axis=(1, 2))
     else:
-        mask &= pred["instance_mask"].squeeze(axis=(1, 2))
+        mask &= pred["segmentation_is_valid"].squeeze(axis=(1, 2))
 
     if score_threshold > 0:
-        mask &= pred["pred_scores"] >= score_threshold
+        mask &= pred["scores"] >= score_threshold
 
     idx = jnp.cumsum(mask) * mask
     idx = jnp.where(mask, idx.max() + 1 - idx, 0)
-    
+
     pr = (pr > threshold).astype(int) * idx[:, None, None]
 
-    yc = pred["instance_yc"]
-    xc = pred["instance_xc"]
-
-    label = label.at[yc, xc].max(pr)
+    label = label.at[yy, xx].max(pr)
     label = jnp.where(label, label.max() + 1 - label, 0)
 
     return label
@@ -331,8 +214,7 @@ _sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
 
 
 def rescale_patches(
-    pred: DataDict,
-    scale: float,
+    pred: DataDict, scale: float, *, transform_logits: bool = True
 ) -> tuple[Array, Array, Array]:
     """Rescale/resize instance outputs in a sub-pixel accurate way.
     If the input image was rescaled, this function take care of rescaling the predictions
@@ -348,9 +230,12 @@ def rescale_patches(
         yy: The y-coordinates of the patches in mesh-grid format
         xx: The x-coordinates of the patches in mesh-grid format
     """
-    new_y0 = (pred["instance_yc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
-    new_x0 = (pred["instance_xc"][:, 0, 0] + 0.5) * scale  # edge indexing in new scale
-    patch = pred["instance_output"]
+    patch, yc, xc = _get_patch_data(pred)
+    if transform_logits:
+        patch = jax.nn.sigmoid(patch)
+
+    new_y0 = (yc[:, 0, 0] + 0.5) * scale  # edge indexing in new scale
+    new_x0 = (xc[:, 0, 0] + 0.5) * scale  # edge indexing in new scale
     ps = round(patch.shape[-1] * scale)
 
     yy, xx = jnp.mgrid[:ps, :ps]
@@ -363,9 +248,9 @@ def rescale_patches(
 
     # edge indexing in old scale
     rel_yy = (yy + 0.5) / scale
-    rel_yy -= pred["instance_yc"][:, :1, :1]
+    rel_yy -= yc[:, :1, :1]
     rel_xx = (xx + 0.5) / scale
-    rel_xx -= pred["instance_xc"][:, :1, :1]
+    rel_xx -= xc[:, :1, :1]
 
     new_patch = _sampling_op(
         patch,

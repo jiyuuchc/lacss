@@ -8,9 +8,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from xtrain import unpack_x_y_sample_weight
+
 from ..ops import *
 from ..typing import *
-from lacss.train.utils import unpack_x_y_sample_weight
 
 """
 BE CAREFUL making changes here. Very easy to make a mistake and resulting mismatch with
@@ -132,15 +133,15 @@ class LoiAP(AP):
         super().__init__([1 / th / th for th in thresholds], **kwargs)
 
     def update(self, batch, prediction):
-        preds = prediction
+        preds = prediction["predictions"]
         inputs, labels, _ = unpack_x_y_sample_weight(batch)
         if "gt_locations" in inputs:
             gt_locations = inputs["gt_locations"]
         else:
             gt_locations = labels["gt_locations"]
 
-        score = np.asarray(preds["pred_scores"])
-        pred = np.asarray(preds["pred_locations"])
+        score = np.asarray(preds["scores"])
+        pred = np.asarray(preds["locations"])
         gt = np.asarray(gt_locations)
 
         row_mask = score > 0
@@ -165,14 +166,14 @@ class BoxAP(AP):
     """
 
     def update(self, batch, prediction):
-        preds = prediction
+        preds = prediction["predictions"]
         _, labels, _ = unpack_x_y_sample_weight(batch)
         gt_bboxes = labels["gt_bboxes"]
 
         pred_bboxes = np.asarray(bboxes_of_patches(preds))
         gt_bboxes = np.asarray(gt_bboxes)
         iou = box_iou_similarity(pred_bboxes, gt_bboxes)
-        score = np.asarray(preds["pred_scores"])
+        score = np.asarray(preds["scores"])
         gt_is_valid = (gt_bboxes >= 0).all(axis=-1)
 
         valid_preds = score >= 0

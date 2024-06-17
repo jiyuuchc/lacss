@@ -76,7 +76,7 @@ def _suppression_loop_body(inputs):
     return boxes, num_selected
 
 
-def _nms(
+def sorted_non_max_suppression_indices(
     scores: ArrayLike,
     boxes: ArrayLike,
     max_output_size: int,
@@ -92,6 +92,7 @@ def _nms(
     #     similarity_func = box_iou_similarity if c == 4 else distance_similarity
 
     # pad_to_multiply_of(tile_size)
+
     num_boxes = boxes.shape[0]
     pad = NMS_TILE_SIZE - 1 - (num_boxes - 1) % NMS_TILE_SIZE
     boxes = jnp.pad(boxes, [[0, pad], [0, 0]], constant_values=-1)
@@ -164,7 +165,7 @@ def sorted_non_max_suppression(
 
     Assumption:
 
-        * The boxes are sorted by scores
+        * The boxes/points are sorted by scores
 
     The overal design of the algorithm is to handle boxes tile-by-tile:
 
@@ -184,7 +185,7 @@ def sorted_non_max_suppression(
     if max_output_size <= 0:
         max_output_size = boxes.shape[0]
 
-    selected = _nms(
+    selected = sorted_non_max_suppression_indices(
         scores,
         boxes,
         max_output_size,

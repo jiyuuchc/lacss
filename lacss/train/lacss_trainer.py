@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 from tqdm import tqdm
+from xtrain import Trainer, JIT
 
 import lacss.metrics
 
@@ -18,16 +19,11 @@ from lacss.losses import (
     aux_size_loss,
     collaborator_border_loss,
     collaborator_segm_loss,
-    lpn_loss,
     segmentation_loss,
 )
 
 from ..modules import Lacss, UNet
-from ..typing import Array, Optimizer
-from .base_trainer import Trainer
-from .strategy import JIT
 from ..typing import *
-
 
 class LacssCollaborator(nn.Module):
     """Collaborator module for semi-supervised Lacss training
@@ -170,7 +166,8 @@ class LacssTrainer:
         pre_seg_loss = partial(segmentation_loss, pretraining=True)
         pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
         losses = [
-            lpn_loss,
+            "losses/lpn_localization_loss",
+            "losses/lpn_detection_loss",
             pre_seg_loss,
             pre_col_seg_loss,
             collaborator_border_loss,
@@ -187,7 +184,8 @@ class LacssTrainer:
     def _get_trainer(self, sigma, pi):
         col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
         losses = [
-            lpn_loss,
+            "losses/lpn_localization_loss",
+            "losses/lpn_detection_loss",
             segmentation_loss,
             col_seg_loss,
             collaborator_border_loss,

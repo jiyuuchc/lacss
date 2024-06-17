@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import asdict, field
+from dataclasses import field
 
 import flax.linen as nn
 import jax.numpy as jnp
 
 from ..ops import *
 from ..typing import *
+from ..utils import deep_update
+from .common import FPN
 from .convnext import ConvNeXt
-from .detector import Detector
 from .lpn import LPN
 from .segmentor import Segmentor
 
@@ -25,44 +25,57 @@ class Lacss(nn.Module):
 
     """
 
-    backbone: ConvNeXt = field(default_factory=ConvNeXt)
-    lpn: LPN = field(default_factory=LPN)
-    detector: Detector = field(default_factory=Detector)
-    segmentor: Segmentor = field(default_factory=Segmentor)
+    stem: nn.Module | None = None
+    backbone: nn.Module = field(default_factory=ConvNeXt)
+    integrator: nn.Module | None = field(default_factory=FPN)
+    detector: nn.Module = field(default_factory=LPN)
+    segmentor: nn.Module | None = field(default_factory=Segmentor)
 
-    @classmethod
-    def from_config(cls, config: dict):
-        """Factory method to build an Lacss instance from a configuration dictionary
+    max_proposal_offset: float = 12.0
 
-        Args:
-            config: A configuration dictionary.
-
-        Returns:
-            An Lacss instance.
-
+    def _best_match(self, gt_locations, pred_locations, height, width):
+        """replacing gt_locations with pred_locations if the close enough
+        1. Each pred_location is matched to the closest gt_location
+        2. For each gt_location, pick the matched pred_location with highest score
+        3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
         """
-        config_ = defaultdict(lambda: {})
-        config_.update(config)
-        return Lacss(
-            backbone=ConvNeXt(**config_["backbone"]),
-            lpn=LPN(**config_["lpn"]),
-            detector=Detector(**config_["detector"]),
-            segmentor=Segmentor(**config_["segmentor"]),
+
+        threshold = self.max_proposal_offset
+
+        n_gt_locs = gt_locations.shape[0]
+        n_pred_locs = pred_locations.shape[0]
+
+        matched_id, indicators = location_matching(
+            pred_locations, gt_locations, threshold
         )
-        # return dataclass_from_dict(cls, config)
+        matched_id = jnp.where(indicators, matched_id, -1)
 
-    def get_config(self) -> dict:
-        """Convert to a configuration dict. Can be serialized with json
+        matching_matrix = (
+            matched_id[None, :] == jnp.arange(n_gt_locs)[:, None]
+        )  # true at matched gt(row)/pred(col), at most one true per col
+        last_col = jnp.ones([n_gt_locs, 1], dtype=bool)
+        matching_matrix = jnp.concatenate(
+            [matching_matrix, last_col], axis=-1
+        )  # last col is true
 
-        Returns:
-            config: a configuration dict
-        """
-        return asdict(self)
+        # first true of every row
+        matched_loc_ids = jnp.argmax(matching_matrix, axis=-1)
+
+        training_locations = jnp.where(
+            matched_loc_ids[:, None] == n_pred_locs,  # true: failed match
+            gt_locations,
+            pred_locations[
+                matched_loc_ids, :
+            ],  # out-of-bound error silently dropped in jax
+        )
+
+        return training_locations
 
     def __call__(
         self,
         image: ArrayLike,
         gt_locations: ArrayLike | None = None,
+        gt_cls: ArrayLike | None = None,
         *,
         training: bool | None = None,
     ) -> dict:
@@ -74,62 +87,110 @@ class Lacss(nn.Module):
             a dict of model outputs
 
         """
-        orig_height, orig_width, ch = image.shape
-        if ch == 1:
-            image = jnp.repeat(image, 3, axis=-1)
-        elif ch == 2:
-            image = jnp.concatenate([image, jnp.zeros_like(image[..., :1])], axis=-1)
+        height, width = image.shape[:2]
 
-        # assert image.shape[-1] == 3
+        outputs = {}
 
-        # ensure input size is multiple of 32
-        height = ((orig_height - 1) // 32 + 1) * 32
-        width = ((orig_width - 1) // 32 + 1) * 32
-        image = jnp.pad(
-            image, [[0, height - orig_height], [0, width - orig_width], [0, 0]]
-        )
+        x = image
+        if self.stem is not None:
+            x = self.stem(x, training=training)
 
-        # backbone
-        encoder_features, features = self.backbone(image, training=training)
-        model_output = dict(
-            encoder_features=encoder_features,
-            decoder_features=features,
-        )
+        x = self.backbone(x, training=training)
+        self.sow("intermediates", "encoder_features", x)
 
-        # detection
-        scaled_gt_locations = (
-            gt_locations / jnp.array([height, width])
-            if gt_locations is not None
-            else None
-        )
-        model_output.update(
-            self.lpn(
-                inputs=features,
-                scaled_gt_locations=scaled_gt_locations,
-            )
-        )
+        if self.integrator is not None:
+            x = self.integrator(x, training=training)
+            self.sow("intermediates", "decoder_features", x)
 
-        if gt_locations is not None or not training:
+        detector_out = self.detector(x, gt_locations, gt_cls, training=training)
+        outputs = deep_update(outputs, detector_out)
 
-            model_output.update(
-                self.detector(
-                    scores=model_output["lpn_scores"],
-                    regressions=model_output["lpn_regressions"],
-                    gt_locations=gt_locations,
-                    training=training,
+        if self.segmentor is not None:
+            pred_locs = outputs["predictions"]["locations"]
+            pred_cls = outputs["predictions"]["classes"]
+
+            if gt_cls is None and gt_locations is not None:
+                gt_cls = jnp.zeros(gt_locations.shape[0], dtype=int)
+
+            if training:
+                seg_locs, seg_cls = (
+                    self._best_match(gt_locations, pred_locs, height, width),
+                    gt_cls,
                 )
-            )
+            elif gt_locations is not None:
+                seg_locs, seg_cls = gt_locations, gt_cls
+            else:
+                seg_locs, seg_cls = pred_locs, pred_cls
 
-            # segmentation
-            locations = model_output[
-                "training_locations" if gt_locations is not None else "pred_locations"
-            ]
-            scaled_locs = locations / jnp.array([height, width])
-            model_output.update(
-                self.segmentor(
-                    features=features,
-                    locations=scaled_locs,
-                )
-            )
+            self.sow("intermediates", "segmentation_locations", seg_locs)
+            self.sow("intermediates", "segmentation_cls", seg_cls)
 
-        return model_output
+            segmentor_out = self.segmentor(x, seg_locs, seg_cls)
+
+            outputs = deep_update(outputs, segmentor_out)
+
+        return outputs
+
+    @classmethod
+    def get_default_model(cls, patch_size=4):
+        if not patch_size in (1, 2, 4):
+            raise ValueError("patch_size must be 1, 2 or 4")
+        return cls(
+            backbone=ConvNeXt.get_model_small(patch_size=patch_size),
+            integrator=FPN(384),
+            detector=LPN(
+                conv_spec=((256, 256, 256, 256), ()),
+                feature_levels=(0, 1, 2),
+                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            ),
+            segmentor=Segmentor(
+                conv_spec=((256, 256, 256), (64,)),
+                feature_level=0,
+                feature_scale=patch_size,
+            ),
+        )
+
+    @classmethod
+    def get_small_model(cls, patch_size=4):
+        return cls(
+            backbone=ConvNeXt.get_model_tiny(patch_size=patch_size),
+            integrator=FPN(256),
+            detector=LPN(
+                conv_spec=((192, 192, 192, 192), ()),
+                feature_levels=(0, 1, 2),
+                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            ),
+            segmentor=Segmentor(
+                conv_spec=((192, 192, 192), (48,)),
+                feature_level=0,
+                feature_scale=patch_size,
+            ),
+        )
+
+    @classmethod
+    def get_large_model(cls, patch_size=4):
+        return cls(
+            backbone=ConvNeXt.get_model_base(patch_size=patch_size),
+            integrator=FPN(512),
+            detector=LPN(
+                conv_spec=((384, 384, 384, 384), ()),
+                feature_levels=(0, 1, 2),
+                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            ),
+            segmentor=Segmentor(
+                conv_spec=((384, 384, 384), (128,)),
+                feature_level=0,
+                feature_scale=patch_size,
+            ),
+        )
+
+    @classmethod
+    def get_preconfigued(cls, config: str, *, patch_size: int = 4):
+        if config == "default" or config == "base":
+            return cls.get_default_model(patch_size)
+        elif config == "small":
+            return cls.get_small_model(patch_size)
+        elif config == "large":
+            return cls.get_large_model(patch_size)
+        else:
+            raise ValueError(f"Unkown model config {config}")

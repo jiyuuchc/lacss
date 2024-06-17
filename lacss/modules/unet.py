@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from typing import Sequence
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from ..typing import *
-from .common import *
-
+from ..typing import Array, ArrayLike
 
 class UNet(nn.Module):
     model_spec: Sequence[int] = (32, 64, 128, 256, 512)
@@ -19,7 +19,7 @@ class UNet(nn.Module):
             raise ValueError("patch_size must be eith 1, 2 or 4")
 
     @nn.compact
-    def __call__(self, x: ArrayLike) -> tuple[DataDict, DataDict]:
+    def __call__(self, x: ArrayLike) -> Sequence[Array]:
 
         encoder_out = []
         fs = max(self.patch_size, 3)
@@ -30,12 +30,10 @@ class UNet(nn.Module):
         for ch in self.model_spec:
 
             x = nn.Conv(ch, (fs, fs), (st, st), use_bias=False)(x)
-            # x = nn.LayerNorm(epsilon=1e-6)(x)
             x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            # x = nn.LayerNorm(epsilon=1e-6)(x)
             x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
@@ -53,23 +51,16 @@ class UNet(nn.Module):
             x = jnp.concatenate([x, y], axis=-1)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            # x = nn.LayerNorm(epsilon=1e-6)(x)
             x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             x = nn.Conv(ch, (3, 3), use_bias=False)(x)
-            # x = nn.LayerNorm(epsilon=1e-6)(x)
             x = nn.GroupNorm(num_groups=ch, use_scale=False)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
             decoder_out.insert(0, x)
 
-        keys = [str(lvl + self.start_level) for lvl in range(len(self.model_spec))]
-
-        encoder_out = dict(zip(keys, encoder_out))
-        decoder_out = dict(zip(keys, decoder_out))
-
-        return encoder_out, decoder_out
+        return decoder_out
 
     @property
     def start_level(self) -> int:

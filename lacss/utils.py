@@ -1,11 +1,6 @@
-import dataclasses
-
 import jax.numpy as jnp
 import numpy as np
-from flax.core.frozen_dict import freeze, unfreeze
-
-from lacss.train.utils import pack_x_y_sample_weight, unpack_x_y_sample_weight
-
+from xtrain import pack_x_y_sample_weight, unpack_x_y_sample_weight
 
 def _to_str(p):
     return "".join(p.astype(int).reshape(-1).astype(str).tolist())
@@ -89,6 +84,7 @@ def show_images(imgs, locs=None, **kwargs):
 
 
 def dataclass_from_dict(klass, dikt):
+    import dataclasses
     try:
         fieldtypes = {f.name: f.type for f in dataclasses.fields(klass)}
         return klass(**{f: dataclass_from_dict(fieldtypes[f], dikt[f]) for f in dikt})
@@ -105,6 +101,7 @@ def load_from_pretrained(pretrained: str):
     Returns: A tuple (module, parameters) representing the model.
     """
     import os
+    from flax.core.frozen_dict import freeze, unfreeze
 
     if os.path.isdir(pretrained):
         # directory are orbax checkpoint
@@ -154,20 +151,22 @@ def load_from_pretrained(pretrained: str):
 
 
 def make_label_continuous(label, dtype=None):
-    """ Relabel a label image so that the label values are continuous. It is assumed that the
+    """Relabel a label image so that the label values are continuous. It is assumed that the
     label starts with 0. If there is negative numbers in the input, they will be replaced by 0.
 
     Args:
         label: input label image
-    
+
     Keyword Args:
         dtype: the dtype of the output image. default is to keep the dtype of the input.
-    
+
     Returns:
         Relabeled image.
     """
     if not isinstance(label, np.ndarray) and dtype is None:
-        raise ValueError("A dtype must be specified if the input data is not a np array")
+        raise ValueError(
+            "A dtype must be specified if the input data is not a np array"
+        )
     elif dtype is None:
         dtype = label.dtype
 
@@ -181,3 +180,14 @@ def make_label_continuous(label, dtype=None):
 
     return mapping_ar[label]
 
+
+def deep_update(d, u):
+    """an dict update function that works with nested dicts"""
+    import collections.abc
+
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = deep_update(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d

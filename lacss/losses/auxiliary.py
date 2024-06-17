@@ -6,9 +6,10 @@ import jax
 import jax.numpy as jnp
 import optax
 
+from xtrain import unpack_x_y_sample_weight
+
 from ..ops import sorbel_edges
 from .common import binary_focal_factor_loss
-from lacss.train.utils import unpack_x_y_sample_weight
 
 EPS = jnp.finfo("float32").eps
 
@@ -47,12 +48,14 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
 def self_supervised_edge_loss(batch, prediction):
     """Cell border prediction consistency loss"""
 
-    preds = prediction
+    preds = prediction["predictions"]
     inputs, _, _ = unpack_x_y_sample_weight(batch)
 
-    instance_output = preds["instance_output"]
-    instance_yc = preds["instance_yc"]
-    instance_xc = preds["instance_xc"]
+    instance_logit = preds["segmentations"]
+    instance_yc = preds["segmentation_y_coords"]
+    instance_xc = preds["segmentation_x_coords"]
+    instance_output = jax.nn.sigmoid(instance_logit)
+
     height, width = inputs["image"].shape[:2]
     instance_edge = _compute_edge(
         instance_output, instance_yc, instance_xc, height, width
@@ -69,54 +72,40 @@ def self_supervised_segmentation_loss(
 ):
     """Image segmentation consistenct loss for the collaboraor model"""
 
-    preds = prediction
+    preds = prediction["predictions"]
     inputs, _, _ = unpack_x_y_sample_weight(batch)
 
+    logit = preds["segmentations"]
+    yc = preds["segmentation_y_coords"]
+    xc = preds["segmentation_x_coords"]
+
     height, width = inputs["image"].shape[:2]
-    ps = preds["instance_yc"].shape[-1]
+    ps = yc.shape[-1]
 
     offset_sigma = jnp.asarray(offset_sigma).reshape(-1)
     offset_scale = jnp.asarray(offset_scale).reshape(-1)
 
-    def _max_merge(pred):
-        label = jnp.zeros([height + ps, width + ps]) - 1.0e6
-        yc, xc = pred["instance_yc"], pred["instance_xc"]
-        logit = pred["instance_logit"]
+    # max_merge:
+    label = jnp.zeros([height + ps, width + ps]) - 1.0e6
+    if offset_sigma.size > 1 and "cls_id" in inputs and inputs["cls_id"] is not None:
+        c = inputs["cls_id"].astype(int).squeeze()
+    else:
+        c = 0
 
-        if (
-            offset_sigma.size > 1
-            and "cls_id" in inputs
-            and inputs["cls_id"] is not None
-        ):
-            c = inputs["cls_id"].astype(int).squeeze()
-        else:
-            c = 0
+    sigma = offset_sigma[c]
+    scale = offset_scale[c]
+    offset = (jnp.mgrid[:ps, :ps] - (ps - 1) / 2) ** 2 / (2 * sigma * sigma)
+    offset = jnp.exp(-offset.sum(axis=0)) * scale
+    logit += offset
 
-        sigma = offset_sigma[c]
-        scale = offset_scale[c]
-        offset = (jnp.mgrid[:ps, :ps] - (ps - 1) / 2) ** 2 / (2 * sigma * sigma)
-        offset = jnp.exp(-offset.sum(axis=0)) * scale
-        logit += offset
+    label = label.at[yc + ps // 2, xc + ps // 2].max(logit)
+    label = label[ps // 2 : -ps // 2, ps // 2 : -ps // 2]
 
-        label = label.at[yc + ps // 2, xc + ps // 2].max(logit)
-        label = label[ps // 2 : -ps // 2, ps // 2 : -ps // 2]
-
-        return label
-
-    # fg_pred = jax.nn.tanh(preds["fg_pred"] / 2)
-    # fg_label = jax.nn.tanh(_max_merge(preds) / 2)
     fg_pred = jax.nn.sigmoid(preds["fg_pred"])
-    fg_label = jax.lax.stop_gradient(jax.nn.sigmoid(_max_merge(preds)))
-
-    # locs = jnp.floor(inputs["gt_locations"] + 0.5)
-    # locs = locs.astype(int)
-    # fg_label = fg_label.at[locs[:, 0], locs[:, 1]].set(1.0)
+    fg_label = jax.lax.stop_gradient(jax.nn.sigmoid(label))
 
     assert fg_pred.shape == fg_label.shape
 
-    # loss = (1.0 - fg_label) * fg_pred + fg_label * (1.0 - fg_pred)
-    # p_t = fg_label * fg_pred + (1.0 -fg_label) * (1.0 - fg_pred)
-    # loss = -jnp.log(jnp.clip(p_t, EPS, 1))
     loss = binary_focal_factor_loss(fg_pred, fg_label, gamma=1)
     loss = loss.mean()
 
@@ -125,8 +114,13 @@ def self_supervised_segmentation_loss(
 
 def aux_size_loss(batch, prediction, *, weight=0.01):
     """Auxillary loss to prevent model collapse"""
-    preds = prediction
+    preds = prediction["predictions"]
     inputs, labels, _ = unpack_x_y_sample_weight(batch)
+
+    logit = preds["segmentations"]
+    yc = preds["segmentation_y_coords"]
+    xc = preds["segmentation_x_coords"]
+    instances = jax.nn.sigmoid(logit)
 
     if labels is None:
         labels = {}
@@ -136,20 +130,13 @@ def aux_size_loss(batch, prediction, *, weight=0.01):
 
     height, width = inputs["image"].shape[:2]
 
-    valid_locs = (
-        (preds["instance_yc"] >= 0)
-        & (preds["instance_yc"] < height)
-        & (preds["instance_xc"] >= 0)
-        & (preds["instance_xc"] < width)
-    )
+    valid_locs = (yc >= 0) & (yc < height) & (xc >= 0) & (xc < width)
 
-    areas = jnp.sum(
-        preds["instance_output"], axis=(-1, -2), where=valid_locs, keepdims=True
-    )
+    areas = jnp.sum(instances, axis=(-1, -2), where=valid_locs, keepdims=True)
     areas = jnp.clip(areas, EPS, 1e6)
-    loss = jax.lax.rsqrt(areas) * preds["instance_output"].shape[-1]
+    loss = jax.lax.rsqrt(areas) * instances.shape[-1]
 
-    mask = preds["instance_mask"]
+    mask = preds["instance_is_valid"]
     n_instances = jnp.count_nonzero(mask) + EPS
     loss = loss.sum(where=mask) / n_instances
 
@@ -157,7 +144,7 @@ def aux_size_loss(batch, prediction, *, weight=0.01):
 
 
 def supervised_segmentation_loss(batch, prediction):
-    preds = prediction
+    preds = prediction["predictions"]
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
     if "gt_labels" in labels:
@@ -172,11 +159,11 @@ def supervised_segmentation_loss(batch, prediction):
 
 
 def collaborator_segm_loss(batch, prediction, *, sigma, pi):
-    preds = prediction
+    preds = prediction["predictions"]
     inputs, labels, _ = unpack_x_y_sample_weight(batch)
 
     if not "fg_pred" in preds:
-        return 0.0
+        return None
 
     if labels is None:
         labels = {}
@@ -190,17 +177,17 @@ def collaborator_segm_loss(batch, prediction, *, sigma, pi):
 
 
 def collaborator_border_loss(batch, prediction):
-    preds = prediction
+    preds = prediction["predictions"]
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
     if not "edge_pred" in preds:
-        return 0.0
+        return None
 
     if labels is None:
         labels = {}
 
     if "gt_labels" in labels or "gt_masks" in labels:
-        return 0.0
+        return None
 
     else:
         return self_supervised_edge_loss(batch, prediction)
