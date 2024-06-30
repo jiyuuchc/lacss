@@ -336,7 +336,7 @@ class Predictor:
         """
         if not output_type in ("bbox", "label", "contour"):
             raise ValueError(
-                f"output_type should be 'patch'|'label'|'contour'. Got {output_type} instead."
+                f"output_type should be 'bbox'|'label'|'contour'. Got {output_type} instead."
             )
 
         module, params = self.model
