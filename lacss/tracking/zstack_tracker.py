@@ -148,8 +148,8 @@ class ZStackTracker:
             a tuple of (tracked_tracks, removed_tracks)
 
         """
-        scores = np.asarray(dets["pred_scores"])
-        bboxes = np.asarray(dets["pred_bboxes"])
+        scores = np.asarray(dets["pred_scores"]).reshape(-1)
+        bboxes = np.asarray(dets["pred_bboxes"]).reshape(-1, 4)
         assert len(scores) == bboxes.shape[0]
         assert bboxes.shape[1] == 4
         flatten_dets = np.asarray([dict(zip(dets.keys(), x)) for x in zip(*dets.values())], dtype=object)
@@ -218,7 +218,7 @@ class ZStackTracker:
         inds_remaining = _nms_secondary(cur_boxes, bboxes, self.nms_iou)
         for track in detections[inds_remaining]:
             if track._data["pred_scores"] >= 0.5:
-                if frame_id ==0 or track.obs[2:].prod() < self.max_init_area:
+                if track.obs[2:].prod() < self.max_init_area:
                     track.initialize()
                     tracked_tracks.append(track)
 

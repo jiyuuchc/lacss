@@ -333,10 +333,12 @@ class KalmanFilter3D(KalmanFilter):
         mean_pos = measurement
         mean_vel = np.zeros_like(mean_pos)
         mean = np.r_[mean_pos, mean_vel]
-        mean_size = (math.prod(measurement[3:6])  * self._z_scaling) ** (1/3)
 
-        std = 2 * self._std_weight_position * mean_size
-
+        mean_size = (math.prod(mean[4:6])) ** (1/2)
+        std = np.r_[
+            2 * self._std_weight_position * mean_size,
+            10 * self._std_weight_velocity * mean_size,
+        ]
         covariance = np.diag(np.square(std))
 
         return mean, covariance
@@ -356,7 +358,7 @@ class KalmanFilter3D(KalmanFilter):
             state. Unobserved velocities are initialized to 0 mean.
 
         """
-        mean_size = (math.prod(mean[3:5])) ** (1/2)
+        mean_size = (math.prod(mean[4:6])) ** (1/2)
 
         std_pos = self._std_weight_position * mean_size
         std_vel = self._std_weight_velocity * mean_size
@@ -384,7 +386,7 @@ class KalmanFilter3D(KalmanFilter):
             estimate.
 
         """
-        mean_size = (math.prod(mean[3:5])) ** (1/2)
+        mean_size = (math.prod(mean[4:6])) ** (1/2)
 
         std = self._std_weight_position * mean_size
 
