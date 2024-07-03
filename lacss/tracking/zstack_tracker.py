@@ -7,7 +7,7 @@ import numpy as np
 import scipy
 
 from .kalman import KalmanFilter, KTracker
-from ..ops import iou_loss, box_iou_similarity
+from ..ops import iou_loss, box_iou_similarity, generalized_iou_loss
 
 def _from_obs(yxhw):
     return np.r_[yxhw[:2] - yxhw[2:]/2 , yxhw[:2] + yxhw[2:]/2]
@@ -51,6 +51,7 @@ class ZStackTracker:
     std_weight_position: float = 1/20
     std_weight_velocity: float = 1/160
     min_z_slices: int = 3
+    use_generalized_iou_loss: bool = False
 
     class ZStack_KF(KalmanFilter):
         """ tracks y, x, h, w, vh, vw"""
@@ -82,8 +83,8 @@ class ZStackTracker:
             mean = np.dot(mean, self._motion_mat.T)
 
             std = [
-                self._std_weight_position * mean[2],
-                self._std_weight_position * mean[3],
+                0, # self._std_weight_position * mean[2],
+                0, # self._std_weight_position * mean[3],
                 self._std_weight_position * mean[2],
                 self._std_weight_position * mean[3],
                 self._std_weight_velocity * mean[2],
@@ -97,8 +98,8 @@ class ZStackTracker:
 
         def project(self, mean, covariance):
             std = [
-                self._std_weight_position * mean[2],
-                self._std_weight_position * mean[3],
+                0, #self._std_weight_position * mean[2],
+                0, #self._std_weight_position * mean[3],
                 self._std_weight_position * mean[2],
                 self._std_weight_position * mean[3],
             ]
@@ -124,6 +125,9 @@ class ZStackTracker:
             new_covariance = covariance - np.linalg.multi_dot((
                 kalman_gain, projected_cov, kalman_gain.T))
 
+            new_mean[:2] = (mean[:2] + new_mean[:2]) / 2
+            new_covariance[:2, :2] = (new_covariance[:2, :2] + projected_cov[:2, :2])/4
+
             return new_mean, new_covariance
 
     def __post_init__(self):
@@ -133,7 +137,11 @@ class ZStackTracker:
     def _assign(self, tracks, dets, threshold):
         box_a = np.asarray([_from_obs(t.mean[:4]) for t in tracks]).reshape(-1, 4)
         box_b = np.asarray([_from_obs(t.obs) for t in dets]).reshape(-1, 4)
-        cost_matrix = iou_loss(box_a, box_b)
+
+        if self.use_generalized_iou_loss:
+            cost_matrix = generalized_iou_loss(box_a, box_b)
+        else:   
+            cost_matrix = iou_loss(box_a, box_b)
 
         return KTracker.assign(tracks, dets, cost_matrix, threshold)
 
