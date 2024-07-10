@@ -9,7 +9,7 @@ import numpy as np
 import typer
 
 import lacss.deploy.proto.lacss_pb2 as lacss_pb2
-from lacss.ops import patches_to_label, sorted_non_max_suppression
+from lacss.ops import patches_to_label, non_max_suppression
 
 from .predict import Predictor
 

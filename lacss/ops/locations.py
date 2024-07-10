@@ -14,8 +14,8 @@ def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> A
         pairwise similarity = 1 / distance ^2
 
     Args:
-        pred_locations: [N, 2] use -1 to mask out invalid locations
-        gt_locations: [K, 2] use -1 to mask out invalid locations
+        pred_locations: [N, d] use -1 to mask out invalid locations
+        gt_locations: [K, d] use -1 to mask out invalid locations
 
     Returns:
         similarity_matrix: [N, k]
@@ -39,8 +39,8 @@ def location_matching(
     """Match predicted location to gt locations
 
     Args:
-      pred_locations:r [N, 2]
-      gt_locations: [K, 2]
+      pred_locations:r [N, d]
+      gt_locations: [K, d]
       threshold: float. Maximum distance to be matched
 
     Returns:

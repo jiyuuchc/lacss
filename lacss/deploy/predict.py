@@ -20,7 +20,7 @@ from flax.core.frozen_dict import freeze, unfreeze
 import lacss.modules
 import lacss.ops
 
-from ..ops import patches_to_label, sorted_non_max_suppression
+from ..ops import patches_to_label, non_max_suppression
 from ..typing import *
 from ..utils import load_from_pretrained
 
@@ -159,7 +159,7 @@ def _predict(context, params, image):
 
     preds = apply_fn(dict(params=params), image)["predictions"]
 
-    instance_mask = preds["segmentation_is_valid"].squeeze(axis=(1, 2))
+    instance_mask = preds["segmentation_is_valid"]
     instance_mask &= preds["scores"] >= context["score_threshold"]
 
     if context["min_area"] > 0:
@@ -199,7 +199,7 @@ def _predict(context, params, image):
         boxes = output["bboxes"]
         mask = output["instance_mask"]
         boxes = jnp.where(mask[:, None], boxes, -1)
-        _, _, selections = sorted_non_max_suppression(
+        _, _, selections = non_max_suppression(
             output["scores"],
             boxes,
             -1,
@@ -283,12 +283,19 @@ class Predictor:
             Detector submodule has no trained paramters.
     """
 
-    def __init__(self, url: str, precompile_shape: Optional[Shape] = None):
+    def __init__(
+            self, 
+            url: str | tuple[nn.Module, dict],
+            *,
+            precompile_shape: Optional[Shape] = None
+        ):
         """Construct Predictor
 
         Args:
             url: A URL or local path to the saved model.
                 URLs for build-in pretrained models can be found in lacss.deploy.model_urls
+
+        Keyword Args:
             precompile_shape: Image shape(s) for precompiling. Otherwise
                 the model will be recompiled for every new input image shape.
 
@@ -601,7 +608,7 @@ class Predictor:
             logging.info(f"nms...")
             scores = preds["scores"]
             boxes = preds["bboxes"]
-            _, _, selections = sorted_non_max_suppression(
+            _, _, selections = non_max_suppression(
                 scores,
                 boxes,
                 -1,
@@ -652,29 +659,6 @@ class Predictor:
     def detector(self) -> lacss.modules.Detector:
         return self.module.detector
 
-    # FIXME Change the detector without first compile the mode will result
-    # in error. This is a hidden gotcha. Need to setup warning to the user.
-    # @detector.setter
-    # def detector(self, new_detector):
-    #     from ..modules import Detector
-
-    #     cur_module = self.module
-
-    #     if isinstance(new_detector, dict):
-    #         new_detector = Detector(**new_detector)
-
-    #     if isinstance(new_detector, Detector):
-    #         self.model = (
-    #             lacss.modules.Lacss(
-    #                 self.module.backbone,
-    #                 self.module.lpn,
-    #                 new_detector,
-    #                 self.module.segmentor,
-    #             ),
-    #             self.model[1],
-    #         )
-    #     else:
-    #         raise ValueError(f"{new_detector} is not a Lacss Detector")
 
     def save(self, save_path) -> None:
         """Re-save the model by pickling.

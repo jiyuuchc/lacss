@@ -51,6 +51,15 @@ binary_focal_crossentropy = partial(generalized_binary_loss, beta=1)
 binary_crossentropy = partial(generalized_binary_loss, gamma=0, beta=1)
 
 
+def sum_over_boolean_mask(loss: ArrayLike, mask: ArrayLike) -> Array:
+    mask = mask.reshape(mask.shape[0], 1)
+
+    loss = loss.reshape(loss.shape[0], -1)
+    loss = loss.mean(axis=1, keepdims=True).sum(where=mask)
+
+    return loss
+
+
 def mean_over_boolean_mask(loss: ArrayLike, mask: ArrayLike) -> Array:
     mask = mask.reshape(mask.shape[0], 1)
     n_instances = jnp.count_nonzero(mask) + 1e-8

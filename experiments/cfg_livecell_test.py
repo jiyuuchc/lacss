@@ -26,4 +26,6 @@ def get_config():
 
     config.model = Lacss.get_preconfigued("small")
 
+    # config.model.detector.detection_roi=16.0
+
     return config

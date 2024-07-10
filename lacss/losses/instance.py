@@ -9,7 +9,9 @@ import optax
 from xtrain import unpack_x_y_sample_weight
 
 from ..ops import sub_pixel_samples
-from .common import binary_focal_factor_loss, mean_over_boolean_mask
+from ..ops.patches import _get_patch_data
+
+from .common import binary_focal_factor_loss, mean_over_boolean_mask, sum_over_boolean_mask
 
 def supervised_instance_loss(batch, prediction):
     """LACSS instance loss, supervised with segmentation label"""
@@ -17,9 +19,10 @@ def supervised_instance_loss(batch, prediction):
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
     instance_mask = preds["segmentation_is_valid"]
-    instance_logit = preds["segmentations"]
-    yc = preds["segmentation_y_coords"]
-    xc = preds["segmentation_x_coords"]
+    instance_logit, yc, xc = _get_patch_data(preds)
+    # instance_logit = preds["segmentations"]
+    # yc = preds["segmentation_y_coords"]
+    # xc = preds["segmentation_x_coords"]
 
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
@@ -61,17 +64,17 @@ def supervised_instance_loss(batch, prediction):
 
     return mean_over_boolean_mask(loss, instance_mask)
 
-
 def self_supervised_instance_loss(batch, prediction, *, soft_label: bool = True):
     """Unsupervised instance loss"""
     preds = prediction["predictions"]
-    _, labels, _ = unpack_x_y_sample_weight(batch)
 
     instance_mask = preds["segmentation_is_valid"]
-    instance_logit = preds["segmentations"]
-    yc = preds["segmentation_y_coords"]
-    xc = preds["segmentation_x_coords"]
+    instance_logit, yc, xc = _get_patch_data(preds)
     instances = jax.nn.sigmoid(instance_logit)
+
+    # instance_logit = preds["segmentations"]
+    # yc = preds["segmentation_y_coords"]
+    # xc = preds["segmentation_x_coords"]
 
     patch_size = instances.shape[-1]
     padding_size = patch_size // 2 + 2
@@ -114,9 +117,7 @@ def weakly_supervised_instance_loss(batch, prediction, *, ignore_mask: bool = Fa
     inputs, labels, _ = unpack_x_y_sample_weight(batch)
 
     instance_mask = preds["segmentation_is_valid"]
-    instance_logit = preds["segmentations"]
-    yc = preds["segmentation_y_coords"]
-    xc = preds["segmentation_x_coords"]
+    instance_logit, yc, xc = _get_patch_data(preds)
     instances = jax.nn.sigmoid(instance_logit)
 
     patch_size = instances.shape[-1]

@@ -17,6 +17,7 @@ def run_training(_):
     import pprint
     from pathlib import Path
 
+    import jax
     import orbax.checkpoint as ocp
     import tensorflow as tf
     
@@ -47,7 +48,7 @@ def run_training(_):
         (
             "losses/lpn_localization_loss",
             "losses/lpn_detection_loss",
-            supervised_instance_loss,
+            jax.vmap(supervised_instance_loss),
         ),
     )
 

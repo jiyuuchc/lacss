@@ -7,6 +7,7 @@ import flax.linen as nn
 from flax.linen import initializers
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..typing import Array, ArrayLike
 
@@ -127,23 +128,26 @@ class ConvIntegrator(nn.Module):
 class FFN(nn.Module):
     """A feed-forward block commonly used in transformer"""
 
-    dim: int
+    dim: int|None = None
     dropout_rate: float = 0.0
     deterministic: bool = False
 
     @nn.compact
     def __call__(self, x, *, deterministic=None):
         deterministic = deterministic or self.deterministic
+        dim = self.dim or x.shape[-1] * 4
 
         shortcut = x
 
-        x = nn.Dense(self.dim)(x)
+        x = nn.LayerNorm()(x)
+
+        x = nn.Dense(dim)(x)
         x = jax.nn.gelu(x)
         x = nn.Dropout(self.dropout_rate)(x, deterministic=deterministic)
         x = nn.Dense(shortcut.shape[-1])(x)
         x = nn.Dropout(self.dropout_rate)(x, deterministic=deterministic)
+
         x = shortcut + x
-        x = nn.LayerNorm()(x)
 
         return x
 
@@ -357,3 +361,119 @@ class DropPath(nn.Module):
 
         return nn.Dropout(
             rate=self.rate, broadcast_dims=broadcast_dims)(x, deterministic)
+
+
+class PositionEmbedding1D(nn.Module):
+    """ 1D positional embeddings
+
+    Attributes:
+      posemb_init: if None, use cosine embedding
+      max_len: Maximum possible length for the input. If None, the max_len is
+        set to the inputs sequence length.
+      max_timescale: time scale for  
+      rescale_from: If not None, embeddings are rescaled from this length.
+    """
+    posemb_init: Initializer|None = nn.initializers.normal(stddev=0.02)
+    max_len: int|None = None
+    max_timescale: float = 1.0e4
+    rescale_from: int|None = None
+
+    @nn.compact
+    def __call__(self, input: tuple|ArrayLike) -> Array:
+        """
+        Args:
+          inputs: Input data that needs embedding or shape tuple
+
+        Returns:
+          Output: `(Sequence_length, inputs_dim)`.
+        """
+        if isinstance(input, tuple):
+            input_shape = input
+        else:
+            input_shape = input.shape
+
+        assert len(input_shape) >= 2, f"invalid input shape {input_shape}"
+        length, dim = input_shape[-2:]
+        max_len = self.max_len or length
+
+        if self.rescale_from: 
+            embedding_length = self.rescale_from
+        else:
+            embedding_length = max_len
+
+        if self.learned_embeddings:
+            pos_emb = self.params("pos_emb", self.posemb_init, (embedding_length, dim))
+        else:
+            pos_emb = np.zeros((embedding_length, dim), dtype=np.float32)
+            position = np.arange(embedding_length)[:, np.newaxis]
+            div_term = np.exp(
+                np.arange(0, dim, 2) / dim * np.log(self.max_timescale)
+            )
+            pos_emb[:, 0::2] = np.sin(position / div_term)
+            pos_emb[:, 1::2] = np.cos(position / div_term)
+            pos_emb = jnp.asarray(pos_emb)
+
+        if self.rescale_from:
+            pos_emb = jax.image.resize(
+                pos_emb, (max_len, dim), method='bilinear', antialias=False
+            )
+
+        pos_emb = pos_emb[:length, :]
+
+        assert pos_emb.shape == (length, dim)
+
+        return pos_emb
+
+
+class PositionEmbedding2D(nn.Module):
+    """2D cosine positional embeddings
+
+    Attributes:
+      rescale_from: If not None, embeddings are rescaled from this shape.
+      posemb_init: Positional embedding initializer.
+    """
+    posemb_init: Initializer = nn.initializers.normal(stddev=0.02)
+    rescale_from: tuple[int, int]|None = None
+
+    @nn.compact
+    def __call__(self, input: tuple|ArrayLike) -> Array:
+        """
+        Args:
+          inputs: Input data that needs embedding or shape tuple
+
+        Returns:
+          Output: `(h, w, inputs_dim)`.
+        """
+        if isinstance(input, tuple):
+            input_shape = input
+        else:
+            input_shape = input.shape
+
+        assert len(input_shape) >= 3, f"invalid input shape {input_shape}"
+        h, w, c = input_shape[-3:]
+
+        if self.rescale_from:  # `[h, w, c]`
+            embedding_h, embedding_w = self.rescale_from[0], self.rescale_from[1]
+        else:
+            embedding_h, embedding_w = h, w
+
+        row_pos_embed = self.param('row_pos_embedding', self.posemb_init, (embedding_w, c // 2))
+        col_pos_embed = self.param('col_pos_embedding', self.posemb_init, (embedding_h, c // 2))
+
+        # To `[h, w, c//2]`.
+        x_pos_emb = jnp.tile(
+            jnp.expand_dims(row_pos_embed, axis=0), (embedding_h, 1, 1)
+        )
+        y_pos_emb = jnp.tile(
+            jnp.expand_dims(col_pos_embed, axis=1), (1, embedding_w, 1)
+        )
+
+        # To `[h, w, c]`.
+        pos = jnp.concatenate((x_pos_emb, y_pos_emb), axis=-1)
+
+        if self.rescale_from:
+            pos = jax.image.resize(
+                pos, (h, w, c), method='bilinear', antialias=False
+            )
+
+        return pos

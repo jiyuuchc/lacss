@@ -8,11 +8,10 @@ import jax.numpy as jnp
 from ..ops import *
 from ..typing import *
 from ..utils import deep_update
-from .common import FPN
 from .convnext import ConvNeXt
 from .lpn import LPN
 from .segmentor import Segmentor
-
+from .stack_integrator import StackIntegrator
 
 class Lacss(nn.Module):
     """Main class for LACSS model
@@ -27,13 +26,14 @@ class Lacss(nn.Module):
 
     stem: nn.Module | None = None
     backbone: nn.Module = field(default_factory=ConvNeXt)
-    integrator: nn.Module | None = field(default_factory=FPN)
+    integrator: nn.Module | None = field(default_factory=StackIntegrator)
     detector: nn.Module = field(default_factory=LPN)
     segmentor: nn.Module | None = field(default_factory=Segmentor)
 
     max_proposal_offset: float = 12.0
+    z_scale: float = 5.0
 
-    def _best_match(self, gt_locations, pred_locations, height, width):
+    def _best_match(self, gt_locations, pred_locations):
         """replacing gt_locations with pred_locations if the close enough
         1. Each pred_location is matched to the closest gt_location
         2. For each gt_location, pick the matched pred_location with highest score
@@ -46,7 +46,9 @@ class Lacss(nn.Module):
         n_pred_locs = pred_locations.shape[0]
 
         matched_id, indicators = location_matching(
-            pred_locations, gt_locations, threshold
+            pred_locations * jnp.asarray([self.z_scale, 1, 1]), 
+            gt_locations * jnp.asarray([self.z_scale, 1, 1]), 
+            threshold,
         )
         matched_id = jnp.where(indicators, matched_id, -1)
 
@@ -87,11 +89,23 @@ class Lacss(nn.Module):
             a dict of model outputs
 
         """
-        height, width = image.shape[:2]
-
         outputs = {}
 
         x = image
+
+        # if inputs are 2D
+        if x.ndim == 3:
+            x = x[None, ...]
+
+        assert x.ndim == 4
+
+        if gt_locations is not None:
+            if gt_locations.shape[-1] == 2:
+                gt_locations = jnp.c_[jnp.zeros_like(gt_locations[:, :1]) + .5, gt_locations]
+        
+            assert x.ndim == 4
+            assert gt_locations.ndim == 2 and gt_locations.shape[-1] == 3
+
         if self.stem is not None:
             x = self.stem(x, training=training)
 
@@ -114,7 +128,7 @@ class Lacss(nn.Module):
 
             if training:
                 seg_locs, seg_cls = (
-                    self._best_match(gt_locations, pred_locs, height, width),
+                    self._best_match(gt_locations, pred_locs),
                     gt_cls,
                 )
             elif gt_locations is not None:
@@ -137,9 +151,9 @@ class Lacss(nn.Module):
             raise ValueError("patch_size must be 1, 2 or 4")
         return cls(
             backbone=ConvNeXt.get_model_small(patch_size=patch_size),
-            integrator=FPN(384),
+            integrator=StackIntegrator(dim_out=384),
             detector=LPN(
-                conv_spec=((256, 256, 256, 256), ()),
+                conv_spec=(256, 256, 256, 256),
                 feature_levels=(0, 1, 2),
                 feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
             ),
@@ -154,9 +168,9 @@ class Lacss(nn.Module):
     def get_small_model(cls, patch_size=4):
         return cls(
             backbone=ConvNeXt.get_model_tiny(patch_size=patch_size),
-            integrator=FPN(256),
+            integrator=StackIntegrator(dim_out=256),
             detector=LPN(
-                conv_spec=((192, 192, 192, 192), ()),
+                conv_spec=(192, 192, 192, 192),
                 feature_levels=(0, 1, 2),
                 feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
             ),
@@ -171,9 +185,9 @@ class Lacss(nn.Module):
     def get_large_model(cls, patch_size=4):
         return cls(
             backbone=ConvNeXt.get_model_base(patch_size=patch_size),
-            integrator=FPN(512),
+            integrator=StackIntegrator(dim_out=512),
             detector=LPN(
-                conv_spec=((384, 384, 384, 384), ()),
+                conv_spec=(384, 384, 384, 384),
                 feature_levels=(0, 1, 2),
                 feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
             ),

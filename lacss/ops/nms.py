@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 import jax
 import jax.numpy as jnp
 
@@ -7,19 +8,18 @@ from ..typing import *
 from .boxes import box_iou_similarity
 from .locations import distance_similarity
 
-NMS_TILE_SIZE = 512
-
+NMS_TILE_SIZE = 1024
 
 def _suppress(boxes, mask):
     return jnp.where(mask[:, None], -1, boxes)
 
 
-def _suppression_loop_body(inputs):
+def _suppression_loop_body(inputs, *, similarity_func=None):
     """Process boxes in the range [idx*NMS_TILE_SIZE, (idx+1)*NMS_TILE_SIZE).
     Args:
         inputs: tuple
             idx: current slice
-            boxes: a tensor with a shape of [N, 4] or [N, 2].
+            boxes: represetn bboxes if shape is [N, 4] else represent points [N, 2/3].
             num_selected: number of selected boxes so far
             threshold: float
     Returns:
@@ -32,9 +32,11 @@ def _suppression_loop_body(inputs):
     idx, boxes, num_selected, threshold = inputs
 
     box_slice = boxes[idx]
-    similarity_func = (
-        box_iou_similarity if boxes.shape[-1] == 4 else distance_similarity
-    )
+
+    if similarity_func is None:
+        similarity_func = (
+            box_iou_similarity if boxes.shape[-1] == 4 else distance_similarity
+        )
 
     def _for_loop_func(idx, slice):
         iou = similarity_func(boxes[idx], slice)
@@ -76,22 +78,19 @@ def _suppression_loop_body(inputs):
     return boxes, num_selected
 
 
-def sorted_non_max_suppression_indices(
+def _nms(
     scores: ArrayLike,
     boxes: ArrayLike,
     max_output_size: int,
     threshold: float = 0.5,
     min_score: float = 0,
+    similarity_func: callable|None = None,
 ) -> Array:
     # preprocessing
     c = boxes.shape[-1]
-    if c != 2 and c != 4:
-        raise ValueError(f"boxes should be Nx4 or Nx2, got Nx{c}")
 
-    # if similarity_func is None:
-    #     similarity_func = box_iou_similarity if c == 4 else distance_similarity
-
-    # pad_to_multiply_of(tile_size)
+    # if c != 2 and c != 4:
+        # raise ValueError(f"boxes should be Nx4 or Nx2, got Nx{c}")
 
     num_boxes = boxes.shape[0]
     pad = NMS_TILE_SIZE - 1 - (num_boxes - 1) % NMS_TILE_SIZE
@@ -115,9 +114,8 @@ def sorted_non_max_suppression_indices(
     def _inner_loop_func(idx, val):
         boxes, num_selected = val
         return jax.lax.cond(
-            (scores[idx * NMS_TILE_SIZE] >= min_score)
-            & (num_selected < max_output_size),
-            _suppression_loop_body,
+            (scores[idx * NMS_TILE_SIZE] >= min_score) & (num_selected < max_output_size),
+            partial(_suppression_loop_body, similarity_func=similarity_func),
             _trivial_suppress_all,
             (idx, boxes, num_selected, threshold),
         )
@@ -129,16 +127,6 @@ def sorted_non_max_suppression_indices(
         _inner_loop_func,
         (boxes, num_selected),
     )
-
-    # num_selected = 0
-    # for idx in range(num_boxes // NMS_TILE_SIZE):
-    #     boxes, num_selected = jax.lax.cond(
-    #         (scores[idx * NMS_TILE_SIZE] >= min_score)
-    #         & (num_selected < max_output_size),
-    #         _suppression_loop_body,
-    #         _trivial_suppress_all,
-    #         (idx, boxes, num_selected, threshold),
-    #     )
 
     # reshape boxes back
     boxes = boxes.reshape(-1, c)
@@ -153,13 +141,14 @@ def sorted_non_max_suppression_indices(
     return selected
 
 
-def sorted_non_max_suppression(
+def non_max_suppression(
     scores: ArrayLike,
     boxes: ArrayLike,
     max_output_size: int,
     threshold: float = 0.5,
     min_score: float = 0,
     return_selection: bool = False,
+    similarity_func: callable|None = None,
 ) -> tuple[Array]:
     """non-maximum suppression for either bboxes or points.
 
@@ -171,21 +160,23 @@ def sorted_non_max_suppression(
 
     Args:
         scores: [N]
-        boxes: [N, C]  C=4 for boxes, C=2 for locations
+        boxes: [N, C]  C=4 for boxes, C=2/3 for locations
         max_output_size: a positive scalar integer
-        threshold: a scalar float, can be negative
+        threshold: threshold of similarity score to supress
         min_score: min score to be selected, default 0
         return_selection: whether also return the boolean indicator
+        similarity_func: Optionally provide a custom callable to compute similarity score
 
     Returns:
         nms_scores: [M].  M = max_output_size
         nms_proposals: [M, C].
         selection: [N] a boolean indicator of selection status of original input
+          only if return_selection is True
     """
     if max_output_size <= 0:
         max_output_size = boxes.shape[0]
 
-    selected = sorted_non_max_suppression_indices(
+    selected = _nms(
         scores,
         boxes,
         max_output_size,

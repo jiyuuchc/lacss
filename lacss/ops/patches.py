@@ -17,17 +17,23 @@ from .image import sub_pixel_samples
 
 Shape = Sequence[int]
 
-
 def _get_patch_data(pred):
     if isinstance(pred, dict):
-        patches = pred["segmentations"]
-        yc = pred["segmentation_y_coords"]
-        xc = pred["segmentation_x_coords"]
+        patches = pred["segmentations"].squeeze()
+
+        if "segmentation_y_coords" in pred:
+            yc = pred["segmentation_y_coords"]
+            xc = pred["segmentation_x_coords"]
+        else:
+            ps = patches.shape[-1]
+            yc, xc = jnp.mgrid[:ps, :ps]
+            yc = yc + pred["segmentation_y0_coord"][:, None, None]
+            xc = xc + pred["segmentation_x0_coord"][:, None, None]
     else:
         patches, yc, xc = pred
+        patches = patches.squeeze()
 
-    if patches.ndim > yc.ndim:
-        patches = patches.squeeze(-1)
+    assert patches.ndim == yc.ndim
 
     return patches, yc, xc
 

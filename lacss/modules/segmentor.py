@@ -6,6 +6,7 @@ from typing import Sequence
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from lacss.ops import sub_pixel_samples
 
@@ -21,9 +22,7 @@ class Segmentor(nn.Module):
         conv_spec: conv_block definition, e.g. ((384,384,384), (64,))
         instance_crop_size: Crop size for segmentation.
         with_attention: Whether use spatial attention layer.
-        learned_encoding: Whether to use hard-coded position encoding.
-        encoder_dims: Dim of the position encoder, if using learned encoding. Default is (8,8,4)
-
+        encoder_dims: Dim of the learned position encoder.
     """
 
     feature_level: int = 0
@@ -35,7 +34,6 @@ class Segmentor(nn.Module):
     n_cls: int = 1
     instance_crop_size: int = 96
     use_attention: bool = False
-    learned_encoding: bool = True
     encoder_dims: Sequence[int] = (8, 8, 4)
 
     @property
@@ -99,7 +97,33 @@ class Segmentor(nn.Module):
             "linear",
         )
 
-        return encodings
+        encodings = nn.Dense(self.conv_spec[1][0], use_bias=False)(encodings) #[N, ps, ps, c]
+
+        return encodings #[N, ps, ps, c]
+
+    def _z_encodings(self, depth, z_locs):
+        # use cosine embedding for z
+        max_embedding_length = depth * 2 
+        time_scale = 64
+        n_ch = self.conv_spec[1][0]
+
+        pos_embedding = np.zeros((max_embedding_length, n_ch))
+        pos = np.arange(max_embedding_length) - max_embedding_length//2
+        pos = pos[:, None] * np.exp(- np.log(time_scale) / n_ch * np.arange(0, n_ch, 2))
+        pos_embedding[:, 0::2] = np.sin(pos)
+        pos_embedding[:, 1::2] = np.cos(pos)
+
+        pos_embedding = jnp.asarray(pos_embedding) # [32, n_ch]
+
+        pos_embedding = nn.Dense(n_ch, use_bias=False)(pos_embedding)
+
+        z_idx = max_embedding_length // 2 - z_locs.astype(int)
+        z_idx = z_idx[:, None] + jnp.arange(depth) # [N, D]
+
+        pos_embedding = jax.vmap(lambda z: pos_embedding[z])(z_idx) # [N, D, n_ch]
+        pos_embedding = pos_embedding.swapaxes(0, 1) # [D, N, n_ch]
+
+        return pos_embedding #[D, N, n_ch]
 
     @nn.compact
     def __call__(
@@ -110,54 +134,60 @@ class Segmentor(nn.Module):
     ) -> dict:
         """
         Args:
-            features: list[array: [H, W, C]] multiscale features from the backbone.
-            locations: [N, 2]
+            features: list[array: [D, H, W, C]] multiscale features from the backbone.
+            locations: [N, 3]
             classes: [N] optional
 
         Returns:
-            A dictionary of values representing segmentation outputs.
-                * instance_output: [N, crop_size, crop_size]
-                * instance_mask; [N, 1, 1] boolean mask indicating valid outputs
-                * instance_yc: [N, crop_size, crop_size] meshgrid y coordinates
-                * instance_xc: [N, crop_size, crop_size] meshgrid x coordinates
+            A nested dictionary of values representing segmentation outputs.
+              * segmentor/logits: all segment logits
+              * predictions/segmentations: logits of designated class [N, D, ps, ps]
+              * predictions/segmentation_y0_coord: y coord of patch top-left corner [N]
+              * predictions/segmentation_x0_coord: x coord of patch top-left corner [N]
+              * predictions/segmentation_is_valid: mask for valid patches [N]
         """
         crop_size = self.instance_crop_size
-        locations = (locations / self.feature_scale).astype(int)
 
-        x = features[self.feature_level]
-
-        # pos encoder
-        if not self.learned_encoding:
-            pos_encodings = self._static_pos_encoder()
-        else:
-            pos_encodings = self._pos_encoder(x, locations)
-
-        pos_encodings = nn.Conv(self.conv_spec[1][0], (1, 1), use_bias=False)(
-            pos_encodings
-        )
+        locations_z = locations[:, 0].astype(int)
+        locations_yx = (locations[:, 1:] / self.feature_scale).astype(int) 
+        # locations = (locations / self.feature_scale).astype(int)
 
         # feature convs
+        x = features[self.feature_level]
         for n_ch in self.conv_spec[0]:
             x = nn.Conv(n_ch, (3, 3), use_bias=False)(x)
-            x = nn.LayerNorm(use_scale=False)(x)
-            # x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
+            x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
-        self.sow("intermediates", "segmentor_image_features", x)
+        x = nn.Conv(self.conv_spec[1][0], (3, 3))(x)
+
+        self.sow("intermediates", "segmentor_image_features", x) # [D, H, W, C]
+
+        # pos encoder
+        feature = features[self.feature_level][0]
+        pos_encodings = self._pos_encoder(feature, locations_yx) # [N, ps, ps, c]
+        z_encodings = self._z_encodings(x.shape[0], locations_z) # [D, N, c]
+
+        pos_encodings = pos_encodings + z_encodings[:, :, None, None, :] #[D, N, ps, ps, c]
+
         self.sow("intermediates", "segmentor_pos_embed", pos_encodings)
 
         # mixing features with pos_encodings
-        x = nn.Conv(self.conv_spec[1][0], (3, 3), use_bias=False)(x)
-        patches, ys, xs = self._gather_patches(x, locations)
-        patches = jax.nn.relu(patches + pos_encodings)
+        patches, ys, xs = jax.vmap(
+            self._gather_patches,
+            in_axes=(0, None),
+            out_axes=(0, None, None),
+        )(x, locations_yx) # [D, N, ps, ps, c]
+
+        patches = jax.nn.relu(patches + pos_encodings) 
 
         if self.use_attention:
             patches = SpatialAttention()(patches)
 
         # patche convs
-        for n_ch in self.conv_spec[1][1:]:
-            patches = nn.Conv(n_ch, (3, 3))(patches)
-            patches = jax.nn.relu(patches)
+        # for n_ch in self.conv_spec[1][1:]:
+            # patches = nn.Conv(n_ch, (3, 3))(patches)
+            # patches = jax.nn.relu(patches)
 
         self.sow("intermediates", "segmentor_patch_features", patches)
 
@@ -169,7 +199,7 @@ class Segmentor(nn.Module):
             if self.feature_scale != 2:
                 logits = jax.image.resize(
                     logits,
-                    patches.shape[:1] + (crop_size, crop_size, self.n_cls),
+                    patches.shape[:2] + (crop_size, crop_size, self.n_cls),
                     "linear",
                 )
 
@@ -178,27 +208,23 @@ class Segmentor(nn.Module):
         else:
             outputs = jnp.take_along_axis(
                 logits,
-                classes.reshape(-1, 1, 1, 1),
+                classes.reshape(1, -1, 1, 1, 1),
                 axis=-1,
-            )
+            ) # [D, N, ps, ps, 1]
+        outputs = outputs.swapaxes(0, 1) #[N, D, ps, ps, 1]
 
-        # indicies
-        yc, xc = jnp.mgrid[: self.instance_crop_size, : self.instance_crop_size]
-        yc = yc + ys[:, :1, :1] * self.feature_scale
-        xc = xc + xs[:, :1, :1] * self.feature_scale
 
         # clear invalid locations
         mask = (locations >= 0).all(axis=-1)
-        mask = jnp.expand_dims(mask, (1, 2))
 
         return dict(
             segmentor=dict(
                 logits=logits,
             ),
             predictions=dict(
-                segmentations=outputs.squeeze(-1),
-                segmentation_y_coords=yc,
-                segmentation_x_coords=xc,
+                segmentations=outputs.squeeze(-1), #[N, D, ps, ps]
+                segmentation_y0_coord=ys[:, 0, 0] * self.feature_scale,
+                segmentation_x0_coord=xs[:, 0, 0] * self.feature_scale,
                 segmentation_is_valid=mask,
             ),
         )
