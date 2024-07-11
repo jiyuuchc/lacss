@@ -1,2 +1,2 @@
 from xtrain import *
-from .lacss_trainer import LacssTrainer
+from .lacss_trainer import *

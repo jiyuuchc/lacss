@@ -85,7 +85,7 @@ class ConvNeXt(nn.Module):
     patch_size: int = 4
     depths: Sequence[int] = (3, 3, 27, 3)
     dims: Sequence[int] = (96, 192, 384, 768)
-    drop_path_rate: float = 0.0
+    drop_path_rate: float = 0.4
     layer_scale_init_value: float = 1e-6
 
     @nn.compact

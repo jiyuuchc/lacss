@@ -191,3 +191,13 @@ def deep_update(d, u):
         else:
             d[k] = v
     return d
+
+def remove_dictkey(d, k):
+    """recursively remove a key from a nested dict"""
+    import collections.abc
+    if not isinstance(d, collections.abc.Mapping):
+        return
+    if k in d:
+        del d[k]
+    for sub in d.values():
+        remove_dictkey(sub, k)

@@ -48,7 +48,7 @@ def run_training(_):
         (
             "losses/lpn_localization_loss",
             "losses/lpn_detection_loss",
-            jax.vmap(supervised_instance_loss),
+            supervised_instance_loss,
         ),
     )
 

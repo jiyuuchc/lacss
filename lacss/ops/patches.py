@@ -112,7 +112,7 @@ def patches_to_label(
         input_size: shape of the input image. Tuple of H, W
         mask: boolean indicators masking out unwanted instances. Default is None (all cells)
         score_threshold: otional, min_score to be included. Default is .5.
-        threshold: segmentation threshold.  Default .5
+        threshold: segmentation threshold.
 
     Returns:
         label: [height, width]
@@ -123,9 +123,9 @@ def patches_to_label(
     pr = patches > threshold
 
     if mask is None:
-        mask = pred["segmentation_is_valid"].squeeze(axis=(1, 2))
+        mask = pred["segmentation_is_valid"]
     else:
-        mask &= pred["segmentation_is_valid"].squeeze(axis=(1, 2))
+        mask &= pred["segmentation_is_valid"]
 
     if score_threshold > 0:
         mask &= pred["scores"] >= score_threshold

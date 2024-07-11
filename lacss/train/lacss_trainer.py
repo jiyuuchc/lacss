@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 from tqdm import tqdm
-from xtrain import Trainer, JIT
 
 import lacss.metrics
 
@@ -19,10 +18,13 @@ from lacss.losses import (
     aux_size_loss,
     collaborator_border_loss,
     collaborator_segm_loss,
+    lpn_loss,
     segmentation_loss,
 )
 
 from ..modules import Lacss, UNet
+from ..typing import Array, Optimizer
+from xtrain import Trainer, JIT
 from ..typing import *
 
 class LacssCollaborator(nn.Module):
@@ -48,9 +50,9 @@ class LacssCollaborator(nn.Module):
         c = cls_id.astype(int).squeeze() if cls_id is not None else 0
 
         net = UNet(self.unet_spec, self.patch_size)
-        _, unet_out = net(image)
+        unet_out = net(image)
 
-        y = unet_out[str(net.start_level)]
+        y = unet_out[0]
 
         fg = nn.Conv(self.n_cls, (3, 3))(y)
         fg = fg[..., c]
@@ -86,7 +88,7 @@ class _CKSModel(nn.Module):
         )
 
         if self.collaborator is not None:
-            outputs.update(self.collaborator(image=image, cls_id=cls_id))
+            outputs["predictions"].update(self.collaborator(image=image, cls_id=cls_id))
         return outputs
 
 
@@ -97,7 +99,7 @@ class LacssTrainer:
 
     def __init__(
         self,
-        config: dict = {},
+        model_config: dict,
         collaborator_config: Optional[dict] = None,
         *,
         optimizer: Optional[Optimizer] = None,
@@ -117,7 +119,7 @@ class LacssTrainer:
             optimizer: Override the default optimizer
             strategy: Training backend. See See [Traing backends](/api/train/#training-backends).
         """
-        principal = Lacss.from_config(config)
+        principal = Lacss.from_config(model_config)
 
         if collaborator_config is None:
             collaborator = None
@@ -166,8 +168,7 @@ class LacssTrainer:
         pre_seg_loss = partial(segmentation_loss, pretraining=True)
         pre_col_seg_loss = partial(collaborator_segm_loss, sigma=100.0, pi=1.0)
         losses = [
-            "losses/lpn_localization_loss",
-            "losses/lpn_detection_loss",
+            lpn_loss,
             pre_seg_loss,
             pre_col_seg_loss,
             collaborator_border_loss,
@@ -184,8 +185,7 @@ class LacssTrainer:
     def _get_trainer(self, sigma, pi):
         col_seg_loss = partial(collaborator_segm_loss, sigma=sigma, pi=pi)
         losses = [
-            "losses/lpn_localization_loss",
-            "losses/lpn_detection_loss",
+            lpn_loss,
             segmentation_loss,
             col_seg_loss,
             collaborator_border_loss,
@@ -294,7 +294,6 @@ class LacssTrainer:
         trainer = self._get_trainer(sigma, pi)
         train_it = trainer.train(
             dataset,
-            rng_cols=["droppath"],
             init_vars=init_vars,
             training=True,
         )

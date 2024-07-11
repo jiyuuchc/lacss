@@ -164,8 +164,11 @@ class Segmentor(nn.Module):
         self.sow("intermediates", "segmentor_image_features", x) # [D, H, W, C]
 
         # pos encoder
-        feature = features[self.feature_level][0]
-        pos_encodings = self._pos_encoder(feature, locations_yx) # [N, ps, ps, c]
+        feature = features[self.feature_level]
+        pos_encodings = jax.vmap(
+            self._pos_encoder,
+            in_axes=(0, None),
+        )(feature, locations_yx) # [D, N, ps, ps, c]
         z_encodings = self._z_encodings(x.shape[0], locations_z) # [D, N, c]
 
         pos_encodings = pos_encodings + z_encodings[:, :, None, None, :] #[D, N, ps, ps, c]
@@ -195,7 +198,7 @@ class Segmentor(nn.Module):
         if self.feature_scale == 1:
             logits = nn.Conv(self.n_cls, (3, 3))(patches)
         else:
-            logits = nn.ConvTranspose(self.n_cls, (2, 2), strides=(2, 2))(patches)
+            logits = nn.ConvTranspose(self.n_cls, (3, 3), strides=(2, 2))(patches)
             if self.feature_scale != 2:
                 logits = jax.image.resize(
                     logits,
@@ -211,20 +214,26 @@ class Segmentor(nn.Module):
                 classes.reshape(1, -1, 1, 1, 1),
                 axis=-1,
             ) # [D, N, ps, ps, 1]
-        outputs = outputs.swapaxes(0, 1) #[N, D, ps, ps, 1]
-
+        outputs = outputs.swapaxes(0, 1).squeeze(-1) #[N, D, ps, ps]
 
         # clear invalid locations
         mask = (locations >= 0).all(axis=-1)
+        y0 = jnp.where(mask, ys[:, 0, 0] * self.feature_scale, -1)
+        x0 = jnp.where(mask, xs[:, 0, 0] * self.feature_scale, -1)
+        outputs = jnp.where(
+            jnp.expand_dims(mask, (1,2,3)),
+            outputs,
+            -1e8,
+        )
 
         return dict(
             segmentor=dict(
                 logits=logits,
             ),
             predictions=dict(
-                segmentations=outputs.squeeze(-1), #[N, D, ps, ps]
-                segmentation_y0_coord=ys[:, 0, 0] * self.feature_scale,
-                segmentation_x0_coord=xs[:, 0, 0] * self.feature_scale,
+                segmentations=outputs, #[N, D, ps, ps]
+                segmentation_y0_coord=y0,
+                segmentation_x0_coord=x0,
                 segmentation_is_valid=mask,
             ),
         )

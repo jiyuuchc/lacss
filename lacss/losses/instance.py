@@ -119,12 +119,14 @@ def weakly_supervised_instance_loss(batch, prediction, *, ignore_mask: bool = Fa
     instance_mask = preds["segmentation_is_valid"]
     instance_logit, yc, xc = _get_patch_data(preds)
     instances = jax.nn.sigmoid(instance_logit)
+    log_yi = -jax.nn.log_sigmoid(-instance_logit)
 
     patch_size = instances.shape[-1]
     padding_size = patch_size // 2 + 2
     yc += padding_size
     xc += padding_size
 
+    # dealing with masked out entries
     if ignore_mask:
         seg = jnp.zeros(inputs["image"].shape[:-1])
         seg = jnp.pad(seg, padding_size)
@@ -138,13 +140,13 @@ def weakly_supervised_instance_loss(batch, prediction, *, ignore_mask: bool = Fa
         seg_patch = seg[yc, xc]
         loss = (1.0 - seg_patch) * instances + seg_patch * (1.0 - instances)
 
-    log_yi_sum = jnp.zeros_like(seg)
-
-    log_yi = -jax.nn.log_sigmoid(-instance_logit)
+    log_yi_sum = jnp.zeros_like(seg, dtype="float32")
     log_yi_sum = log_yi_sum.at[yc, xc].add(log_yi)
-    log_yi = log_yi_sum[yc, xc] - log_yi
+    log_yi_inv = log_yi_sum[yc, xc] - log_yi
 
-    loss = loss + (instances * log_yi)
+    loss = loss + (instances * log_yi_inv)
+    loss = loss.mean(axis=(1,2))
+    assert loss.ndim == 1
 
     return mean_over_boolean_mask(loss, instance_mask)
 

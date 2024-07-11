@@ -179,8 +179,8 @@ def _predict(context, params, image):
     output = dict(
         instance_mask=instance_mask,
         segmentations=jax.nn.sigmoid(preds["segmentations"]),
-        y0s=preds["segmentation_y_coords"][:, 0, 0],
-        x0s=preds["segmentation_x_coords"][:, 0, 0],
+        y0s=preds["segmentation_y0_coord"],
+        x0s=preds["segmentation_x0_coord"],
         scores=preds["scores"],
         bboxes=lacss.ops.bboxes_of_patches(
             preds, threshold=context["segmentation_threshold"]

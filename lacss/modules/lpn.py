@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import optax
 
 from ..losses.common import binary_focal_crossentropy
-from ..ops import non_max_suppression
+from ..ops import non_max_suppression, location_matching
 from ..typing import Array, ArrayLike
 
 EPS = jnp.finfo("float32").eps
@@ -48,8 +48,48 @@ class LPN(nn.Module):
     pre_nms_topk: int = -1
     max_output: int = 1280
     min_score: float = 0.2
-
+    max_proposal_offset: float = 12.0
     z_scale:float = 5.0
+
+    def _best_match(self, gt_locations, pred_locations):
+        """replacing gt_locations with pred_locations if the close enough
+        1. Each pred_location is matched to the closest gt_location
+        2. For each gt_location, pick the matched pred_location with highest score
+        3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
+        """
+
+        threshold = self.max_proposal_offset
+
+        n_gt_locs = gt_locations.shape[0]
+        n_pred_locs = pred_locations.shape[0]
+
+        matched_id, indicators = location_matching(
+            pred_locations * jnp.asarray([self.z_scale, 1, 1]), 
+            gt_locations * jnp.asarray([self.z_scale, 1, 1]), 
+            threshold,
+        )
+        matched_id = jnp.where(indicators, matched_id, -1)
+
+        matching_matrix = (
+            matched_id[None, :] == jnp.arange(n_gt_locs)[:, None]
+        )  # true at matched gt(row)/pred(col), at most one true per col
+        last_col = jnp.ones([n_gt_locs, 1], dtype=bool)
+        matching_matrix = jnp.concatenate(
+            [matching_matrix, last_col], axis=-1
+        )  # last col is true
+
+        # first true of every row
+        matched_loc_ids = jnp.argmax(matching_matrix, axis=-1)
+
+        training_locations = jnp.where(
+            matched_loc_ids[:, None] == n_pred_locs,  # true: failed match
+            gt_locations,
+            pred_locations[
+                matched_loc_ids, :
+            ],  # out-of-bound error silently dropped in jax
+        )
+
+        return training_locations
 
     def _to_targets(
         self,
@@ -99,9 +139,9 @@ class LPN(nn.Module):
         cls_target = jnp.where(is_target, cls_map, self.detection_n_cls)  # [D, H, W]
 
         indices = indices[...,None].repeat(3, axis=-1)  # [1, D, H, W, 3]
-        regression_target = jnp.take_along_axis(distances, indices, 0).squeeze(
-            0
-        )  # [D, H, W, 3]
+        regression_target = jnp.take_along_axis(distances, indices, 0)
+        regression_target = regression_target.squeeze(0) # [D, H, W, 3]
+        regression_target = regression_target / self.detection_roi # normalize
 
         return cls_target, regression_target
 
@@ -163,6 +203,8 @@ class LPN(nn.Module):
         output_size = self.max_output
         topk = self.pre_nms_topk
         score_threshold = self.min_score
+
+        network_outputs = jax.lax.stop_gradient(network_outputs)
 
         # preprocess
         scores, locations, clss = [], [], []
@@ -232,10 +274,14 @@ class LPN(nn.Module):
             x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
             x = jax.nn.relu(x)
 
+        self.sow("intermediates", "lpn_features", x)
+
         cls_logits = nn.Conv(self.detection_n_cls + 1, (1, 1))(x)
         regressions = nn.Conv(3, (1, 1))(x)
 
-        self.sow("intermediates", "lpn_features", x)
+        # no z-localization for 2d input
+        if x.shape[0] == 1:
+            regressions = regressions.at[..., 0].set(0)
 
         return dict(
             regressions=regressions,
@@ -272,12 +318,17 @@ class LPN(nn.Module):
         # losses
         if training:
             losses = self._compute_losses(network_outputs, gt_locations, gt_cls)
+            network_outputs["training_locations"] = self._best_match(
+                gt_locations, 
+                predictions["locations"],
+            )
+
         else:
             losses = {}
 
         # format outputs
         return dict(
-            lpn=network_outputs,
+            detector=network_outputs,
             predictions=predictions,
             losses=losses,
         )

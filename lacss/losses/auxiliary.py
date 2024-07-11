@@ -9,6 +9,7 @@ import optax
 from xtrain import unpack_x_y_sample_weight
 
 from ..ops import sorbel_edges
+from ..ops.patches import _get_patch_data
 from .common import binary_focal_factor_loss
 
 EPS = jnp.finfo("float32").eps
@@ -21,6 +22,7 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
     patch_edges = jnp.square(sorbel_edges(instance_output))
     patch_edges = (patch_edges[0] + patch_edges[1]) / 8.0
     patch_edges = jnp.sqrt(jnp.clip(patch_edges, 1e-8, 1.0))  # avoid GPU error
+
     # patch_edges = jnp.where(patch_edges > 0, jnp.sqrt(patch_edges), 0)
     combined_edges = jnp.zeros([height + padding * 2, width + padding * 2])
     combined_mask = jnp.zeros([height + padding * 2, width + padding * 2], dtype=bool)
@@ -28,19 +30,20 @@ def _compute_edge(instance_output, instance_yc, instance_xc, height, width):
     combined_edges = combined_edges.at[
         instance_yc + padding, instance_xc + padding
     ].add(patch_edges)
-    combined_mask = combined_mask.at[instance_yc + padding, instance_xc + padding].set(
-        True
-    )
+    # combined_mask = combined_mask.at[instance_yc + padding, instance_xc + padding].set(
+        # True
+    # )
 
     combined_edges = combined_edges[
         padding : padding + height, padding : padding + width
     ]
-    combined_mask = combined_mask[padding : padding + height, padding : padding + width]
-    combined_edges = jnp.where(
-        combined_mask,
-        jnp.tanh(combined_edges),
-        -1,
-    )
+    # combined_mask = combined_mask[padding : padding + height, padding : padding + width]
+    # combined_edges = jnp.where(
+        # combined_mask,
+        # jnp.tanh(combined_edges),
+        # -1,
+    # )
+    combined_edges = jnp.tanh(combined_edges)
 
     return combined_edges
 
@@ -51,12 +54,10 @@ def self_supervised_edge_loss(batch, prediction):
     preds = prediction["predictions"]
     inputs, _, _ = unpack_x_y_sample_weight(batch)
 
-    instance_logit = preds["segmentations"]
-    instance_yc = preds["segmentation_y_coords"]
-    instance_xc = preds["segmentation_x_coords"]
+    instance_logit, instance_yc, instance_xc = _get_patch_data(preds)
     instance_output = jax.nn.sigmoid(instance_logit)
 
-    height, width = inputs["image"].shape[:2]
+    height, width = inputs["image"].shape[-3:-1]
     instance_edge = _compute_edge(
         instance_output, instance_yc, instance_xc, height, width
     )
@@ -75,11 +76,9 @@ def self_supervised_segmentation_loss(
     preds = prediction["predictions"]
     inputs, _, _ = unpack_x_y_sample_weight(batch)
 
-    logit = preds["segmentations"]
-    yc = preds["segmentation_y_coords"]
-    xc = preds["segmentation_x_coords"]
+    logit, yc, xc = _get_patch_data(preds)
 
-    height, width = inputs["image"].shape[:2]
+    height, width = inputs["image"].shape[-3:-1]
     ps = yc.shape[-1]
 
     offset_sigma = jnp.asarray(offset_sigma).reshape(-1)
@@ -117,26 +116,24 @@ def aux_size_loss(batch, prediction, *, weight=0.01):
     preds = prediction["predictions"]
     inputs, labels, _ = unpack_x_y_sample_weight(batch)
 
-    logit = preds["segmentations"]
-    yc = preds["segmentation_y_coords"]
-    xc = preds["segmentation_x_coords"]
+    logit, yc, xc = _get_patch_data(preds)
     instances = jax.nn.sigmoid(logit)
+    mask = preds["segmentation_is_valid"]
 
     if labels is None:
         labels = {}
 
     if "gt_labels" in labels or "gt_masks" in labels:
-        return 0.0
+        return None
 
-    height, width = inputs["image"].shape[:2]
+    height, width = inputs["image"].shape[-3:-1]
 
     valid_locs = (yc >= 0) & (yc < height) & (xc >= 0) & (xc < width)
 
-    areas = jnp.sum(instances, axis=(-1, -2), where=valid_locs, keepdims=True)
+    areas = jnp.sum(instances, axis=(-1, -2), where=valid_locs)
     areas = jnp.clip(areas, EPS, 1e6)
     loss = jax.lax.rsqrt(areas) * instances.shape[-1]
 
-    mask = preds["instance_is_valid"]
     n_instances = jnp.count_nonzero(mask) + EPS
     loss = loss.sum(where=mask) / n_instances
 

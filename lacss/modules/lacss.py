@@ -17,11 +17,11 @@ class Lacss(nn.Module):
     """Main class for LACSS model
 
     Attributes:
-        backbone: The ConvNeXt backbone
-        lpn: The LPN head for detecting cell location
-        detector: A weight-less module interpreting lpn output
+        stem: Prepprocessing module
+        backbone: by default a ConvNeXt CNN
+        integrator: module for integrating backbone output
+        detector: detection head to predict cell locations
         segmentor: The segmentation head
-
     """
 
     stem: nn.Module | None = None
@@ -29,49 +29,6 @@ class Lacss(nn.Module):
     integrator: nn.Module | None = field(default_factory=StackIntegrator)
     detector: nn.Module = field(default_factory=LPN)
     segmentor: nn.Module | None = field(default_factory=Segmentor)
-
-    max_proposal_offset: float = 12.0
-    z_scale: float = 5.0
-
-    def _best_match(self, gt_locations, pred_locations):
-        """replacing gt_locations with pred_locations if the close enough
-        1. Each pred_location is matched to the closest gt_location
-        2. For each gt_location, pick the matched pred_location with highest score
-        3. if the picked pred_location is within threshold distance, replace the gt_location with the pred_location
-        """
-
-        threshold = self.max_proposal_offset
-
-        n_gt_locs = gt_locations.shape[0]
-        n_pred_locs = pred_locations.shape[0]
-
-        matched_id, indicators = location_matching(
-            pred_locations * jnp.asarray([self.z_scale, 1, 1]), 
-            gt_locations * jnp.asarray([self.z_scale, 1, 1]), 
-            threshold,
-        )
-        matched_id = jnp.where(indicators, matched_id, -1)
-
-        matching_matrix = (
-            matched_id[None, :] == jnp.arange(n_gt_locs)[:, None]
-        )  # true at matched gt(row)/pred(col), at most one true per col
-        last_col = jnp.ones([n_gt_locs, 1], dtype=bool)
-        matching_matrix = jnp.concatenate(
-            [matching_matrix, last_col], axis=-1
-        )  # last col is true
-
-        # first true of every row
-        matched_loc_ids = jnp.argmax(matching_matrix, axis=-1)
-
-        training_locations = jnp.where(
-            matched_loc_ids[:, None] == n_pred_locs,  # true: failed match
-            gt_locations,
-            pred_locations[
-                matched_loc_ids, :
-            ],  # out-of-bound error silently dropped in jax
-        )
-
-        return training_locations
 
     def __call__(
         self,
@@ -84,7 +41,8 @@ class Lacss(nn.Module):
         """
         Args:
             image: [H, W, C]
-            gt_locations: [M, 2] if training, otherwise None
+            gt_locations: [M, 2/3] if training, otherwise None
+            gt_cls: [M] instance classes for multi-class prediction
         Returns:
             a dict of model outputs
 
@@ -103,6 +61,9 @@ class Lacss(nn.Module):
             if gt_locations.shape[-1] == 2:
                 gt_locations = jnp.c_[jnp.zeros_like(gt_locations[:, :1]) + .5, gt_locations]
         
+            if gt_cls is None:
+                gt_cls = jnp.zeros(gt_locations.shape[0], dtype=int)
+
             assert x.ndim == 4
             assert gt_locations.ndim == 2 and gt_locations.shape[-1] == 3
 
@@ -120,21 +81,14 @@ class Lacss(nn.Module):
         outputs = deep_update(outputs, detector_out)
 
         if self.segmentor is not None:
-            pred_locs = outputs["predictions"]["locations"]
-            pred_cls = outputs["predictions"]["classes"]
-
-            if gt_cls is None and gt_locations is not None:
-                gt_cls = jnp.zeros(gt_locations.shape[0], dtype=int)
-
             if training:
-                seg_locs, seg_cls = (
-                    self._best_match(gt_locations, pred_locs),
-                    gt_cls,
-                )
-            elif gt_locations is not None:
+                seg_locs= outputs["detector"]["training_locations"]
+                seg_cls = gt_cls
+            elif gt_locations is not None: # not training, but locations of cells are known
                 seg_locs, seg_cls = gt_locations, gt_cls
             else:
-                seg_locs, seg_cls = pred_locs, pred_cls
+                seg_locs = outputs["predictions"]["locations"]
+                seg_cls = outputs["predictions"]["classes"]
 
             self.sow("intermediates", "segmentation_locations", seg_locs)
             self.sow("intermediates", "segmentation_cls", seg_cls)
@@ -144,6 +98,28 @@ class Lacss(nn.Module):
             outputs = deep_update(outputs, segmentor_out)
 
         return outputs
+
+    def get_config(self):
+        from dataclasses import asdict
+        from ..utils import remove_dictkey
+
+        cfg = asdict(self)
+
+        remove_dictkey(cfg, "parent")
+
+        return cfg
+
+    @classmethod
+    def from_config(cls, config):
+        from collections import defaultdict             
+        config_ = defaultdict(lambda: {})
+        config_.update(config)
+        return Lacss(
+            backbone=ConvNeXt(**config_["backbone"]),
+            integrator=StackIntegrator(**config_["integrator"]),
+            detector=LPN(**config_["detector"]),
+            segmentor=Segmentor(**config_["segmentor"]),
+        )
 
     @classmethod
     def get_default_model(cls, patch_size=4):
