@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Callable
 
 import flax.linen as nn
 import jax
@@ -24,6 +24,8 @@ class _Block(nn.Module):
     drop_rate: int = 0.4
     layer_scale_init_value: float = 1e-6
     kernel_size: int = 7
+    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    activation: Callable[[Array], Array]=nn.gelu
 
     @nn.compact
     def __call__(self, x: ArrayLike, *, training: Optional[bool] = None) -> Array:
@@ -34,9 +36,9 @@ class _Block(nn.Module):
         shortcut = x
 
         x = nn.Conv(dim, (ks, ks), feature_group_count=dim)(x)
-        x = nn.LayerNorm(epsilon=1e-6)(x)
+        x = self.normalization()(x)
         x = nn.Dense(dim * 4)(x)
-        x = jax.nn.gelu(x)
+        x = self.activation(x)
         x = nn.Dense(dim)(x)
 
         if scale > 0:
@@ -83,10 +85,13 @@ class ConvNeXt(nn.Module):
     """
 
     patch_size: int = 4
-    depths: Sequence[int] = (3, 3, 27, 3)
+    depths: Sequence[int] = (3, 3, 9, 3)
     dims: Sequence[int] = (96, 192, 384, 768)
     drop_path_rate: float = 0.4
     layer_scale_init_value: float = 1e-6
+    kernel_size: int = 7
+    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    activation: Callable[[Array], Array]=nn.gelu
 
     @nn.compact
     def __call__(
@@ -106,13 +111,20 @@ class ConvNeXt(nn.Module):
             if k == 0:
                 ps = self.patch_size
                 x = nn.Conv(self.dims[k], (ps, ps), strides=(ps, ps))(x)
-                x = nn.LayerNorm(epsilon=1e-6)(x)
+                # FIXME normalization?
+                # x = nn.LayerNorm(epsilon=1e-6)(x)
             else:
-                x = nn.LayerNorm(epsilon=1e-6)(x)
+                x = self.normalization()(x)
                 x = nn.Conv(self.dims[k], (2, 2), strides=(2, 2))(x)
 
             for _ in range(self.depths[k]):
-                x = _Block(dp_rate, self.layer_scale_init_value)(x, training=training)
+                x = _Block(
+                    dp_rate,
+                    layer_scale_init_value=self.layer_scale_init_value,
+                    kernel_size=self.kernel_size,
+                    normalization=self.normalization,
+                    activation=self.activation,
+                )(x, training=training)
                 dp_rate += self.drop_path_rate / (sum(self.depths) - 1)
 
             outputs.append(x)

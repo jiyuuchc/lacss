@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Callable
 
 import flax.linen as nn
 import jax
@@ -35,6 +35,9 @@ class LPN(nn.Module):
     feature_levels: Sequence[int] = (0, 1, 2)
     feature_level_scales: Sequence[int] = (4, 8, 16)
     conv_spec: Sequence[int] = (192, 192, 192, 192)
+    # normalization: Callable[[None], nn.Module]=lambda : nn.GroupNorm(reduction_axes=(-1,-2,-3))
+    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    activation: Callable[[Array], Array] = nn.relu
 
     detection_n_cls: int = 1
 
@@ -46,7 +49,7 @@ class LPN(nn.Module):
     # detection hyperparams
     nms_threshold: float = 8.0
     pre_nms_topk: int = -1
-    max_output: int = 1280
+    max_output: int = 512
     min_score: float = 0.2
     max_proposal_offset: float = 12.0
     z_scale:float = 5.0
@@ -141,7 +144,7 @@ class LPN(nn.Module):
         indices = indices[...,None].repeat(3, axis=-1)  # [1, D, H, W, 3]
         regression_target = jnp.take_along_axis(distances, indices, 0)
         regression_target = regression_target.squeeze(0) # [D, H, W, 3]
-        regression_target = regression_target / self.detection_roi # normalize
+        # regression_target = regression_target / self.detection_roi # normalize
 
         return cls_target, regression_target
 
@@ -270,9 +273,9 @@ class LPN(nn.Module):
         x = feature
 
         for n_ch in conv_spec:
-            x = nn.Conv(n_ch, (3, 3), use_bias=False)(x)
-            x = nn.GroupNorm(num_groups=n_ch)(x[None, ...])[0]
-            x = jax.nn.relu(x)
+            x = nn.Conv(n_ch, (3, 3))(x)
+            x = self.normalization()(x)
+            x = self.activation(x)
 
         self.sow("intermediates", "lpn_features", x)
 
@@ -281,7 +284,7 @@ class LPN(nn.Module):
 
         # no z-localization for 2d input
         if x.shape[0] == 1:
-            regressions = regressions.at[..., 0].set(0)
+            regressions = regressions.at[..., 0].set(0.)
 
         return dict(
             regressions=regressions,

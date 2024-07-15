@@ -93,7 +93,7 @@ class Lacss(nn.Module):
             self.sow("intermediates", "segmentation_locations", seg_locs)
             self.sow("intermediates", "segmentation_cls", seg_cls)
 
-            segmentor_out = self.segmentor(x, seg_locs, seg_cls)
+            segmentor_out = self.segmentor(x, seg_locs, seg_cls, training=training)
 
             outputs = deep_update(outputs, segmentor_out)
 

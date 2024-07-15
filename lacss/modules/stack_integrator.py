@@ -15,8 +15,8 @@ Initializer = Callable[[jnp.ndarray, Sequence[int], jnp.dtype], jnp.ndarray]
 class _StackTransformer(nn.Module):
     n_layers: int = 2
     n_heads: int = 4
-    dropout: float = 0. 
-    ff_dropout: float = 0.
+    dropout: float = 0.
+    ff_dropout: float = 0.2
     deterministic: bool|None = None
     leared_embedding: bool = False
 
@@ -103,9 +103,9 @@ class StackIntegrator(nn.Module):
     """
     n_layers: int = 2
     n_heads: int = 4
-    dim_out: int = 384
+    dim_out: int = 256
     dropout: float = 0.
-    ff_dropout: float = 0.
+    ff_dropout: float = 0.2
 
     @nn.compact
     def __call__(self, features:Sequence[ArrayLike], *, training:bool=False) -> Sequence[Array]:

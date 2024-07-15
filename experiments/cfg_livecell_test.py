@@ -18,14 +18,12 @@ def get_config():
     config.train = ml_collections.ConfigDict()
     config.train.seed = 42
     config.train.batchsize = 3
-    config.train.n_steps = 100000
+    config.train.n_steps = 110000
     config.train.validation_interval = 10000
 
-    lr = optax.piecewise_constant_schedule(0.0005, {90000: 0.1})
+    lr = optax.piecewise_constant_schedule(1e-4, {90000: 0.1})
     config.train.optimizer = optax.adamw(lr, weight_decay=1e-3)
 
     config.model = Lacss.get_preconfigued("small")
-
-    # config.model.detector.detection_roi=16.0
 
     return config

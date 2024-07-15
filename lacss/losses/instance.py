@@ -20,9 +20,6 @@ def supervised_instance_loss(batch, prediction):
 
     instance_mask = preds["segmentation_is_valid"]
     instance_logit, yc, xc = _get_patch_data(preds)
-    # instance_logit = preds["segmentations"]
-    # yc = preds["segmentation_y_coords"]
-    # xc = preds["segmentation_x_coords"]
 
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
