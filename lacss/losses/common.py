@@ -19,7 +19,6 @@ def generalized_binary_loss(
     ce = -jnp.log(jnp.clip(p_t, EPS, 1))
 
     loss = (ff**gamma) * (ce**beta)
-    loss = loss.mean(axis=-1)
 
     return loss
 

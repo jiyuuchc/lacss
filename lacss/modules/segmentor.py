@@ -31,8 +31,7 @@ class Segmentor(nn.Module):
         (192, 192, 192),
         (48,),
     )
-    # normalization: Callable[[None], nn.Module]=lambda : nn.GroupNorm(reduction_axes=(-1,-2,-3))
-    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    normalization: Callable[[None], nn.Module]=nn.GroupNorm
     activation: Callable[[Array], Array] = nn.relu
 
     n_cls: int = 1

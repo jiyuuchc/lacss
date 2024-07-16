@@ -3,95 +3,149 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from absl import app, flags
-from ml_collections import config_flags
+from ml_collections import config_flags, ConfigDict
 
 _CONFIG = config_flags.DEFINE_config_file("config")
 _FLAGS = flags.FLAGS
 flags.DEFINE_string("checkpoint", None, "resume from a previous checkpoint")
 flags.DEFINE_string("logpath", ".", "logging directory")
 
-
 def run_training(_):
-    import pprint
     from pathlib import Path
 
     import jax
+    import numpy as np
     import orbax.checkpoint as ocp
+    import optax
+    import pprint
     import tensorflow as tf
+    import wandb
     
-    from xtrain import TFDatasetAdapter, Trainer, VMapped, JIT
+    from tqdm import tqdm
+    from xtrain import Trainer, VMapped, JIT
+
     from lacss.losses import supervised_instance_loss
     from lacss.metrics import BoxAP
+    from lacss.modules import Lacss
+    # from livecell_dataset import ds_train, ds_val
 
+    jnp = jax.numpy
     config = _CONFIG.value
+
+    wandb.init(project=config.name, config=config)
+
+    def init_rngs(seed):
+        # random.seed(seed)
+        tf.random.set_seed(seed)
+        np.random.seed(seed)
+
+    print("=========CONFIG==========")
     pprint.pp(config)
 
-    seed = config.train.seed
+    seed = config.train.get("seed", 4242)
+    init_rngs(seed)
+    logging.info(f"Use RNG seed value {seed}")
+
     logpath = Path(_FLAGS.logpath)
-
     logpath.mkdir(parents=True, exist_ok=True)
-
     logging.info(f"Logging to {logpath.resolve()}")
 
-    tf.random.set_seed(seed)
+    wandb.config["logpath"] = str(logpath)
 
-    ds_train = TFDatasetAdapter(
-        config.dataset.train_dataset.repeat().batch(config.train.batchsize).prefetch(1)
+    print("=========DATA============")
+    ds_train = config.data.ds_train
+    ds_val = config.data.ds_val
+
+    print("Train dataset:")
+    pprint.pp(ds_train.element_spec)
+        
+    print("=========MODEL===========")
+    model_cfg = config.model
+
+    if isinstance(model_cfg, Lacss):
+        model = model_cfg
+    else:
+        model = Lacss.from_config(model_cfg)
+        model.integrator.dim_out = config.fpn_dim
+        model.detector.conv_spec = (config.fpn_dim,) * 4
+        model.segmentor.conv_spec = ((config.fpn_dim,) * 3, (config.fpn_dim//4,))
+
+    pprint.pp(model.get_config())
+
+    lr = optax.piecewise_constant_schedule(
+        config.train.get("lr", 1e-4),
+        {config.train.steps: 0.1}
     )
+    optimizer = optax.adamw(lr, config.train.get("weight_decay", 1e-3))
 
-    ds_test = TFDatasetAdapter(config.dataset.val_dataset.prefetch(1))
-
-    loss_fns = config.train.get(
-        "losses",
-        (
-            "losses/lpn_localization_loss",
-            "losses/lpn_detection_loss",
-            supervised_instance_loss,
-        ),
+    loss_fns = (
+        "losses/lpn_detection_loss",
+        "losses/lpn_localization_loss",
+        supervised_instance_loss,
     )
 
     trainer = Trainer(
-        model=config.model,
-        optimizer=config.train.optimizer,
+        model=model,
+        optimizer=optimizer,
         losses=loss_fns,
         seed=seed,
         strategy=VMapped,
     )
 
-    train_it = trainer.train(ds_train, rng_cols=["dropout"], training=True)
+    train_it = trainer.train(ds_train, training=True)
 
     checkpointer = ocp.StandardCheckpointer()
 
     if _FLAGS.checkpoint is not None:
+        cp_path = Path(_FLAGS.checkpoint).absolute()
         train_it = checkpointer.restore(
-            Path(_FLAGS.checkpoint).absolute(), args=ocp.args.StandardRestore(train_it)
+            cp_path, args=ocp.args.StandardRestore(train_it)
         )
+        logging.info(f"restored checkpoint from {cp_path}")
 
-    while train_it.step < config.train.n_steps:
-        next(train_it)
+        wandb.config["checkpoint"] = str(cp_path)
 
-        step = train_it.step
+    print("=======TRAINNING=========")
+    total_steps = config.train.steps + config.train.get("finetune_steps", config.train.steps//5)
+    if total_steps % config.train.validation_interval != 0:
+        total_steps = (total_steps // config.train.validation_interval + 1) * config.train.validation_interval
+    with tqdm(total=total_steps) as pbar:
+        while train_it.step < total_steps:
+            next(train_it)
+            pbar.update(1)
 
-        if step % config.train.validation_interval == 0:
-            print(f"Loss at step : {step} - {train_it.loss_logs}")
+            if train_it.step % config.train.validation_interval == 0:
+                print(f"Loss at step : {train_it.step} - {train_it.loss_logs}")
 
-            checkpointer.save(
-                logpath.absolute() / f"cp-{step}",
-                args=ocp.args.StandardSave(train_it),
-            )
-
-            train_it.reset_loss_logs()
-
-            print(
-                trainer.compute_metrics(
-                    ds_test,
-                    BoxAP([0.5, 0.75]),
-                    dict(params=train_it.parameters),
-                    strategy=JIT,
+                checkpointer.save(
+                    logpath.absolute() / f"cp-{train_it.step}",
+                    args=ocp.args.StandardSave(train_it),
                 )
-            )
+
+                if not isinstance(ds_val, ConfigDict):
+                    ds_val = dict(ds_val = ds_val)
+
+                metrics = {
+                    name: trainer.compute_metrics(
+                        ds,
+                        BoxAP([0.5, 0.75]),
+                        dict(params=train_it.parameters),
+                        strategy=JIT,
+                    )
+                    for name, ds in ds_val.items()
+                }
+
+                pprint.pp(metrics)
+
+                wandb.log({
+                    "loss": train_it.loss,
+                    "metrics": jax.tree.map(lambda v: {"50": v[0], "75": v[1]}, metrics),
+                })
+
+                train_it.reset_loss_logs()
 
 
 if __name__ == "__main__":

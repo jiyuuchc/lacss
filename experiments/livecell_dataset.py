@@ -2,15 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import ml_collections
 import tensorflow as tf
-
 import lacss.data
 
 INPUT_PADDING = 1024
 IMG_SIZE = [544, 544]
-
-datapath = Path("/home/FCAM/jyu/datasets")
+DATAPATH = Path("/home/FCAM/jyu/datasets")
 
 def augment(x, target_size=IMG_SIZE):
     box = x["bboxes"]
@@ -25,9 +22,8 @@ def augment(x, target_size=IMG_SIZE):
     )
 
     image = x["image"] / tf.reduce_max(x["image"])
-    gamma = tf.random.uniform([], 0.5, 2.0)
-    image = tf.image.adjust_gamma(image, gamma)
-    image = tf.image.per_image_standardization(image)
+    # image = tf.image.adjust_gamma(image, gamma)
+    # image = tf.image.per_image_standardization(image)
     if tf.shape(image)[-1] == 1:
         image = tf.repeat(image, 3, axis=-1)
 
@@ -74,40 +70,32 @@ def scale_test_img(x, target_size=IMG_SIZE):
     )
 
 
-livecell_train = (
-    tf.data.Dataset.load(str(datapath / "livecell.ds"), compression="GZIP")
-    .map(augment)
-    .filter(lambda x, _: tf.size(x["gt_locations"]) > 2)
-    .padded_batch(
-        1,
-        padded_shapes=(
-            dict(
-                image=IMG_SIZE + [3],
-                gt_locations=(INPUT_PADDING, 2),
+def get_data(datapath=DATAPATH):
+    livecell_train = (
+        tf.data.Dataset.load(str(datapath / "livecell.ds"), compression="GZIP")
+        .map(augment)
+        .filter(lambda x, _: tf.size(x["gt_locations"]) > 2)
+        .padded_batch(
+            1,
+            padded_shapes=(
+                dict(
+                    image=IMG_SIZE + [3],
+                    gt_locations=(INPUT_PADDING, 2),
+                ),
+                dict(
+                    gt_bboxes=(INPUT_PADDING, 4),
+                    gt_masks=(INPUT_PADDING, 48, 48),
+                ),
             ),
-            dict(
-                gt_bboxes=(INPUT_PADDING, 4),
-                gt_masks=(INPUT_PADDING, 48, 48),
-            ),
-        ),
-        padding_values=-1.0,
+            padding_values=-1.0,
+        )
+        .unbatch()
+        .repeat()
     )
-    .unbatch()
-    .repeat()
-)
 
-livecell_val = tf.data.Dataset.load(
-    str(datapath / "livecell_val.ds"),
-    compression="GZIP",
-).map(scale_test_img)
+    livecell_val = tf.data.Dataset.load(
+        str(datapath / "livecell_val.ds"),
+        compression="GZIP",
+    ).map(scale_test_img)
 
-
-def get_config():
-    config = ml_collections.ConfigDict()
-
-    config.dataset_name = "livecell"
-
-    config.train_dataset = livecell_train
-    config.val_dataset = livecell_val
-
-    return config
+    return livecell_train, livecell_val

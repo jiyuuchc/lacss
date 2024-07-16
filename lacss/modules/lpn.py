@@ -35,8 +35,7 @@ class LPN(nn.Module):
     feature_levels: Sequence[int] = (0, 1, 2)
     feature_level_scales: Sequence[int] = (4, 8, 16)
     conv_spec: Sequence[int] = (192, 192, 192, 192)
-    # normalization: Callable[[None], nn.Module]=lambda : nn.GroupNorm(reduction_axes=(-1,-2,-3))
-    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    normalization: Callable[[None], nn.Module]=nn.GroupNorm
     activation: Callable[[Array], Array] = nn.relu
 
     detection_n_cls: int = 1
@@ -144,7 +143,7 @@ class LPN(nn.Module):
         indices = indices[...,None].repeat(3, axis=-1)  # [1, D, H, W, 3]
         regression_target = jnp.take_along_axis(distances, indices, 0)
         regression_target = regression_target.squeeze(0) # [D, H, W, 3]
-        # regression_target = regression_target / self.detection_roi # normalize
+        regression_target = regression_target / jnp.asarray([self.z_scale, scale, scale]) # normalize
 
         return cls_target, regression_target
 
@@ -218,13 +217,14 @@ class LPN(nn.Module):
 
             depth, height, width = scores_.shape
             loc_ = jnp.moveaxis(jnp.mgrid[:depth, :height, :width] + 0.5, 0, -1)  # [D, H, W, 3]
-            loc_ = loc_ * jnp.asarray([self.z_scale, block_out["scale"], block_out["scale"]]) # [D, H, W, 3]
-            loc_ = loc_ + block_out["regressions"] #[D, H, W, 3]
+            loc_ = loc_ + block_out["regressions"]
 
             # set invalid location score to -1
-            max_values = jnp.asarray([depth * self.z_scale, height * block_out["scale"], width * block_out["scale"]])
+            max_values = jnp.asarray([depth, height, width])
             is_valid = (loc_ > 0.0).all(axis=-1) & (loc_ < max_values).all(axis=-1)
             scores_ = jnp.where(is_valid, scores_, -1)
+
+            loc_ = loc_ * jnp.asarray([self.z_scale, block_out["scale"], block_out["scale"]]) # back to physical scale
 
             scores.append(scores_.reshape(-1))
             locations.append(loc_.reshape(-1, 3))

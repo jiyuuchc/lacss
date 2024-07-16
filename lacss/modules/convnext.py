@@ -111,8 +111,7 @@ class ConvNeXt(nn.Module):
             if k == 0:
                 ps = self.patch_size
                 x = nn.Conv(self.dims[k], (ps, ps), strides=(ps, ps))(x)
-                # FIXME normalization?
-                # x = nn.LayerNorm(epsilon=1e-6)(x)
+                x = self.normalization()(x)
             else:
                 x = self.normalization()(x)
                 x = nn.Conv(self.dims[k], (2, 2), strides=(2, 2))(x)

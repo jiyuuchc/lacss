@@ -111,15 +111,21 @@ class Lacss(nn.Module):
 
     @classmethod
     def from_config(cls, config):
-        from collections import defaultdict             
-        config_ = defaultdict(lambda: {})
-        config_.update(config)
-        return Lacss(
-            backbone=ConvNeXt(**config_["backbone"]),
-            integrator=StackIntegrator(**config_["integrator"]),
-            detector=LPN(**config_["detector"]),
-            segmentor=Segmentor(**config_["segmentor"]),
-        )
+        from collections import defaultdict
+
+        if isinstance(config, str):
+            return cls.get_preconfigued(config)
+
+        else:
+            config_ = defaultdict(lambda: {})
+            config_.update(config)
+            return Lacss(
+                backbone=ConvNeXt(**config_["backbone"]),
+                integrator=StackIntegrator(**config_["integrator"]),
+                detector=LPN(**config_["detector"]),
+                segmentor=Segmentor(**config_["segmentor"]),
+            )
+
 
     @classmethod
     def get_default_model(cls, patch_size=4):
