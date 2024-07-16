@@ -8,7 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-xtrain = {version = "^0.3.6", extras = ["cuda12"]}
+xtrain = {version = "^0.3.7", extras = ["cuda12"]}
 ml-collections = "^0.1.1"
 tensorflow = "^2.16.1"
 typer = "^0.12.3"

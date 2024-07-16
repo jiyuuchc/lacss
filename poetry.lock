@@ -4550,13 +4550,13 @@ files = [
 
 [[package]]
 name = "xtrain"
-version = "0.3.6"
+version = "0.3.7"
 description = "A Flax trainer"
 optional = false
 python-versions = "<4.0,>=3.10"
 files = [
-    {file = "xtrain-0.3.6-py3-none-any.whl", hash = "sha256:e6e069e9346ad03397fe3d8debe56cab2be32b6bf85dbbbf8fa4a4c70661b56d"},
-    {file = "xtrain-0.3.6.tar.gz", hash = "sha256:6a6fddee2d37e371b657056134f6a2cf27a2dc0a861d5901d75627da4a75fc65"},
+    {file = "xtrain-0.3.7-py3-none-any.whl", hash = "sha256:1c20f5203389f828cdae1339225457f35e8f7f3fbc77ce9fa9df120d8d5eb44f"},
+    {file = "xtrain-0.3.7.tar.gz", hash = "sha256:b6d385e9ebadec91a81af3d97acd15dc50662006ddd8501a7bc9312c3f592d1e"},
 ]
 
 [package.dependencies]
@@ -4686,4 +4686,4 @@ test = ["big-O", "jaraco.functools", "jaraco.itertools", "jaraco.test", "more-it
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "71f45113a4b9a4f762689cdbd861c2a6d1b48bf27508489a3e7ee17c6f0bbb6b"
+content-hash = "b2fc12996d371b1ea358d92f4be313e3db412c18275fab9896c8cfe273cf794b"
