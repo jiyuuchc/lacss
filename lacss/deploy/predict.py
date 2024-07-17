@@ -28,12 +28,15 @@ Shape = Sequence[int]
 
 _cached_partial = lru_cache(partial)
 
+# model_urls: Mapping[str, str] = {
+#     "cnsp4-bf": "https://huggingface.co/jiyuuchc/lacss-cnsp4-bf/resolve/main/cnsp4_bf.bin?download=true",
+#     "cnsp4-fl": "https://huggingface.co/jiyuuchc/lacss-cnsp4-fl/resolve/main/cnsp4_fl.bin?download=true",
+#     "cnsp4-base": "https://huggingface.co/jiyuuchc/lacss-cnsp4-base/resolve/main/cnsp4_base.bin?download=true",
+# }
 model_urls: Mapping[str, str] = {
-    "cnsp4-bf": "https://huggingface.co/jiyuuchc/lacss-cnsp4-bf/resolve/main/cnsp4_bf.bin?download=true",
-    "cnsp4-fl": "https://huggingface.co/jiyuuchc/lacss-cnsp4-fl/resolve/main/cnsp4_fl.bin?download=true",
-    "cnsp4-base": "https://huggingface.co/jiyuuchc/lacss-cnsp4-base/resolve/main/cnsp4_base.bin?download=true",
+    "lacss2s-n-bf": "https://huggingface.co/jiyuuchc/lacss2s-n-bf/resolve/main/lacss2s-n-bf?download=true",
 }
-model_urls["default"] = model_urls["cnsp4-base"]
+# model_urls["default"] = model_urls["cnsp4-base"]
 
 
 def _to_polygons(

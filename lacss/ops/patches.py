@@ -17,23 +17,72 @@ from .image import sub_pixel_samples
 
 Shape = Sequence[int]
 
+
+def gather_patches(source:ArrayLike, locations:ArrayLike, patch_size:int|tuple[int], *, padding_value=0):
+    """ gather patches from an array
+
+    Args:
+        source: [D1..dk, ...]
+        locations: [N, k] top-left coords of the patches, negative (out-of-bound) is ok
+        patch_size: size of the patch. 
+    Keyward Args:
+        padding_value: value for out-of-bound locations
+
+    returns:
+        N patches [N, d1..dk, ...]
+    """
+    dim = locations.shape[-1]
+
+    if locations.ndim != 2:
+        raise ValueError(f"locations must be a 2d array, got shape {locations.shape}")
+
+    if source.ndim < dim:
+        raise ValueError(f"location has {dim} values, but the source data is less than {dim}-dim.")
+
+    if isinstance(patch_size, int):
+        patch_size = (patch_size,) * dim
+
+    if len(patch_size) != dim:
+        raise ValueError(f"length of patch_size does not match location shape.")
+
+    src_shape = source.shape
+    source = source.reshape(src_shape[:dim]+(-1,)) # [D1..Dk, B]
+
+    slices = [slice(d) for d in patch_size]
+    grid = jnp.mgrid[slices] + jnp.expand_dims(locations, axis=range(2, 2+dim)) # [N, k, d1..dk]
+    grid = grid.swapaxes(0, 1) # [k, N, d1..dk]
+
+    patches = source[tuple(grid)] # [N, d1..dk, B]
+    max_d = jnp.expand_dims(jnp.asarray(src_shape[-dim-1:-1]), axis=range(1, dim+2))
+    valid_loc = ((grid >= 0) & (grid<max_d)).all(axis=0) # [N, d1..dk]
+    patches = jnp.where(
+        valid_loc[..., None],
+        patches,
+        padding_value,       
+    ) # clear out-of-bound locations
+
+    patches = patches.reshape(patches.shape[:-1] + src_shape[dim:])
+
+    return patches
+
 def _get_patch_data(pred):
     if isinstance(pred, dict):
         patches = pred["segmentations"].squeeze()
 
-        if "segmentation_y_coords" in pred:
+        if "segmentation_y_coords" in pred:# backward compatibility
             yc = pred["segmentation_y_coords"]
             xc = pred["segmentation_x_coords"]
-        else:
+        else: 
             ps = patches.shape[-1]
             yc, xc = jnp.mgrid[:ps, :ps]
             yc = yc + pred["segmentation_y0_coord"][:, None, None]
             xc = xc + pred["segmentation_x0_coord"][:, None, None]
     else:
         patches, yc, xc = pred
-        patches = patches.squeeze()
+        patches = patches.squeeze() #FIXME 
 
-    assert patches.ndim == yc.ndim
+    # not true for stacks
+    # assert patches.ndim == yc.ndim
 
     return patches, yc, xc
 

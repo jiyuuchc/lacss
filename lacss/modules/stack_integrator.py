@@ -12,33 +12,35 @@ from .common import FPN, FFN
 
 Initializer = Callable[[jnp.ndarray, Sequence[int], jnp.dtype], jnp.ndarray]
 
+_MAX_EMBEDDING_LENGTH = 32
+_EMBEDDING_SCALE = 64
+
 class _StackTransformer(nn.Module):
     n_layers: int = 2
     n_heads: int = 4
     dropout: float = 0.
     ff_dropout: float = 0.2
     deterministic: bool|None = None
-    leared_embedding: bool = False
+    learned_embedding: bool = False
 
     def _get_pos_embeddings(self, feature):
-        max_embedding_length = 32
         depth, height, width, n_ch = feature.shape
 
-        if self.leared_embedding:
+        if self.learned_embedding:
             pos_embedding = self.param(
                 'pos_embedding', 
                 nn.initializers.normal(stddev=0.02), 
-                (max_embedding_length, n_ch),
+                (_MAX_EMBEDDING_LENGTH, n_ch),
                 feature.dtype,
             )
         else:
-            pos_embedding = np.zeros((max_embedding_length, n_ch))
-            pos = np.arange(max_embedding_length) - max_embedding_length//2
-            pos = pos[:, None] * np.exp(- np.log(64) / n_ch * np.arange(0, n_ch, 2))
+            pos_embedding = np.zeros((_MAX_EMBEDDING_LENGTH, n_ch))
+            pos = np.arange(_MAX_EMBEDDING_LENGTH) - _MAX_EMBEDDING_LENGTH//2
+            pos = pos[:, None] * np.exp(- np.log(_EMBEDDING_SCALE) / n_ch * np.arange(0, n_ch, 2))
             pos_embedding[:, 0::2] = np.sin(pos)
             pos_embedding[:, 1::2] = np.cos(pos)
 
-        pos_embedding = pos_embedding[max_embedding_length//2+(-depth)//2:max_embedding_length//2+depth//2]
+        pos_embedding = pos_embedding[_MAX_EMBEDDING_LENGTH//2+(-depth)//2:_MAX_EMBEDDING_LENGTH//2+depth//2]
 
         assert pos_embedding.shape == (depth, n_ch)
 

@@ -17,10 +17,12 @@ def get_config():
     config.train.batchsize = 3
     config.train.steps = 100000
     config.train.validation_interval = 10000
-    config.train.lr = 5e-5
+    config.train.lr = 1e-4
     config.train.weight_decay = 1e-3
 
     config.model = Lacss.get_preconfigued("small")
+    config.model.integrator.n_layers = 0
+    config.model.detector.max_output = 1024
 
     livecell_train, livecell_val = livecell_dataset.get_data(DATAPATH)
     config.data = ml_collections.ConfigDict()

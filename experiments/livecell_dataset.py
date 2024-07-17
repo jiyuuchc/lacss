@@ -21,9 +21,7 @@ def augment(x, target_size=IMG_SIZE):
         x, target_size=target_size, area_ratio_threshold=0.5
     )
 
-    image = x["image"] / tf.reduce_max(x["image"])
-    # image = tf.image.adjust_gamma(image, gamma)
-    # image = tf.image.per_image_standardization(image)
+    image = tf.image.per_image_standardization(x["image"])
     if tf.shape(image)[-1] == 1:
         image = tf.repeat(image, 3, axis=-1)
 
@@ -37,20 +35,24 @@ def augment(x, target_size=IMG_SIZE):
 
 
 def scale_test_img(x, target_size=IMG_SIZE):
-    scales = {
-        b"BT474": 1.0279709015128078,
-        b"A172": 0.6510693512457046,
-        b"MCF7": 1.3191146187106495,
-        b"BV2": 2.185142214106535,
-        b"Huh7": 0.6579372636248555,
-        b"SkBr3": 1.2877806031436272,
-        b"SKOV3": 0.5145641841316791,
-        b"SHSY5Y": 0.9212827130226745,
-    }
-    ks = tf.constant(list(scales.keys()))
-    scales = tf.constant(list(scales.values()))
-    celltype = tf.argmax(ks == x["celltype"])
-    scaling = tf.gather(scales, celltype)
+    # scales = {
+        # b"BT474": 1.0279709015128078,
+        # b"A172": 0.6510693512457046,
+        # b"MCF7": 1.3191146187106495,
+        # b"BV2": 2.185142214106535,
+        # b"Huh7": 0.6579372636248555,
+        # b"SkBr3": 1.2877806031436272,
+        # b"SKOV3": 0.5145641841316791,
+        # b"SHSY5Y": 0.9212827130226745,
+    # }
+    # ks = tf.constant(list(scales.keys()))
+    # scales = tf.constant(list(scales.values()))
+    # celltype = tf.argmax(ks == x["celltype"])
+    # scaling = tf.gather(scales, celltype)
+
+    box = x["bboxes"]
+    max_dim = tf.maximum(box[:, 2] - box[:, 0], box[:, 3] - box[:, 1])
+    scaling = 32 / tf.reduce_mean(max_dim)
 
     H = tf.cast(tf.cast(tf.shape(x["image"])[-3], tf.float32) * scaling + 0.5, tf.int32)
     W = tf.cast(tf.cast(tf.shape(x["image"])[-2], tf.float32) * scaling + 0.5, tf.int32)
@@ -90,7 +92,6 @@ def get_data(datapath=DATAPATH):
             padding_values=-1.0,
         )
         .unbatch()
-        .repeat()
     )
 
     livecell_val = tf.data.Dataset.load(

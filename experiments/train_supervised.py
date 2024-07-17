@@ -10,6 +10,7 @@ from ml_collections import config_flags, ConfigDict
 
 _CONFIG = config_flags.DEFINE_config_file("config")
 _FLAGS = flags.FLAGS
+flags.DEFINE_string("initfrom", None, "start training from existing model file")
 flags.DEFINE_string("checkpoint", None, "resume from a previous checkpoint")
 flags.DEFINE_string("logpath", ".", "logging directory")
 
@@ -60,18 +61,28 @@ def run_training(_):
     ds_val = config.data.ds_val
 
     print("Train dataset:")
-    pprint.pp(ds_train.element_spec)
+    pprint.pp(ds_train)
+    pprint.pp(ds_val)
         
     print("=========MODEL===========")
-    model_cfg = config.model
+    if _FLAGS.initfrom is not None:
+        from lacss.utils import load_from_pretrained
+        model, params = load_from_pretrained(Path(_FLAGS.initfrom))
+        init_vars = dict(params=params)
 
-    if isinstance(model_cfg, Lacss):
-        model = model_cfg
+        wandb.config["init_file"] = _FLAGS.initfrom
+
     else:
-        model = Lacss.from_config(model_cfg)
-        model.integrator.dim_out = config.fpn_dim
-        model.detector.conv_spec = (config.fpn_dim,) * 4
-        model.segmentor.conv_spec = ((config.fpn_dim,) * 3, (config.fpn_dim//4,))
+        model_cfg = config.model
+
+        if isinstance(model_cfg, Lacss):
+            model = model_cfg
+        else:
+            model = Lacss.from_config(model_cfg)
+            model.integrator.dim_out = config.fpn_dim
+            model.detector.conv_spec = (config.fpn_dim,) * 4
+            model.segmentor.conv_spec = ((config.fpn_dim,) * 3, (config.fpn_dim//4,))
+        init_vars = None
 
     pprint.pp(model.get_config())
 
@@ -95,7 +106,7 @@ def run_training(_):
         strategy=VMapped,
     )
 
-    train_it = trainer.train(ds_train, training=True)
+    train_it = trainer.train(ds_train, training=True, init_vars=init_vars)
 
     checkpointer = ocp.StandardCheckpointer()
 
@@ -112,21 +123,22 @@ def run_training(_):
     total_steps = config.train.steps + config.train.get("finetune_steps", config.train.steps//5)
     if total_steps % config.train.validation_interval != 0:
         total_steps = (total_steps // config.train.validation_interval + 1) * config.train.validation_interval
+
+    if not isinstance(ds_val, dict|ConfigDict):
+        ds_val = dict(ds_val = ds_val)
+
     with tqdm(total=total_steps) as pbar:
         while train_it.step < total_steps:
             next(train_it)
-            pbar.update(1)
+            pbar.update(int(train_it.step) - pbar.n)
 
-            if train_it.step % config.train.validation_interval == 0:
+            if train_it.step % config.train.validation_interval == 0 or train_it.step >= total_steps:
                 print(f"Loss at step : {train_it.step} - {train_it.loss_logs}")
 
                 checkpointer.save(
                     logpath.absolute() / f"cp-{train_it.step}",
                     args=ocp.args.StandardSave(train_it),
                 )
-
-                if not isinstance(ds_val, ConfigDict):
-                    ds_val = dict(ds_val = ds_val)
 
                 metrics = {
                     name: trainer.compute_metrics(
@@ -147,6 +159,7 @@ def run_training(_):
 
                 train_it.reset_loss_logs()
 
+    train_it.save_model(logpath/"model_file")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

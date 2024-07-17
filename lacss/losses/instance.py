@@ -8,7 +8,7 @@ import optax
 
 from xtrain import unpack_x_y_sample_weight
 
-from ..ops import sub_pixel_samples
+from ..ops import sub_pixel_samples, gather_patches
 from ..ops.patches import _get_patch_data
 
 from .common import binary_focal_factor_loss, mean_over_boolean_mask, sum_over_boolean_mask
@@ -18,43 +18,66 @@ def supervised_instance_loss(batch, prediction):
     preds = prediction["predictions"]
     _, labels, _ = unpack_x_y_sample_weight(batch)
 
+    if labels is None:
+        return None
+
     instance_mask = preds["segmentation_is_valid"]
-    instance_logit, yc, xc = _get_patch_data(preds)
+    instance_logit = preds["segmentations"]
+
+    n_patches = instance_logit.shape[0]
+    patch_size = instance_logit.shape[-1]
 
     if not isinstance(labels, dict):
         labels = dict(gt_labels=labels)
 
     if "gt_labels" in labels:  # labeled with image label
         gt_labels = labels["gt_labels"].astype("int32")
+        y0 = preds["segmentation_y0_coord"]
+        x0 = preds["segmentation_x0_coord"]
 
-        n_patches, ps, _ = yc.shape
+        if gt_labels.ndim == 2:
+            gt_labels = gt_labels[None, :, :]
 
-        gt_labels = jnp.pad(gt_labels, ps // 2)
-        gt_patches = gt_labels[yc + ps // 2, xc + ps // 2] == (
-            jnp.arange(n_patches)[:, None, None] + 1
-        )
+        gt_patches = jax.vmap(
+            lambda x: gather_patches(x, jnp.stack([y0, x0], axis=-1), patch_size),
+        )(gt_labels)
+
+        gt_patches = gt_patches == jnp.arange(1, n_patches+1)[:, None, None]
+
+        gt_patches = gt_patches.swapaxes(0, 1) # back to [N, D, PS, PS]
+
         gt_patches = gt_patches.astype("float32")
 
-    else:  # labeled with bboxes and rescaled segmentation masks, ie, coco
-        y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
+    else: # only works for 2d input
+        assert instance_logit.shape[1] == 1
+
         gt_segs = labels["gt_masks"]
         if len(gt_segs.shape) == 4:  # either NxHxWx1 or NxHxW
             gt_segs = gt_segs.squeeze(-1)
         seg_size = gt_segs.shape[1]
 
+        assert gt_segs.shape[0] == n_patches
+
         # pixel size of the gt mask labels
+        y0, x0, y1, x1 = jnp.swapaxes(labels["gt_bboxes"], 0, 1)
         hs = (y1 - y0) / seg_size
         ws = (x1 - x0) / seg_size
 
         # compute rescaled coorinats in edge indexing
+        yc, xc = jnp.mgrid[:patch_size, :patch_size]
+        yc = yc + preds["segmentation_y0_coord"][:, None, None]
+        xc = xc + preds["segmentation_x0_coord"][:, None, None]
         yc = (yc - y0[:, None, None] + 0.5) / hs[:, None, None]
         xc = (xc - x0[:, None, None] + 0.5) / ws[:, None, None]
 
         # resample the label to match model coordinates
         gt_patches = jax.vmap(sub_pixel_samples)(
             gt_segs,
-            jnp.stack([yc, xc], axis=-1) - 0.5,  # default is center indexing
+            jnp.stack([yc, xc], axis=-1) -.5,
         )
+
+        gt_patches = gt_patches[:, None, :, :] # [N, 1, PS, PS]
+
         gt_patches = (gt_patches >= 0.5).astype("float32")
 
     loss = optax.sigmoid_binary_cross_entropy(instance_logit, gt_patches)

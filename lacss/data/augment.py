@@ -378,10 +378,13 @@ def pad_to_size(
     H, W = _image_size(inputs["image"])
     target_h, target_w = _value_pair(target_size)
 
-    padding_h = target_h - H
-    padding_h = [padding_h // 2, padding_h - padding_h // 2]
-    padding_w = target_w - W
-    padding_w = [padding_w // 2, padding_w - padding_w // 2]
+    # padding_h = target_h - H
+    # padding_h = [padding_h // 2, padding_h - padding_h // 2]
+    # padding_w = target_w - W
+    # padding_w = [padding_w // 2, padding_w - padding_w // 2]
+
+    padding_h = [0, target_h - H]
+    padding_w = [0, target_w - W]
 
     return pad(inputs, paddings=[padding_h, padding_w], constant_values=constant_values)
 
