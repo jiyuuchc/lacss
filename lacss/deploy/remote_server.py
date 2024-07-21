@@ -7,7 +7,6 @@ import jax
 import numpy as np
 import typer
 
-from .predict import Predictor
 from .proto import lacss_pb2, lacss_pb2_grpc
 
 _AUTH_HEADER_KEY = "authorization"
@@ -48,10 +47,6 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
         self.token = token
 
     def intercept_service(self, continuation, handler_call_details):
-        # Example HandlerCallDetails object:
-        #     _HandlerCallDetails(
-        #       method=...,
-        #       invocation_metadata=...)
         expected_metadata = (_AUTH_HEADER_KEY, f"Bearer {self.token}")
         if expected_metadata in handler_call_details.invocation_metadata:
             return continuation(handler_call_details)
@@ -66,9 +61,6 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
     def RunDetection(self, request, context):
         img, settings = process_input(request)
 
-        img -= img.mean()
-        img = img / img.std()
-
         logging.debug(f"received image {img.shape}")
 
         logging.debug(f"making prediction")
@@ -76,7 +68,7 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
         preds = self.model.predict(
             img,
             min_area=settings.min_cell_area,
-            remove_out_of_bound=settings.remove_out_of_bound,
+            # remove_out_of_bound=settings.remove_out_of_bound,
             scaling=settings.scaling,
             nms_iou=settings.nms_iou,
             score_threshold=settings.detection_threshold,
@@ -97,19 +89,30 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
 
 
 def get_predictor(modelpath):
+    from .predict import Predictor
+
     model = Predictor(modelpath)
 
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
-    model.detector.test_max_output = 512  # FIXME good default?
-    model.detector.test_min_score = 0.4
+    model.module.detector.max_output = 512  # FIXME good default?
+    model.module.detector.min_score = 0.2
 
     return model
+
+def show_urls():
+    from .predict import model_urls
+    
+    print("Pretrained model files:")
+    print("==============================")
+    for k, v in model_urls.items():
+        print(f"{k}: {v}")
+    print()
 
 
 @app.command()
 def main(
-    modelpath: Path,
+    modelpath: Path|None = None,
     port: int = 50051,
     workers: int = 10,
     ip: str = "0.0.0.0",
@@ -118,6 +121,10 @@ def main(
     debug: bool = False,
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
+
+    if modelpath is None:
+        show_urls()
+        return
 
     model = get_predictor(modelpath)
 
@@ -131,7 +138,7 @@ def main(
     if token:
         import secrets
 
-        token = secrets.token_urlsafe()
+        token = secrets.token_urlsafe(32)
 
         server = grpc.server(
             futures.ThreadPoolExecutor(max_workers=workers),

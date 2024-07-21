@@ -17,7 +17,6 @@ from .image import sub_pixel_samples
 
 Shape = Sequence[int]
 
-
 def gather_patches(source:ArrayLike, locations:ArrayLike, patch_size:int|tuple[int], *, padding_value=0):
     """ gather patches from an array
 
@@ -87,89 +86,117 @@ def _get_patch_data(pred):
     return patches, yc, xc
 
 
-def bboxes_of_patches(pred: Sequence | DataDict, threshold: float = 0) -> jnp.ndarray:
+def bboxes_of_patches(pred: dict, threshold: float = 0, *, is2d:bool|None=None) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
     Args:
         pred: A model prediction dictionary:
         threshold: for segmentation, default 0
 
+    Keyward Args:
+        is2d: whether to force 2d output
+
     Returns:
-        bboxes: [n, 4] bboox for empty patches are filled with -1
+        bboxes: [n, 4] or [n, 6]
     """
-    patches, yy, xx = _get_patch_data(pred)
+    patches = pred["segmentations"]
+    y0 = pred["segmentation_y0_coord"]
+    x0 = pred["segmentation_x0_coord"]
 
-    _, d0, d1 = patches.shape
-    row_mask = jnp.any(patches > threshold, axis=1)
-    col_mask = jnp.any(patches > threshold, axis=2)
+    n, d0, d1, d2 = patches.shape
+    z_mask = jnp.any(patches > threshold, axis=(2,3))
+    y_mask = jnp.any(patches > threshold, axis=(1,3))
+    x_mask = jnp.any(patches > threshold, axis=(1,2))
+    
+    min_z = z_mask.argmax(axis=1)
+    max_z = d0 - z_mask[:, ::-1].argmax(axis=1)
 
-    min_col = row_mask.argmax(axis=1)
-    max_col = d1 - row_mask[:, ::-1].argmax(axis=1)
+    min_y = y_mask.argmax(axis=1)
+    max_y = d1 - y_mask[:, ::-1].argmax(axis=1)
 
-    min_row = col_mask.argmax(axis=1)
-    max_row = d0 - col_mask[:, ::-1].argmax(axis=1)
+    min_x = x_mask.argmax(axis=1)
+    max_x = d2 - x_mask[:, ::-1].argmax(axis=1)
 
-    min_row += yy[:, 0, 0]
-    max_row += yy[:, 0, 0]
-    min_col += xx[:, 0, 0]
-    max_col += xx[:, 0, 0]
+    min_y += y0
+    max_y += y0
+    min_x += x0
+    max_x += x0
 
-    is_valid = row_mask.any(axis=1, keepdims=True)
-    bboxes = jnp.stack([min_row, min_col, max_row, max_col], axis=-1)
+    if is2d is None:
+        is2d = d0 == 1
+
+    if is2d:
+        bboxes = jnp.stack([min_y, min_x, max_y, max_x], axis=-1)
+    else:
+        bboxes = jnp.stack([min_z, min_y, min_x, max_z, max_y, max_x], axis=-1)
+
+    is_valid = z_mask.any(axis=1, keepdims=True)
     bboxes = jnp.where(is_valid, bboxes, -1)
 
     return bboxes
 
 
-def patches_to_segmentations(
-    pred: DataDict, input_size: Shape, threshold: float = 0
-) -> Array:
-    """Expand the predicted patches to the full image size.
-    The default model segmentation output shows only a small patch around each instance. This
-    function expand each patch to the size of the orginal image.
+# def patches_to_segmentations(
+#     pred: DataDict, input_size: Shape, threshold: float = 0
+# ) -> Array:
+#     """Expand the predicted patches to the full image size.
+#     The default model segmentation output shows only a small patch around each instance. This
+#     function expand each patch to the size of the orginal image.
 
-    Args:
-        pred: A model prediction dictionary
-        input_size: shape of the input image. Tuple of H, W
-        threshold: for segmentation. Default is 0.5.
+#     Args:
+#         pred: A model prediction dictionary
+#         input_size: shape of the input image. Tuple of H, W
+#         threshold: for segmentation. Default is 0.5.
 
-    Returns:
-        segmentations: [n, height, width] n full0-size segmenatation masks.
+#     Returns:
+#         segmentations: [n, height, width] n full0-size segmenatation masks.
 
-    """
-    patches, yc, xc = _get_patch_data(pred)
-    n_patches, patch_size, _ = yc.shape
+#     """
+#     patches, yc, xc = _get_patch_data(pred)
+#     n_patches, patch_size, _ = yc.shape
 
-    page_nums = jnp.arange(n_patches)
-    segms = jnp.zeros((n_patches,) + input_size)
-    segms = segms.at[page_nums[:, None, None], yc, xc].set(patches)
+#     page_nums = jnp.arange(n_patches)
+#     segms = jnp.zeros((n_patches,) + input_size)
+#     segms = segms.at[page_nums[:, None, None], yc, xc].set(patches)
 
-    return (segms >= threshold).astype(int)
+#     return (segms >= threshold).astype(int)
 
 
 def patches_to_label(
     pred: DataDict,
     input_size: Shape,
+    *,
     mask: Optional[ArrayLike] = None,
     score_threshold: float = 0.5,
     threshold: float = 0,
 ) -> Array:
-    """convert patch output to the image label
+    """convert patch output to the image label.
 
     Args:
         pred: A model prediction dictionary
-        input_size: shape of the input image. Tuple of H, W
+        input_size: shape of the input image. (H, W) or (D, H, W)
+    Keyward Args:
         mask: boolean indicators masking out unwanted instances. Default is None (all cells)
         score_threshold: otional, min_score to be included. Default is .5.
         threshold: segmentation threshold.
 
     Returns:
-        label: [height, width]
+        label: of the dimension input_size
     """
-    label = jnp.zeros(input_size)
-    patches, yy, xx = _get_patch_data(pred)
+    input_size = tuple(input_size)
+    if len(input_size) == 2:
+        label = jnp.zeros((1,) + input_size)
+    else:
+        label = jnp.zeros(input_size)
 
-    pr = patches > threshold
+    patches = pred["segmentations"]
+    y0 = pred["segmentation_y0_coord"]
+    x0 = pred["segmentation_x0_coord"]
+
+    ps = patches.shape[-1]
+    yy, xx = jnp.mgrid[:ps, :ps]
+    yy += y0[:, None, None]
+    xx += x0[:, None, None]
 
     if mask is None:
         mask = pred["segmentation_is_valid"]
@@ -182,91 +209,19 @@ def patches_to_label(
     idx = jnp.cumsum(mask) * mask
     idx = jnp.where(mask, idx.max() + 1 - idx, 0)
 
-    pr = (pr > threshold).astype(int) * idx[:, None, None]
+    pr = (patches > threshold).astype(int) * idx[:, None, None, None]
+    pr = pr.swapaxes(0,1) # [D, N, Ps, Ps]
 
-    label = label.at[yy, xx].max(pr)
+    label = jax.vmap(lambda a, b: a.at[yy, xx].max(b))(label, pr)
+
     label = jnp.where(label, label.max() + 1 - label, 0)
+    
+    if len(input_size) == 2:
+        label = label.squeeze(0)
 
     return label
 
-
-# def ious_of_patches_from_same_image(pred: DataDict, threshold: float = 0.5) -> Array:
-#     """Compute IOUs among instances from the same image. Most likely used for nms.
-
-#     Args:
-#         pred: A model prediction dictionary
-#         threshold: Segmentation threshold. Default is 0.5.
-
-#     Returns:
-#         ious: IOUs as an upper triagle matrix.
-#     """
-
-#     bboxes = bboxes_of_patches(pred)
-#     box_ious = box_iou_similarity(bboxes, bboxes)
-#     box_ious = np.triu(box_ious, 1)
-#     # n_detections = jnp.count_nonzero(pred['instance_mask'])
-#     # box_ious = box_ious[:n_detections, :n_detections]
-
-#     cy, cx = np.where(box_ious > 0)
-#     pad_size = pred["instance_output"].shape[-1]
-
-#     patches = np.asarray(pred["instance_output"]) >= threshold
-#     patches_y = patches[cy]
-#     patches_x = patches[cx]
-#     plt_to = np.zeros([len(cy), pad_size * 3, pad_size * 3], dtype=bool)
-#     dy = (
-#         np.asarray(pred["instance_yc"])[cy, 0, 0]
-#         - np.asarray(pred["instance_yc"])[cx, 0, 0]
-#         + pad_size
-#     )
-#     dx = (
-#         np.asarray(pred["instance_xc"])[cy, 0, 0]
-#         - np.asarray(pred["instance_xc"])[cx, 0, 0]
-#         + pad_size
-#     )
-
-#     for k in range(len(cy)):
-#         plt_to[k, dy[k] : dy[k] + pad_size, dx[k] : dx[k] + pad_size] = patches_y[k]
-#     plt_to = plt_to[:, pad_size : pad_size * 2, pad_size : pad_size * 2]
-#     unions = np.count_nonzero(plt_to & patches_x, axis=(1, 2))
-
-#     areas_y = np.count_nonzero(patches_y, axis=(1, 2))
-#     areas_x = np.count_nonzero(patches_x, axis=(1, 2))
-
-#     ious = unions / (areas_x + areas_y - unions + 1e-8)
-
-#     mask_ious = box_ious
-#     mask_ious[(cy, cx)] = ious
-
-#     return mask_ious
-
-
-# def non_max_suppress_predictions(pred: DataDict, iou_threshold: float = 0.6) -> Array:
-#     """Perform nms on the model prediction based on mask IOU
-
-#     Args:
-#         pred: A model prediction dictionary
-#         ious_threshold: default 0.6
-
-#     Returns:
-#         mask: boolean mask of cells not supressed
-#     """
-
-#     ious = ious_of_patches_from_same_image(pred)
-#     mask = ious > iou_threshold
-
-#     cnt = 0
-#     while np.count_nonzero(mask) != cnt:
-#         cnt = jnp.count_nonzero(mask)
-#         can_suppress_others = ~mask.any(axis=0)
-#         suppressed = (mask & can_suppress_others[:, None]).any(axis=0)
-#         mask = mask & ~suppressed[:, None]
-
-#     return ~mask.any(axis=0)
-
-
 _sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
-
 
 def rescale_patches(
     pred: DataDict, scale: float, *, transform_logits: bool = True
@@ -313,3 +268,60 @@ def rescale_patches(
     )
 
     return new_patch, yy, xx
+
+
+def crop_and_resize_patches(pred:dict, target_shape:tuple[int] = (48,48), bboxes = None, *, threshold:float=0, convert_logits:bool=False):
+    """ crop and rescale all instances to a target_size
+
+    Args:
+        pred: model predictions
+        target_shape: output shape. usually a 3-tuple but can be a 2-tuple if input is a 2D image.
+        bboxes: optionally supply bboxes for cropping
+    Keyward Args:
+        threshold: only used if bboxes is None. Threshold for computing the bboxes
+        convert_logits: whether to convert the logits to probability
+    
+    Returns:
+        Array [N] + target_shape.
+    """
+    from lacss.ops.image import sub_pixel_crop_and_resize
+    patches = pred["segmentations"]
+    y0 = pred["segmentation_y0_coord"]
+    x0 = pred["segmentation_x0_coord"]
+
+    if bboxes is None:
+        bboxes = bboxes_of_patches(pred, threshold=threshold, is2d=False)
+    elif bboxes.shape[-1] == 4:
+        assert patches.shape[1] == 1, f"bboxes are for 2d but the patches are 3d"
+        bboxes = jnp.c_[
+            jnp.zeros_like(bboxes[:, 0]), 
+            bboxes[:, :2],
+            jnp.ones_like(bboxes[:, 0]), 
+            bboxes[:, 2:],
+        ]
+
+    bboxes = bboxes.at[:,1].add(-y0)
+    bboxes = bboxes.at[:,4].add(-y0)
+    bboxes = bboxes.at[:,2].add(-x0)
+    bboxes = bboxes.at[:,5].add(-x0)
+
+    target_shape = tuple(target_shape)
+    if len(target_shape) == 2:
+        assert patches.shape[1] == 1, f"bboxes are for 2d but the patches are 3d"
+        target_size_ = (1,) + target_shape
+    else:
+        target_size_ = target_shape
+    
+    if convert_logits:
+        patches = jax.nn.sigmoid(patches)
+
+    segs = jax.vmap(partial(sub_pixel_crop_and_resize, output_shape=target_size_))(
+        patches,
+        bboxes,
+    )
+    
+    if len(target_shape) == 2:
+        segs = segs.squeeze(1)
+        
+    return segs
+

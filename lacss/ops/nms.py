@@ -35,7 +35,7 @@ def _suppression_loop_body(inputs, *, similarity_func=None):
 
     if similarity_func is None:
         similarity_func = (
-            box_iou_similarity if boxes.shape[-1] == 4 else distance_similarity
+            box_iou_similarity if boxes.shape[-1] > 3 else distance_similarity
         )
 
     def _for_loop_func(idx, slice):

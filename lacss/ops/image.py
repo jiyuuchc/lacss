@@ -115,27 +115,31 @@ def sub_pixel_crop_and_resize(
     """Retrieve image values of a bbox. Resize output to output_shape. Used for ROI-Align.
 
     Args:
-        img: Array of shape [H, W, ...]
-        bbox: [y0, x0, y1, x1]
-        output_shape: [h, w]
+        img: Array of shape [H, W, ...] (2D) or [D, H, W, ...] (3D)
+        bbox: [y0, x0, y1, x1] (2D) or [z0, y0, x0, z1, y1, x1] (3D)
+        output_shape: [h, w] (2D) or [d, h, w] (3D)
         out_of_bound_value: optional float constant, defualt 0.
 
     Returns:
-        values: [h, w, ...], float
+        values: [h, w, ...] or [d, h, w, ...]
     """
 
-    bbox = jnp.asarray(bbox)
+    bbox = jnp.asarray(bbox).reshape(2, -1)
     img = jnp.asarray(img)
-    y0, x0, y1, x1 = bbox
-    h, w = output_shape
+    output_shape = jnp.asarray(output_shape)
 
-    dy = (y1 - y0) / h
-    dx = (x1 - x0) / w
+    assert output_shape.ndim == 1
+    assert bbox.shape[1] == len(output_shape), f"bbox dim is {bbox.shape[1]}, but output_shape dim is {len(output_shape)}."
+    assert bbox.shape[1] <= img.ndim, f"bbox dim is {bbox.shape[1]}, but img dim {img.ndim} is smaller."
 
-    yy, xx = jnp.mgrid[(y0 + dy / 2) : y1 : (dy), (x0 + dx / 2) : x1 : dx]
+    delta = (bbox[1] - bbox[0]) / output_shape
+    slices = [slice(d) for d in output_shape]
+    g = jnp.moveaxis(jnp.mgrid[slices], 0, -1)
+    g = g * delta
+    g = g + bbox[0] + delta / 2
+    
     return sub_pixel_samples(
-        img,
-        jnp.stack([yy, xx], axis=-1),
+        img, g,
         out_of_bound_value=out_of_bound_value,
         edge_indexing=True,
     )
