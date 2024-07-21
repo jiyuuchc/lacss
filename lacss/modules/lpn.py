@@ -298,6 +298,7 @@ class LPN(nn.Module):
         gt_cls: ArrayLike | None = None,
         *,
         training: bool = False,
+        **kwargs,
     ) -> dict:
         """
         Args:

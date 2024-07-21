@@ -38,7 +38,7 @@ class Segmentor(nn.Module):
     instance_crop_size: int = 96
     use_attention: bool = False
     encoder_dims: Sequence[int] = (8, 8, 4)
-    max_embedding_length:int = 32
+    max_embedding_length:int = 16
 
     @property
     def patch_size(self):
@@ -72,20 +72,22 @@ class Segmentor(nn.Module):
         # the rationale is that the feature value already has some info regarding
         # cell size/shape
         patch_size = self.patch_size
-        dim_out = math.prod(self.encoder_dims)
-        locations = jnp.floor(locations) - jnp.asarray([0, 0.5, 0.5]) # center of the patch
+        depth = feature.shape[0]
 
-        x = sub_pixel_samples(feature, locations)
+        sampling_locs = jnp.floor(locations) - jnp.asarray([0, 0.5, 0.5]) # center of the patch
+        x = sub_pixel_samples(feature, sampling_locs)
         assert x.shape == (locations.shape[0], feature.shape[-1])
 
         for _ in range(2):
             x = nn.Dense(x.shape[-1])(x)
             x = nn.relu(x)
-        x = nn.Dense(dim_out)(x)
-        x = x.reshape((-1,) + self.encoder_dims)
 
-        x = jax.image.resize(
-            x,
+        dim_out = math.prod(self.encoder_dims[-3:])
+        xa = nn.Dense(dim_out)(x)
+        xa = xa.reshape((-1,) + self.encoder_dims[-3:])
+
+        xa = jax.image.resize(
+            xa,
             (
                 x.shape[0],
                 patch_size,
@@ -95,9 +97,38 @@ class Segmentor(nn.Module):
             "linear",
         )
 
-        encodings = nn.Dense(self.conv_spec[1][0], use_bias=False)(x)
+        encodings = nn.Dense(self.conv_spec[1][0], use_bias=False)(xa)
 
-        return encodings #[N, ps, ps, c]
+        if len(self.encoder_dims) == 3:
+            z_encodings = self._z_encodings(depth, locations[:, 0]) # [D, N, c]
+
+        else:
+            z_dim = self.encoder_dims[0] * self.encoder_dims[-1]
+            xb = nn.Dense(z_dim)(x)
+            xb = xb.reshape(-1, self.encoder_dims[0], self.encoder_dims[-1])
+            xb = jax.image.resize(
+                xb,
+                (
+                    x.shape[0],
+                    self.max_embedding_length,
+                    self.encoder_dims[-1],
+                ),
+                "linear",
+            )
+            embeddings = nn.Dense(self.conv_spec[1][0], use_bias=False)(xb) # [N, L, c]
+
+            z_idx = self.max_embedding_length // 2 - locations[:, 0].astype(int) # [N]
+            z_idx = jnp.clip(
+                z_idx[:, None] + jnp.arange(depth), 
+                0, self.max_embedding_length -1
+            ) # [N, D]
+
+            z_encodings = jax.vmap(lambda b, z: b[z])(embeddings, z_idx) # [N, D, c]
+            z_encodings = z_encodings.swapaxes(0, 1) # [D, N, c]
+                        
+        encodings = encodings + z_encodings[:, :, None, None, :] #[D, N, ps, ps, c]
+
+        return encodings #[D, N, ps, ps, c]
 
     def _z_encodings(self, depth, z_locs):
         # z_pos_embedding is a simple learned matrix
@@ -111,7 +142,10 @@ class Segmentor(nn.Module):
         )
 
         z_idx = max_embedding_length // 2 - z_locs.astype(int)
-        z_idx = z_idx[:, None] + jnp.arange(depth) # [N, D]
+        z_idx = jnp.clip(
+            z_idx[:, None] + jnp.arange(depth),
+            0, self.max_embedding_length -1,
+        ) # [N, D]
 
         pos_embedding = jax.vmap(lambda z: pos_embedding[z])(z_idx) # [N, D, n_ch]
         pos_embedding = pos_embedding.swapaxes(0, 1) # [D, N, n_ch]
@@ -126,6 +160,7 @@ class Segmentor(nn.Module):
         classes: ArrayLike | None = None,
         *,
         training=False,
+        **kwargs,
     ) -> dict:
         """
         Args:
@@ -161,10 +196,7 @@ class Segmentor(nn.Module):
 
         # pos encoder
         feature = features[self.feature_level]
-        pos_encodings = self._pos_encoder(feature, locations) # [N, ps, ps, c]
-
-        z_encodings = self._z_encodings(x.shape[0], locations[:, 0]) # [D, N, c]
-        pos_encodings = pos_encodings + z_encodings[:, :, None, None, :] #[D, N, ps, ps, c]
+        pos_encodings = self._pos_encoder(feature, locations) # [D, N, ps, ps, c]
 
         self.sow("intermediates", "segmentor_pos_embed", pos_encodings)
 

@@ -35,14 +35,16 @@ class Lacss(nn.Module):
         image: ArrayLike,
         gt_locations: ArrayLike | None = None,
         gt_cls: ArrayLike | None = None,
+        mask: ArrayLike | None = None,
         *,
         training: bool | None = None,
     ) -> dict:
         """
         Args:
-            image: [H, W, C]
-            gt_locations: [M, 2/3] if training, otherwise None
+            image: [H, W, C] or [D, H, W, C]
+            gt_locations: [M, 2/3] locations of the instances
             gt_cls: [M] instance classes for multi-class prediction
+            mask: broadcastable boolean mask indicating valid region of the input image
         Returns:
             a dict of model outputs
 
@@ -54,8 +56,12 @@ class Lacss(nn.Module):
         # if inputs are 2D
         if x.ndim == 3:
             x = x[None, ...]
-
         assert x.ndim == 4
+        
+        if mask is not None:
+            if mask.ndim == 2:
+                mask = mask[None, ...]
+            assert mask.ndim==3
 
         if gt_locations is not None:
             if gt_locations.shape[-1] == 2:
@@ -64,20 +70,19 @@ class Lacss(nn.Module):
             if gt_cls is None:
                 gt_cls = jnp.zeros(gt_locations.shape[0], dtype=int)
 
-            assert x.ndim == 4
             assert gt_locations.ndim == 2 and gt_locations.shape[-1] == 3
 
         if self.stem is not None:
-            x = self.stem(x, training=training)
+            x = self.stem(x, mas=mask, training=training)
 
-        x = self.backbone(x, training=training)
+        x = self.backbone(x, mask=mask, training=training)
         self.sow("intermediates", "encoder_features", x)
 
         if self.integrator is not None:
-            x = self.integrator(x, training=training)
+            x = self.integrator(x, mask=mask, training=training)
             self.sow("intermediates", "decoder_features", x)
 
-        detector_out = self.detector(x, gt_locations, gt_cls, training=training)
+        detector_out = self.detector(x, gt_locations, gt_cls, mask=mask, training=training)
         outputs = deep_update(outputs, detector_out)
 
         if self.segmentor is not None:
@@ -93,7 +98,7 @@ class Lacss(nn.Module):
             self.sow("intermediates", "segmentation_locations", seg_locs)
             self.sow("intermediates", "segmentation_cls", seg_cls)
 
-            segmentor_out = self.segmentor(x, seg_locs, seg_cls, training=training)
+            segmentor_out = self.segmentor(x, seg_locs, seg_cls, mask=mask, training=training)
 
             outputs = deep_update(outputs, segmentor_out)
 

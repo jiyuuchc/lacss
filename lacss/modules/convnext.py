@@ -24,11 +24,11 @@ class _Block(nn.Module):
     drop_rate: int = 0.4
     layer_scale_init_value: float = 1e-6
     kernel_size: int = 7
-    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    normalization: Callable[[None], nn.Module]=nn.GroupNorm
     activation: Callable[[Array], Array]=nn.gelu
 
     @nn.compact
-    def __call__(self, x: ArrayLike, *, training: Optional[bool] = None) -> Array:
+    def __call__(self, x: ArrayLike, *, training: Optional[bool] = None, **kwargs) -> Array:
         dim = x.shape[-1]
         ks = self.kernel_size
         scale = self.layer_scale_init_value
@@ -90,12 +90,12 @@ class ConvNeXt(nn.Module):
     drop_path_rate: float = 0.4
     layer_scale_init_value: float = 1e-6
     kernel_size: int = 7
-    normalization: Callable[[None], nn.Module]=nn.LayerNorm
+    normalization: Callable[[None], nn.Module]=nn.GroupNorm
     activation: Callable[[Array], Array]=nn.gelu
 
     @nn.compact
     def __call__(
-        self, x: ArrayLike, *, training: Optional[bool] = None
+        self, x: ArrayLike, *, training: Optional[bool] = None, **kwargs
     ) -> tuple[DataDict, DataDict]:
         """
         Args:

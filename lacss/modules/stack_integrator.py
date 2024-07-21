@@ -19,12 +19,12 @@ class _StackTransformer(nn.Module):
     n_layers: int = 2
     n_heads: int = 4
     dropout: float = 0.
-    ff_dropout: float = 0.2
+    ff_dropout: float = 0.6
     deterministic: bool|None = None
     learned_embedding: bool = False
 
     def _get_pos_embeddings(self, feature):
-        depth, height, width, n_ch = feature.shape
+        n_ch = feature.shape[-1]
 
         if self.learned_embedding:
             pos_embedding = self.param(
@@ -35,19 +35,18 @@ class _StackTransformer(nn.Module):
             )
         else:
             pos_embedding = np.zeros((_MAX_EMBEDDING_LENGTH, n_ch))
-            pos = np.arange(_MAX_EMBEDDING_LENGTH) - _MAX_EMBEDDING_LENGTH//2
+            pos = np.arange(_MAX_EMBEDDING_LENGTH)
             pos = pos[:, None] * np.exp(- np.log(_EMBEDDING_SCALE) / n_ch * np.arange(0, n_ch, 2))
             pos_embedding[:, 0::2] = np.sin(pos)
             pos_embedding[:, 1::2] = np.cos(pos)
-
-        pos_embedding = pos_embedding[_MAX_EMBEDDING_LENGTH//2+(-depth)//2:_MAX_EMBEDDING_LENGTH//2+depth//2]
-
-        assert pos_embedding.shape == (depth, n_ch)
-
+        
         return jnp.asarray(pos_embedding)
 
-    def _attention(self, feature, pos_embedding, deterministic):
+    def _attention(self, feature, pos_embedding, mask, deterministic):
         shortcut = feature
+
+        if mask is not None:
+            mask = mask.any(axis=(1,2))
 
         feature = nn.LayerNorm()(feature)
         feature = nn.MultiHeadDotProductAttention(
@@ -60,26 +59,32 @@ class _StackTransformer(nn.Module):
             inputs_v = feature,
             deterministic=deterministic,
             sow_weights=True,
+            mask=mask,
         )
         feature = shortcut + feature
 
         return feature
 
     @nn.compact
-    def __call__(self, feature:ArrayLike, deterministic:bool|None=None) -> Array:
+    def __call__(self, feature:ArrayLike, mask, deterministic:bool|None=None) -> Array:
         assert feature.ndim == 4, f"Wrong input dimension to StackIntegrator: {feature.shape}"
+
+        depth, height, width, n_ch = feature.shape
 
         if deterministic is None:
             deterministic = self.deterministic
 
-        # if feature.shape[0] == 1:
-        #     return feature
+        # bypass attention for 2d
+        if feature.shape[0] == 1:
+            return feature
 
         pos_embedding = self._get_pos_embeddings(feature)
+        pos_embedding = pos_embedding[:depth]
+        assert pos_embedding.shape == (depth, n_ch)
 
         feature = jnp.moveaxis(feature, 0, 2) # we are integrating along z axis
         for _ in range(self.n_layers):
-            feature = self._attention(feature, pos_embedding, deterministic=deterministic)
+            feature = self._attention(feature, pos_embedding, mask, deterministic=deterministic)
             feature = FFN(dropout_rate=self.ff_dropout)(feature, deterministic=deterministic)        
         feature = jnp.moveaxis(feature, 2, 0) # move the z axis back
 
@@ -110,7 +115,7 @@ class StackIntegrator(nn.Module):
     ff_dropout: float = 0.2
 
     @nn.compact
-    def __call__(self, features:Sequence[ArrayLike], *, training:bool=False) -> Sequence[Array]:
+    def __call__(self, features:Sequence[ArrayLike], mask, *, training:bool=False) -> Sequence[Array]:
         feature_last = features[-1]
         feature_last = _StackTransformer(
             self.n_layers,
@@ -118,7 +123,7 @@ class StackIntegrator(nn.Module):
             self.dropout,
             self.ff_dropout,
         )(
-            feature_last, deterministic=not training,
+            feature_last, mask, deterministic=not training,
         )
 
         features = list(features[:-1]) + [feature_last]

@@ -144,6 +144,10 @@ def mayu_dataset_generator():
         imgs = jax.image.resize(imgs, imgs.shape[:2] + labels.shape[-2:], "linear")
         imgs = imgs[..., None] # add ch
 
+        n_slices = imgs.shape[1]
+        mask = np.asarray([True] * n_slices + [False] * (16-n_slices))
+        mask = mask.reshape(16, 1, 1)
+
         for img, label in zip(imgs, labels):
             img, label = _augment(img, label)
 
@@ -154,6 +158,7 @@ def mayu_dataset_generator():
             yield {
                 "image": img.astype("float32"),
                 "gt_locations": locs.astype("float32"),
+                "mask": mask.astype(bool)
             }, {
                 "gt_labels": label.astype("int32"),
             }
@@ -165,6 +170,7 @@ ds_mayu = (
             {
                 "image": tf.TensorSpec([16, 256, 256, 3], dtype=tf.float32),
                 "gt_locations": tf.TensorSpec([128, 3], dtype=tf.float32),
+                "mask": tf.TensorSpec([16, 1, 1], dtype=bool)
             }, 
             {
                 "gt_labels": tf.TensorSpec([16, 256, 256], dtype=tf.int32),

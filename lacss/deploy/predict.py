@@ -22,10 +22,11 @@ from ..typing import Array, ArrayLike
 Shape = Sequence[int]
 
 model_urls: Mapping[str, str] = {
-    "lacss2s-n-bf": "https://huggingface.co/jiyuuchc/lacss2s-n-bf/resolve/main/lacss2s-n-bf?download=true",
-    "lacss2s-a": "https://huggingface.co/jiyuuchc/lacss2s-a/resolve/main/lacss2s-a?download=true"
+    "lacss2s-n-bf": "https://huggingface.co/jiyuuchc/lacss2s-n-bf/resolve/main/lacss2s-n-bf",
+    "lacss2s-a": "https://huggingface.co/jiyuuchc/lacss2s-a/resolve/main/lacss2s-a",
+    "lacss2s-b": "https://huggingface.co/jiyuuchc/lacss2s-b/resolve/main/lacss2s-b",
 }
-model_urls["default"] = model_urls["lacss2s-a"]
+model_urls["default"] = model_urls["lacss2s-b"]
 
 def _remove_edge_instances(
     pred: dict,
