@@ -7,6 +7,16 @@ References:
 - [IEEE TMI doi:10.1109/TMI.2023.3312988](https://ieeexplore.ieee.org/document/10243149)
 - [Communications Biology 6,232 (2023)](https://www.nature.com/articles/s42003-023-04608-5)
 
+### What's new (0.11)
+
+#### GRPC server
+
+Lacss now comes with a GRPC server:
+```
+python -m lacss.deploy.remote_server --modelpath=<model_file_path>
+```
+For a GUI client see the [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) project, which provides a FIJI/ImageJ plugin to perform cell segmentation/tracking in a interactive manner.
+
 ### Installation
 ```
 pip install lacss

@@ -10,11 +10,10 @@
       options:
         show_root_heading: true
 
-::: lacss.modules.Detector
-      options:
-        show_root_heading: true
-
 ::: lacss.modules.Segmentor
       options:
         show_root_heading: true
 
+::: lacss.modules.StackIntegrator
+      options:
+        show_root_heading: true
