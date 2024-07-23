@@ -48,7 +48,6 @@ def _rescale_label_3d(label, target_shape, *, batchsize=5120):
     return new_label
 
 def _format_image(image, label, *, depth=16):
-    import random
     # normalize
     image -= image.mean()
     image /= image.std() + 1e-6
@@ -61,14 +60,13 @@ def _format_image(image, label, *, depth=16):
 
     # pad z slices
     z_pad = depth-image.shape[0]
-    z_pad_a = random.randint(0, z_pad)
     image = np.pad(
         image,
-        [[z_pad_a, z_pad - z_pad_a], [0,0], [0,0], [0,0]],
+        [[0, z_pad], [0,0], [0,0], [0,0]],
     )
     label = np.pad(
         label,
-        [[z_pad_a, z_pad - z_pad_a], [0,0], [0,0]],
+        [[0, z_pad], [0,0], [0,0]],
     )
 
     return image, label
