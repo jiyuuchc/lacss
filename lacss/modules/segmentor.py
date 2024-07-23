@@ -158,9 +158,9 @@ class Segmentor(nn.Module):
         features: list[ArrayLike],
         locations: ArrayLike,
         classes: ArrayLike | None = None,
+        mask: ArrayLike | None = None,
         *,
         training=False,
-        **kwargs,
     ) -> dict:
         """
         Args:
@@ -185,6 +185,8 @@ class Segmentor(nn.Module):
 
         # feature convs
         x = features[self.feature_level]
+        D, H, W, C = x.shape
+
         for n_ch in self.conv_spec[0]:
             x = nn.Conv(n_ch, (3, 3))(x)
             x = self.normalization()(x)
@@ -239,11 +241,21 @@ class Segmentor(nn.Module):
         outputs = outputs.swapaxes(0, 1).squeeze(-1) #[N, D, ps, ps]
 
         # clear invalid locations, needed for the semi-supervied loss functions
-        mask = (locations >= 0).all(axis=-1)
-        y0 = jnp.where(mask, ys[:, 0, 0] * self.feature_scale, -1)
-        x0 = jnp.where(mask, xs[:, 0, 0] * self.feature_scale, -1)
+        instance_mask = (locations >= 0).all(axis=-1)
+        y0 = jnp.where(instance_mask, ys[:, 0, 0] * self.feature_scale, -1)
+        x0 = jnp.where(instance_mask, xs[:, 0, 0] * self.feature_scale, -1)
+        yc, xc = jnp.mgrid[:self.instance_crop_size, :self.instance_crop_size]
+        yc = yc + y0[:, None, None] # [N, ps, ps]
+        xc = xc + x0[:, None, None]
+        valid_pixels = (xc >= 0) & (yc >=0) & (xc < W * self.feature_scale) & (yc < H * self.feature_scale)
+        if mask is not None:
+            valid_pixels &= mask.any(axis=0)[yc, xc] # [N, ps, ps]
+            valid_pixels = jnp.expand_dims(valid_pixels, 1) & mask.any(axis=(1,2), keepdims=True) #[N, D, ps, ps]
+        else:
+            valid_pixels = jnp.expand_dims(valid_pixels, 1)
+        valid_pixels &= jnp.expand_dims(instance_mask, (1,2,3))
         outputs = jnp.where(
-            jnp.expand_dims(mask, (1,2,3)),
+            valid_pixels,
             outputs,
             -1e8,
         )
@@ -256,6 +268,6 @@ class Segmentor(nn.Module):
                 segmentations=outputs, #[N, D, ps, ps]
                 segmentation_y0_coord=y0,
                 segmentation_x0_coord=x0,
-                segmentation_is_valid=mask,
+                segmentation_is_valid=instance_mask,
             ),
         )

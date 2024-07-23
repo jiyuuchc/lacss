@@ -236,7 +236,17 @@ class Predictor:
 
         assert image.shape[-1] == 3, f"input image has more than 3 channels"
 
-        return image
+        depth = image.shape[0]
+        if depth > 1:
+            z_pad = 16 - depth if depth <= 16 else 32 - depth #FIXME avoid hardcoded padding
+            image = np.pad(image, [[0, z_pad], [0,0], [0,0], [0,0]])
+
+        mask_z = np.expand_dims(np.arange(image.shape[0]) < D, (1,2))
+        mask_y = np.expand_dims(np.arange(image.shape[1]) < H, (0,2))
+        mask_x = np.expand_dims(np.arange(image.shape[2]) < W, (0,1))
+        input_mask = mask_z & mask_y & mask_x
+
+        return image, input_mask
 
 
     def predict(
@@ -289,10 +299,13 @@ class Predictor:
         if image.ndim == 2:
             logging.warn("Input image has a ndim of 2. Reformate assuming this is a single-channel 2D image.")
             image = image[..., None]
+        is_2d_input = image.ndim == 3 
+        if is_2d_input:
+            image = image[None, ...]
 
         orig_shape = image.shape
 
-        image = self._format_image(image, scaling)
+        image, input_mask = self._format_image(image, scaling)
 
         if not output_type in ("bbox", "label", "contour"):
             raise ValueError(
@@ -305,17 +318,29 @@ class Predictor:
         seg_logit_threshold = math.log(segmentation_threshold / (1 - segmentation_threshold))
 
         logging.info(f"start model prediction with image {image.shape}")
-        preds = self._apply_fn(image)["predictions"]
+        preds = self._apply_fn(image, mask=input_mask)["predictions"]
         logging.info("done model prediction")
 
-        mask = np.asarray(preds["segmentation_is_valid"])
-        mask &= preds["scores"] >= score_threshold
+        instance_mask = np.asarray(preds["segmentation_is_valid"])
+        instance_mask &= preds["scores"] >= score_threshold
+
+        # mask-off invalid pixels
+        # patch_size = preds['segmentations'].shape[-1]
+        # mg = jnp.expand_dims(jnp.mgrid[:patch_size, :patch_size], 1) # [2, 1, ps, ps]
+        # y0x0 = jnp.stack([preds['segmentation_y0_coord'], preds['segmentation_x0_coord']])
+        # mg = jnp.moveaxis(mg + y0x0[:, :, None, None], 0, -1) #[N, ps, ps, 2]
+        # mg = jnp.expand_dims(mg, 1) # [N, 1, ps, ps, 2]
+        # valid = (mg > 0).all(axis=-1) & (mg < jnp.array(orig_shape[-3:-1])).all(axis=-1) #[N, 1, ps, ps]
+        # valid = valid & input_mask #[N, d, ps, ps]
+        # preds['segmentations'] = jnp.where(
+        #     valid, preds['segmentations'], -1e8
+        # )
 
         if min_area > 0:
             areas = jnp.count_nonzero(
                 preds["segmentations"] > segmentation_threshold, axis=(1, 2, 3)
             )
-            mask &= areas >= min_area * scaling * scaling
+            instance_mask &= areas >= min_area * scaling * scaling
 
         scores = preds["scores"]
         bboxes = bboxes_of_patches(preds, threshold=seg_logit_threshold) / scaling
@@ -327,7 +352,7 @@ class Predictor:
                 return_selection=True,
                 similarity_func=box_iou_similarity,
             )
-            mask = mask & sel
+            instance_mask = instance_mask & sel
         
         if output_type == "bbox":
             target_shape = (48, 48) if len(orig_shape) < 4 else (8, 48, 48)
@@ -336,33 +361,34 @@ class Predictor:
                 convert_logits=True,
             )
             return dict(
-                pred_scores=np.asarray(scores)[mask],
-                pred_bboxes=np.asarray(bboxes)[mask],
-                pred_masks=np.asarray(segmentations)[mask],
+                pred_scores=np.asarray(scores)[instance_mask],
+                pred_bboxes=np.asarray(bboxes)[instance_mask],
+                pred_masks=np.asarray(segmentations)[instance_mask],
             )
 
         elif output_type == "contour":
             contours = _to_polygons(
-                preds, mask,
+                preds, instance_mask,
                 scaling=scaling,
                 segmentation_threshold=seg_logit_threshold,
             )
             return dict(
-                pred_scores=np.asarray(scores)[mask],
-                pred_bboxes=np.asarray(bboxes)[mask],
+                pred_scores=np.asarray(scores)[instance_mask],
+                pred_bboxes=np.asarray(bboxes)[instance_mask],
                 pred_contours=contours,
             )
 
         else:  # Label
             label = _compute_label(
-                preds, scaling, mask, 
+                preds, scaling, instance_mask, 
                 image.shape[:1] + orig_shape[-3:-1],
                 seg_logit_threshold,
             )
-            if len(orig_shape) < 4:
+            label = label[:orig_shape[0]]
+            if is_2d_input:
                 label = label.squeeze(0)
             return dict(
-                pred_scores=np.asarray(scores)[mask],
+                pred_scores=np.asarray(scores)[instance_mask],
                 pred_label=label,
             )
 
