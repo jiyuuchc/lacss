@@ -19,6 +19,7 @@ message Image {
     uint64 channel = 3;
     DType dtype = 4;
     bytes data = 5;
+    uint64 depth = 6;
 }
 
 message Settings {
@@ -39,6 +40,7 @@ message Input {
 message Label {
     uint64 height = 1;
     uint64 width = 2;
+    uint64 depth = 3;
     bytes data = 6;
 }
 
@@ -50,6 +52,7 @@ message Result {
 message Point {
     float x = 1;
     float y = 2;
+    float z = 3;
 }
 
 message Polygon {

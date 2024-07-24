@@ -17,23 +17,43 @@ app = typer.Typer(pretty_exceptions_enable=False)
 def process_input(msg):
     image = msg.image
     np_img = np.frombuffer(image.data, dtype=">f4").astype("float32")
-    np_img = np_img.reshape(image.height, image.width, image.channel)
+    if image.depth == 0 or image.depth == 1:
+        np_img = np_img.reshape(image.height, image.width, image.channel)
+    else:
+        np_img = np_img.reshape(image.depth, image.height, image.width, image.channel)
 
     return np_img, msg.settings
 
 
-def process_result(polygons, scores):
+def process_result(preds, is3d):
     msg = lacss_pb2.PolygonResult()
-    for polygon, score in zip(polygons, scores):
-        if len(polygon) > 0:
+
+    scores = preds["pred_scores"]
+    if is3d:
+        from skimage.measure import regionprops
+        label = preds["pred_label"].astype(int)
+
+        for rp, score in zip(regionprops(label), scores):
             polygon_msg = lacss_pb2.Polygon()
             polygon_msg.score = score
-            for p in polygon:
-                point = lacss_pb2.Point()
-                point.x = p[0]
-                point.y = p[1]
-                polygon_msg.points.append(point)
+            point = lacss_pb2.Point()
+            point.z, point.y, point.x = rp.centroid
+            polygon_msg.points.append(point)
+    
             msg.polygons.append(polygon_msg)
+
+    else:
+        polygons = preds["pred_contours"]
+        for polygon, score in zip(polygons, scores):
+            if len(polygon) > 0:
+                polygon_msg = lacss_pb2.Polygon()
+                polygon_msg.score = score
+                for p in polygon:
+                    point = lacss_pb2.Point()
+                    point.x = p[0]
+                    point.y = p[1]
+                    polygon_msg.points.append(point)
+                msg.polygons.append(polygon_msg)
 
     return msg
 
@@ -41,7 +61,7 @@ def process_result(polygons, scores):
 class TokenValidationInterceptor(grpc.ServerInterceptor):
     def __init__(self, token):
         def abort(ignored_request, context):
-            context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid signature")
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid token signature")
 
         self._abort_handler = grpc.unary_unary_rpc_method_handler(abort)
         self.token = token
@@ -60,28 +80,20 @@ class LacssServicer(lacss_pb2_grpc.LacssServicer):
 
     def RunDetection(self, request, context):
         img, settings = process_input(request)
-
+        is3d = img.ndim == 4
         logging.debug(f"received image {img.shape}")
-
-        logging.debug(f"making prediction")
 
         preds = self.model.predict(
             img,
             min_area=settings.min_cell_area,
-            # remove_out_of_bound=settings.remove_out_of_bound,
             scaling=settings.scaling,
             nms_iou=settings.nms_iou,
             score_threshold=settings.detection_threshold,
             segmentation_threshold=settings.segmentation_threshold,
-            output_type="contour",
+            output_type="label" if is3d else "contour" ,
         )
 
-        logging.debug(f"formatting reply")
-
-        result = process_result(
-            preds["pred_contours"],
-            preds["pred_scores"],
-        )
+        result = process_result(preds, is3d)
 
         logging.debug(f"Reply with message of size {result.ByteSize()}")
 
@@ -117,7 +129,7 @@ def main(
     workers: int = 10,
     ip: str = "0.0.0.0",
     local: bool = False,
-    token: bool = False,
+    token: bool|None = None,
     debug: bool = False,
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
@@ -135,6 +147,8 @@ def main(
             f"lacss_server: WARNING: No GPU configuration. This might be very slow ..."
         )
 
+    if token is None:
+        token = not local
     if token:
         import secrets
 
@@ -145,9 +159,12 @@ def main(
             interceptors=(TokenValidationInterceptor(token),),
         )
 
-        print("===================================")
-        print(f"For access use token: {token}")
-        print("===================================")
+        print()
+        print("COPY THE TOKEN BELOW FOR ACCESS.")
+        print("=======================================================================")
+        print(f"{token}")
+        print("=======================================================================")
+        print()
     else:
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
 
