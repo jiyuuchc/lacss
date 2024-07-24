@@ -68,11 +68,10 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
 
     def intercept_service(self, continuation, handler_call_details):
         expected_metadata = (_AUTH_HEADER_KEY, f"Bearer {self.token}")
-        if expected_metadata in handler_call_details.invocation_metadata:
+        if self.token is None or expected_metadata in handler_call_details.invocation_metadata:
             return continuation(handler_call_details)
         else:
             return self._abort_handler
-
 
 class LacssServicer(lacss_pb2_grpc.LacssServicer):
     def __init__(self, model):
@@ -131,6 +130,7 @@ def main(
     local: bool = False,
     token: bool|None = None,
     debug: bool = False,
+    compression: bool = True,
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
@@ -154,11 +154,6 @@ def main(
 
         token = secrets.token_urlsafe(32)
 
-        server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=workers),
-            interceptors=(TokenValidationInterceptor(token),),
-        )
-
         print()
         print("COPY THE TOKEN BELOW FOR ACCESS.")
         print("=======================================================================")
@@ -166,7 +161,14 @@ def main(
         print("=======================================================================")
         print()
     else:
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
+        token = None
+
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=workers),
+        compression=grpc.Compression.Gzip if compression else grpc.Compression.NoCompression,
+        interceptors=(TokenValidationInterceptor(token),),
+        options=(("grpc.max_receive_message_length", 1024*1024*16),),
+    )
 
     lacss_pb2_grpc.add_LacssServicer_to_server(LacssServicer(model), server)
 
