@@ -114,7 +114,7 @@ def load_from_pretrained(pretrained: str):
 
     else:
         # uri or files were treated as pickled byte steam
-        import pickle
+        import cloudpickle as pickle
 
         from .modules import Lacss
         from .train import Trainer

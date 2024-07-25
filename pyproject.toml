@@ -19,6 +19,7 @@ scikit-image = ">=0.19.0"
 imagecodecs = "^2023.3.16"
 opencv-python = "^4.8.1.78"
 lap = "^0.4.0"
+cloudpickle = "^3.0.0"
 
 [tool.poetry.group.dev.dependencies]
 jupyterlab = "^3.6.1"
