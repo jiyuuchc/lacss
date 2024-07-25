@@ -12,21 +12,53 @@ from ..typing import ArrayLike
 
 
 class KalmanFilter(Protocol):
-    def initialize(self, measurement: Any):
+    """KalmanFilter Protocol definition"""
+
+    def initialize(self, measurement: Any)->tuple[np.ndarray, np.ndarray]:
+        """Create track from unassociated measurement.
+
+        Args:
+            measurement : data in measurement space
+
+        Returns:
+            mean: Unobserved velocities are initialized to 0 mean.
+            cov: covariance matrix (8x8 dimensional) of the new track. 
+
+        """
         ...
     
-    def predict(self, mean: Any, covariance: Any):
+    def predict(self, mean: Any, covariance: Any)->tuple[np.ndarray, np.ndarray]:
+        """Run Kalman filter prediction step.
+
+        Args:
+            mean : mean vector of the object state at the previous time step.
+            covariance : The covariance matrix of the object state at the
+                previous time step.
+
+        Returns:
+            mean: the mean vector of the predicted state
+            cov: the covariance matrix of the predicted
+        """
         ...
 
-    def update(self, mean: Any, covariance: Any, measurement: Any):
+    def update(self, mean: Any, covariance: Any, measurement: Any)->tuple[np.ndarray, np.ndarray]:
+        """Run Kalman filter correction step.
+
+        Args:
+            mean :  The predicted state's mean vector.
+            covariance : The state's covariance matrix.
+            measurement : The measurement vector
+
+        Returns:
+            mean: mean vector of the measurement-corrected state distribution.
+            cov: covariance matrix of the measurement-corrected state distribution.
+        """
         ...
 
 
 class ConstantVelocityKalmanFilter(KalmanFilter):
     """
-    A simple Kalman filter for tracking bounding boxes in image space.
-
-    The 8-dimensional state space
+    A simple Kalman filter for tracking bounding boxes in image space.  The 8-dimensional state space
 
         x, y, a, h, vx, vy, va, vh
 
@@ -36,9 +68,9 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
     Object motion follows a constant velocity model. The bounding box location
     (x, y, a, h) is taken as direct observation of the state space (linear
     observation model).
-
     """
-    def __init__(self, *, std_weight_position = 1/20, std_weight_velocity=1/160):
+
+    def __init__(self, *, std_weight_position:float = 1/20, std_weight_velocity:float =1/160):
         """
         Keyword Args:
             std_weight_position: Relative observation uncertainty.
@@ -55,23 +87,7 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
         self._std_weight_position = std_weight_position
         self._std_weight_velocity = std_weight_velocity
 
-    def initiate(self, measurement):
-        """Create track from unassociated measurement.
-
-        Parameters
-        ----------
-        measurement : ndarray
-            Bounding box coordinates (x, y, a, h) with center position (x, y),
-            aspect ratio a, and height h.
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the mean vector (8 dimensional) and covariance matrix (8x8
-            dimensional) of the new track. Unobserved velocities are initialized
-            to 0 mean.
-
-        """
+    def initiate(self, measurement:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         mean_pos = measurement
         mean_vel = np.zeros_like(mean_pos)
         mean = np.r_[mean_pos, mean_vel]
@@ -90,25 +106,7 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
 
         return mean, covariance
 
-    def predict(self, mean, covariance):
-        """Run Kalman filter prediction step.
-
-        Parameters
-        ----------
-        mean : ndarray
-            The 8 dimensional mean vector of the object state at the previous
-            time step.
-        covariance : ndarray
-            The 8x8 dimensional covariance matrix of the object state at the
-            previous time step.
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the mean vector and covariance matrix of the predicted
-            state. Unobserved velocities are initialized to 0 mean.
-
-        """
+    def predict(self, mean:ArrayLike, covariance:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         std_pos = [
             self._std_weight_position * mean[3],
             self._std_weight_position * mean[3],
@@ -129,23 +127,7 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
 
         return mean, covariance
 
-    def project(self, mean, covariance):
-        """Project state distribution to measurement space.
-
-        Parameters
-        ----------
-        mean : ndarray
-            The state's mean vector (8 dimensional array).
-        covariance : ndarray
-            The state's covariance matrix (8x8 dimensional).
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the projected mean and covariance matrix of the given state
-            estimate.
-
-        """
+    def project(self, mean:ArrayLike, covariance:ArrayLike) ->tuple[np.ndarray, np.ndarray]:
         std = [
             self._std_weight_position * mean[3],
             self._std_weight_position * mean[3],
@@ -158,21 +140,18 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
             self._update_mat, covariance, self._update_mat.T))
         return mean, covariance + innovation_cov
 
-    def multi_predict(self, mean, covariance):
-        """Run Kalman filter prediction step (Vectorized version).
-        Parameters
-        ----------
-        mean : ndarray
-            The Nx8 dimensional mean matrix of the object states at the previous
-            time step.
-        covariance : ndarray
-            The Nx8x8 dimensional covariance matrics of the object states at the
-            previous time step.
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the mean vector and covariance matrix of the predicted
-            state. Unobserved velocities are initialized to 0 mean.
+    def multi_predict(self, mean:ArrayLike, covariance:ArrayLike)->tuple[np.ndarray, np.ndarray]:
+        """vectorized version of the prediction step (Vectorized version).
+
+        Args:
+            mean : Nx8 dimensional mean matrix of the object states at the previous
+                time step.
+            covariance : Nx8x8 dimensional covariance matrics of the object states at the
+                previous time step.
+
+        Returns:
+            mean: the mean vector of the predicted state
+            cov:  the covariance matrix of the predicted state
         """
         std_pos = [
             self._std_weight_position * mean[:, 3],
@@ -197,26 +176,7 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
 
         return mean, covariance
 
-    def update(self, mean, covariance, measurement):
-        """Run Kalman filter correction step.
-
-        Parameters
-        ----------
-        mean : ndarray
-            The predicted state's mean vector (8 dimensional).
-        covariance : ndarray
-            The state's covariance matrix (8x8 dimensional).
-        measurement : ndarray
-            The 4 dimensional measurement vector (x, y, a, h), where (x, y)
-            is the center position, a the aspect ratio, and h the height of the
-            bounding box.
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the measurement-corrected state distribution.
-
-        """
+    def update(self, mean:ArrayLike, covariance:ArrayLike, measurement:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         projected_mean, projected_cov = self.project(mean, covariance)
 
         chol_factor, lower = scipy.linalg.cho_factor(
@@ -233,30 +193,25 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
         return new_mean, new_covariance
 
     def gating_distance(self, mean, covariance, measurements,
-                        only_position=False, metric='maha'):
-        """Compute gating distance between state distribution and measurements.
-        A suitable distance threshold can be obtained from `chi2inv95`. If
-        `only_position` is False, the chi-square distribution has 4 degrees of
-        freedom, otherwise 2.
-        Parameters
-        ----------
-        mean : ndarray
-            Mean vector over the state distribution (8 dimensional).
-        covariance : ndarray
-            Covariance of the state distribution (8x8 dimensional).
-        measurements : ndarray
-            An Nx4 dimensional matrix of N measurements, each in
-            format (x, y, a, h) where (x, y) is the bounding box center
-            position, a the aspect ratio, and h the height.
-        only_position : Optional[bool]
-            If True, distance computation is done with respect to the bounding
-            box center position only.
-        Returns
-        -------
-        ndarray
-            Returns an array of length N, where the i-th element contains the
-            squared Mahalanobis distance between (mean, covariance) and
-            `measurements[i]`.
+                        only_position:bool|None=False, metric:str='maha'
+        ) -> np.ndarray:
+        """ Compute gating distance between state distribution and measurements.
+            A suitable distance threshold can be obtained from `chi2inv95`. If
+            `only_position` is False, the chi-square distribution has 4 degrees of
+            freedom, otherwise 2.
+        
+        Args:
+            mean: Mean vector over the state distribution (8 dimensional).
+            covariance : Covariance of the state distribution (8x8 dimensional).
+            measurements : An Nx4 dimensional matrix of N measurements, each in
+                format (x, y, a, h) where (x, y) is the bounding box center
+                position, a the aspect ratio, and h the height.
+            only_position : If True, distance computation is done with respect to the bounding
+                box center position only.
+
+        Returns: 
+            gating_distance: an array of length N, where the i-th element contains the
+                squared Mahalanobis distance between (mean, covariance) and `measurements[i]`.
         """
         mean, covariance = self.project(mean, covariance)
         if only_position:
@@ -277,15 +232,13 @@ class ConstantVelocityKalmanFilter(KalmanFilter):
             raise ValueError('invalid distance metric')
 
 
-class KalmanFilter3D(KalmanFilter):
-    """
-    A 3D Kalman filter for tracking 3D bounding boxes follows a constant velocity model.
+class ConstantVelocityKalmanFilter3D(KalmanFilter):
+    """A 3D Kalman filter for tracking 3D bounding boxes follows a constant velocity model. 
+        The 8-dimensional state space are:
 
-    The 8-dimensional state space
-
-        z, y, x, d, h, w, vz, vy, vx, vd, vh, vw
+            z, y, x, d, h, w, vz, vy, vx, vd, vh, vw
     """
-    def __init__(self, *, std_weight_position = 1/20, std_weight_velocity=1/160, z_scaling=1):
+    def __init__(self, *, std_weight_position:float=1/20, std_weight_velocity:float=1/160, z_scaling:float=1):
         """
         Keyword Args:
             std_weight_position: Relative observation uncertainty.
@@ -318,18 +271,7 @@ class KalmanFilter3D(KalmanFilter):
             std_weight_velocity
         ]) 
 
-    def initiate(self, measurement):
-        """Create track from unassociated measurement.
-
-        Parameters
-        ----------
-        measurement : ndarray
-
-        Returns
-        -------
-        (ndarray, ndarray) mean, covar
-
-        """
+    def initiate(self, measurement:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         mean_pos = measurement
         mean_vel = np.zeros_like(mean_pos)
         mean = np.r_[mean_pos, mean_vel]
@@ -343,21 +285,7 @@ class KalmanFilter3D(KalmanFilter):
 
         return mean, covariance
 
-    def predict(self, mean, covariance):
-        """Run Kalman filter prediction step.
-
-        Parameters
-        ----------
-        mean : ndarray
-        covariance : ndarray
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the mean vector and covariance matrix of the predicted
-            state. Unobserved velocities are initialized to 0 mean.
-
-        """
+    def predict(self, mean:ArrayLike, covariance:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         mean_size = (math.prod(mean[4:6])) ** (1/2)
 
         std_pos = self._std_weight_position * mean_size
@@ -371,21 +299,7 @@ class KalmanFilter3D(KalmanFilter):
 
         return mean, covariance
 
-    def project(self, mean, covariance):
-        """Project state distribution to measurement space.
-
-        Parameters
-        ----------
-        mean : ndarray
-        covariance : ndarray
-
-        Returns
-        -------
-        (ndarray, ndarray)
-            Returns the projected mean and covariance matrix of the given state
-            estimate.
-
-        """
+    def project(self, mean:ArrayLike, covariance:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         mean_size = (math.prod(mean[4:6])) ** (1/2)
 
         std = self._std_weight_position * mean_size
@@ -397,8 +311,8 @@ class KalmanFilter3D(KalmanFilter):
             self._update_mat, covariance, self._update_mat.T))
         return mean, covariance + innovation_cov
 
-    def multi_predict(self, mean, covariance):
-        """Run Kalman filter prediction step (Vectorized version).
+    def multi_predict(self, mean:ArrayLike, covariance:ArrayLike)->tuple[np.ndarray, np.ndarray]:
+        """Vectorized Kalman filter prediction step.
         """
         mean_size = np.sqrt(mean[:, -1] * mean[:, -2])
 
@@ -418,23 +332,7 @@ class KalmanFilter3D(KalmanFilter):
 
         return mean, covariance
 
-    def update(self, mean, covariance, measurement):
-        """Run Kalman filter correction step.
-
-        Parameters
-        ----------
-        mean : ndarray
-            The predicted state's mean vector.
-        covariance : ndarray
-            The state's covariance matrix.
-        measurement : ndarray
-            The measurement vector (z, y, x, d, h, w)
-
-        Returns
-        -------
-        (ndarray, ndarray) mean, covar
-
-        """
+    def update(self, mean:ArrayLike, covariance:ArrayLike, measurement:ArrayLike)->tuple[np.ndarray, np.ndarray]:
         projected_mean, projected_cov = self.project(mean, covariance)
 
         chol_factor, lower = scipy.linalg.cho_factor(
@@ -483,6 +381,16 @@ class KTracker:
 
 
     def __init__(self, init_obs:ArrayLike, frame_id:int, kf: KalmanFilter, *, data:dict={}):
+        """ constructor
+
+        Args:
+            init_obs: initial measurement space data
+            frame_id: the frame number
+            kf: a Kalman Filter following the KalmanFilter protocol
+        
+        Keyword Args:
+            data: additional data of the observation that will be store
+        """
         self.obs = np.asarray(init_obs, dtype=float)
         self._data = data
         self.tracklet_len = 0
@@ -493,12 +401,16 @@ class KTracker:
 
 
     def predict(self):
+        """ Kalman filter prediction
+        """
         self._mean, self._cov = self.kf.predict(
             self.mean, self.cov,
         )
 
 
     def initialize(self):
+        """ Initialze the track, so that it has a track id and a history object
+        """
         self._mean, self._cov = self.kf.initiate(
             self.obs,
         )            
@@ -512,6 +424,10 @@ class KTracker:
 
 
     def update(self, new_track: KTracker):
+        """ Kalman filter update step
+
+        new_track: the new observation
+        """
         self._mean, self._covariance = self.kf.update(
             self.mean, self.cov, new_track.obs
         )
@@ -534,16 +450,23 @@ class KTracker:
 
 
     def new_id(self):
-        self.track_id = self.next_id()
- 
+        self.track_id = self.next_id() 
+
 
     def mark_lost(self, *, update_state:ArrayLike=None):
+        """ Mark the track as lost
+
+        Keyword Args:
+            update_state: if not None, change the mean vector to this one
+        """
         self.state = "lost"
         if update_state is not None:
             self._mean = np.array(update_state)
 
 
     def mark_removed(self):
+        """ Mark the track as removed
+        """
         self.state = "removed"
 
     @staticmethod
@@ -553,6 +476,19 @@ class KTracker:
         cost_matrix: ArrayLike,
         threshold:float,
     ) -> tuple[Sequence[KTracker], Sequence[KTracker], Sequence[KTracker]]:
+        """ perform MOT assigment
+
+        Args:
+            tracks: current list of tracks of length M
+            dets: list of new observations of length N
+            cost_matrix: [M x N] cost matrix
+            threshold: max cost for linking
+        
+        Returns:
+            tracked: list of tracks that are updated with new observations
+            remaining_tracks: list of tracks that did not find a suitable link
+            remaining_dets: the remaining detections that didn't get linked in.            
+        """
         matches, unmatched_track_ids, unmatched_det_ids = linear_assignment(cost_matrix, thresh=threshold)
 
         tracked = []

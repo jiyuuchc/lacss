@@ -28,6 +28,7 @@ nav:
       - lacss.modules: 'api/modules.md'
       - lacss.losses: 'api/losses.md'
       - lacss.ops: 'api/ops.md'
+      - lacss.tracking: 'api/tracking.md'
 
 watch:
   - lacss

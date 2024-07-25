@@ -40,7 +40,21 @@ def _nms_secondary(selected_boxes, boxes, iou_threshold):
 
 @dataclass
 class ZStackTracker:
-    """ A special tracker for building 3d segmentation from a z-stack of 2d segmentations
+    """ A special tracker for building 3d segmentation from a z-stack of 2d segmentations. It uses a kalman
+    tracker of 2d boxes that assumes a fixed center location and tracking only the size changes.
+
+    Attributes:
+        score_thresh: score threshold for high-confidence detections
+        nms_iou: filter the 2D results with non-max-supression
+        cost_thresh: cost threshold for link assignment
+        cost_thresh_secondary:  cost threshold for link assignment of low confidence detections
+        max_init_area: maximum segmentation area to be considered as the first slice of a cell 
+        max_time_lost: max consecutive missing slices  
+        std_weight_position: kalman filter parameter. relative error for position 
+        std_weight_velocity: kalman filter parameter. relative error for velocity
+        min_z_slices: minimal z slices needed to be considered a cell
+        use_generalized_iou_loss: whether to use generalized iou loss instead of simple iou_loss for linking
+            cost
     """
     score_thresh: float = 0.5 # threshold for high-confidence detections
     nms_iou: float = 0.3
@@ -53,8 +67,8 @@ class ZStackTracker:
     min_z_slices: int = 3
     use_generalized_iou_loss: bool = False
 
+    # tracks y, x, h, w, vh, vw
     class ZStack_KF(KalmanFilter):
-        """ tracks y, x, h, w, vh, vw"""
         def __init__(self, std_weight_position, std_weight_velocity):
             self._motion_mat = np.eye(6, 6)
             self._motion_mat[2, 4] = 1
@@ -147,13 +161,15 @@ class ZStackTracker:
 
     def update(self, tracks:Sequence[KTracker], dets:dict, frame_id: int) -> tuple[list[KTracker], list[KTracker]]:
         """ Update the tracker with one frame
+
         Args:
             tracks: a list of KTacker representing currently tracks cells
             dets: predictor output in bbox format
             frame_id: current frame number
 
         Returns:
-            a tuple of (tracked_tracks, removed_tracks)
+            tracked_tracks: list of tracks that are active
+            removed_tracks: list of tracks that are inactive
 
         """
         scores = np.asarray(dets["pred_scores"]).reshape(-1)
@@ -247,6 +263,18 @@ class ZStackTracker:
         return tracked_tracks + lost_tracks, removed_tracks
 
     def finalize(self, tracks: list[KTracker], *, fill_in_missing:bool=True) -> list[KTracker]:
+        """ Finalize step which compute scores and bboxes, and optionally fill in the missing segmentations.
+        The aggregated score is the mean of the top-k 2d scores, where k is the min_z_slices. 
+
+        Args:
+            tracks: list of tracks, each represent a cell in 3d
+        
+        Keyword Args:
+            fill_in_missing: whether try to generate segmentations for missing slices
+
+        Returns:
+            list of tracks will "score", "bbox" fields.        
+        """
         tracks = [track for track in tracks if track.frame_id - track.start_frame + 1 >= self.min_z_slices]
 
         if fill_in_missing:
@@ -284,7 +312,16 @@ class ZStackTracker:
         return tracks
 
     @staticmethod
-    def render_label(tracks, img3d_shape):
+    def render_label(tracks:list[KTracker], img3d_shape:Sequence[int])->np.ndarray:
+        """ create 3d label from tracking results
+
+        Args:
+            tracks: list of tracks
+            img3d_shape: tuple of (D, H, W)
+
+        Returns:
+            label: array of shape (D, H, W) 
+        """
         from skimage.transform import resize
         label = np.zeros(img3d_shape, dtype="uint8")
         _, h, w = img3d_shape

@@ -7,6 +7,7 @@ import numpy as np
 
 from lacss.ops import box_intersection
 
+__ALL__=["seq_nms"]
 
 # from compute_overlap import compute_overlap_areas_given, compute_area
 def compute_area(boxes):
