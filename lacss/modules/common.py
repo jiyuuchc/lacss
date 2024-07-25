@@ -477,3 +477,7 @@ class PositionEmbedding2D(nn.Module):
             )
 
         return pos
+
+
+def picklable_relu(x):
+    return jax.nn.relu(x)

@@ -5,6 +5,8 @@ from typing import Optional, Sequence, Callable
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from flax.linen import normalization
+from flax.linen import activation
 
 from ..typing import DataDict, Array, ArrayLike
 from .common import DropPath
@@ -24,8 +26,8 @@ class _Block(nn.Module):
     drop_rate: int = 0.4
     layer_scale_init_value: float = 1e-6
     kernel_size: int = 7
-    normalization: Callable[[None], nn.Module]=nn.GroupNorm
-    activation: Callable[[Array], Array]=nn.gelu
+    normalization: Callable[[None], nn.Module]=normalization.GroupNorm
+    activation: Callable[[Array], Array]=activation.gelu
 
     @nn.compact
     def __call__(self, x: ArrayLike, *, training: Optional[bool] = None, **kwargs) -> Array:

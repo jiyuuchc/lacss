@@ -6,7 +6,10 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import optax
+from flax.linen import normalization
+from flax.linen import activation
 
+from .common import picklable_relu
 from ..losses.common import binary_focal_crossentropy
 from ..ops import non_max_suppression, location_matching
 from ..typing import Array, ArrayLike
@@ -35,8 +38,8 @@ class LPN(nn.Module):
     feature_levels: Sequence[int] = (0, 1, 2)
     feature_level_scales: Sequence[int] = (4, 8, 16)
     conv_spec: Sequence[int] = (192, 192, 192, 192)
-    normalization: Callable[[None], nn.Module]=nn.GroupNorm
-    activation: Callable[[Array], Array] = nn.relu
+    normalization: Callable[[None], nn.Module]=normalization.GroupNorm
+    activation: Callable[[Array], Array] = picklable_relu
 
     detection_n_cls: int = 1
 

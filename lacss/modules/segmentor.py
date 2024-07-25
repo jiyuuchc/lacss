@@ -7,11 +7,13 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax.linen import normalization
+from flax.linen import activation
 
 from lacss.ops import sub_pixel_samples
 
 from ..typing import ArrayLike, Array
-from .common import SpatialAttention
+from .common import SpatialAttention, picklable_relu
 
 
 class Segmentor(nn.Module):
@@ -31,8 +33,8 @@ class Segmentor(nn.Module):
         (192, 192, 192),
         (48,),
     )
-    normalization: Callable[[None], nn.Module]=nn.GroupNorm
-    activation: Callable[[Array], Array] = nn.relu
+    normalization: Callable[[None], nn.Module]=normalization.GroupNorm
+    activation: Callable[[Array], Array] = picklable_relu
 
     n_cls: int = 1
     instance_crop_size: int = 96
