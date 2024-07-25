@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from functools import partial, reduce
 from typing import Mapping, Sequence, Tuple
 
@@ -293,6 +294,9 @@ class Predictor:
                 - pred_bboxes: The bounding-boxes of detected instances in y0x0y1x1 format
                 - pred_masks:  A 3d array representing (rescaled) segmentation mask within bboxes
         """
+        logging.debug(f"started prediction with image {image.shape}")
+        start_time = time.time()
+
         if remove_out_of_bound is not None:
             import warnings
             warnings.warn("remove_out_of_bound is deprecated", DeprecationWarning, 2)
@@ -300,6 +304,7 @@ class Predictor:
         if image.ndim == 2:
             logging.warn("Input image has a ndim of 2. Reformate assuming this is a single-channel 2D image.")
             image = image[..., None]
+
         is_2d_input = image.ndim == 3 
         if is_2d_input:
             image = image[None, ...]
@@ -318,24 +323,12 @@ class Predictor:
 
         seg_logit_threshold = math.log(segmentation_threshold / (1 - segmentation_threshold))
 
-        logging.info(f"start model prediction with image {image.shape}")
         preds = self._apply_fn(image, mask=input_mask)["predictions"]
-        logging.info("done model prediction")
-
         instance_mask = np.asarray(preds["segmentation_is_valid"])
         instance_mask &= preds["scores"] >= score_threshold
 
-        # mask-off invalid pixels
-        # patch_size = preds['segmentations'].shape[-1]
-        # mg = jnp.expand_dims(jnp.mgrid[:patch_size, :patch_size], 1) # [2, 1, ps, ps]
-        # y0x0 = jnp.stack([preds['segmentation_y0_coord'], preds['segmentation_x0_coord']])
-        # mg = jnp.moveaxis(mg + y0x0[:, :, None, None], 0, -1) #[N, ps, ps, 2]
-        # mg = jnp.expand_dims(mg, 1) # [N, 1, ps, ps, 2]
-        # valid = (mg > 0).all(axis=-1) & (mg < jnp.array(orig_shape[-3:-1])).all(axis=-1) #[N, 1, ps, ps]
-        # valid = valid & input_mask #[N, d, ps, ps]
-        # preds['segmentations'] = jnp.where(
-        #     valid, preds['segmentations'], -1e8
-        # )
+        elapsed = (time.time() - start_time) * 1000
+        logging.debug(f"finished model execution in {elapsed:.2f} ms")
 
         if min_area > 0:
             areas = jnp.count_nonzero(
@@ -361,7 +354,7 @@ class Predictor:
                 preds, target_shape, bboxes,
                 convert_logits=True,
             )
-            return dict(
+            results = dict(
                 pred_scores=np.asarray(scores)[instance_mask],
                 pred_bboxes=np.asarray(bboxes)[instance_mask],
                 pred_masks=np.asarray(segmentations)[instance_mask],
@@ -373,7 +366,7 @@ class Predictor:
                 scaling=scaling,
                 segmentation_threshold=seg_logit_threshold,
             )
-            return dict(
+            results = dict(
                 pred_scores=np.asarray(scores)[instance_mask],
                 pred_bboxes=np.asarray(bboxes)[instance_mask],
                 pred_contours=contours,
@@ -388,11 +381,15 @@ class Predictor:
             label = label[:orig_shape[0]]
             if is_2d_input:
                 label = label.squeeze(0)
-            return dict(
+            results = dict(
                 pred_scores=np.asarray(scores)[instance_mask],
                 pred_label=label,
             )
 
+        elapsed = (time.time() - start_time) * 1000
+        logging.debug(f"finished prediction in {elapsed:.2f} ms")
+        
+        return results
 
     # def predict_on_large_image(
     #     self,
