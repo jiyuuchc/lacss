@@ -101,21 +101,21 @@ def load_from_pretrained(pretrained: str):
     Returns: A tuple (module, parameters) representing the model.
     """
     import os
-    from flax.core.frozen_dict import freeze, unfreeze
+    import cloudpickle as pickle
+    from flax.core.frozen_dict import unfreeze
 
     if os.path.isdir(pretrained):
         # directory are orbax checkpoint
+        import orbax.checkpoint as ocp
 
-        from lacss.train import LacssTrainer
-
-        trainer = LacssTrainer.from_checkpoint(pretrained)
-        module = trainer.model.principal
-        params = trainer.params["principal"]
+        pretrained = os.path.abspath(pretrained)
+        params = ocp.StandardCheckpointer().restore(pretrained)
+        params = params['train_state']['params']
+        with open(os.path.join(os.path.dirname(pretrained), "model.pkl"), "rb") as f:
+            module = pickle.load(f)
 
     else:
         # uri or files were treated as pickled byte steam
-        import cloudpickle as pickle
-
         from .modules import Lacss
         from .train import Trainer
 
@@ -147,7 +147,19 @@ def load_from_pretrained(pretrained: str):
     if "params" in params and len(params) == 1:
         params = params["params"]
 
-    return module, freeze(params)
+    # for backward compatibility
+    if not "cnn" in params['backbone']:
+        params['backbone']['cnn'] = params['backbone']['ConvNeXt_0']
+        del params['backbone']['ConvNeXt_0']
+    
+    # if not "Scan_PatchOp_0" in params["segmentor"]:
+    #     params = unfreeze(params)
+    #     params['segmentor']['Scan_PatchOp_0']={}
+    #     for k in ['ConvTranspose_0', 'Dense_0', 'Dense_1', 'Dense_2', 'Dense_3', 'Dense_4', 'Dense_5']:
+    #         params['segmentor']['Scan_PatchOp_0'][k] = params['segmentor'][k]
+    #         del params['segmentor'][k]
+
+    return module, params
 
 
 def make_label_continuous(label, dtype=None):

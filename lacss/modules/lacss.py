@@ -2,107 +2,72 @@ from __future__ import annotations
 
 from dataclasses import field
 
+import jax
 import flax.linen as nn
-import jax.numpy as jnp
 
-from ..ops import *
-from ..typing import *
-from ..utils import deep_update
-from .convnext import ConvNeXt
+from .backbone import Backbone
 from .lpn import LPN
 from .segmentor import Segmentor
-from .stack_integrator import StackIntegrator
+from .lpn3d import LPN3D
+from .segmentor3d import Segmentor3D
+from .common import DefaultUnpicklerMixin
 
-class Lacss(nn.Module):
+from ..utils import deep_update
+from ..typing import ArrayLike, Array, Any
+
+jnp = jax.numpy
+
+class Lacss(nn.Module, DefaultUnpicklerMixin):
     """Main class for LACSS model
 
     Attributes:
-        stem: Prepprocessing module
-        backbone: by default a ConvNeXt CNN
-        integrator: module for integrating backbone output
+        backbone: CNN backbone
         detector: detection head to predict cell locations
         segmentor: The segmentation head
     """
-
-    stem: nn.Module | None = None
-    backbone: nn.Module = field(default_factory=ConvNeXt)
-    integrator: nn.Module | None = field(default_factory=StackIntegrator)
+    backbone: nn.Module = field(default_factory=Backbone)
     detector: nn.Module = field(default_factory=LPN)
     segmentor: nn.Module | None = field(default_factory=Segmentor)
 
-    def __call__(
-        self,
-        image: ArrayLike,
-        gt_locations: ArrayLike | None = None,
-        gt_cls: ArrayLike | None = None,
-        mask: ArrayLike | None = None,
-        *,
-        training: bool | None = None,
-    ) -> dict:
+    detector_3d: nn.Module | None = None
+    segmentor_3d: nn.Module | None = None
+
+    def get_features(self, image, ref_features, deterministic):
+        return self.backbone(image, ref_features, deterministic=deterministic)
+
+    def __call__(self, image: ArrayLike, *, image_mask:ArrayLike|None=None, video_refs:tuple|None=None)->dict:
         """
         Args:
             image: [H, W, C] or [D, H, W, C]
-            gt_locations: [M, 2/3] locations of the instances
-            gt_cls: [M] instance classes for multi-class prediction
-            mask: broadcastable boolean mask indicating valid region of the input image
         Returns:
             a dict of model outputs
 
         """
-        outputs = {}
+        # add a batch dim if needed
+        image = jnp.asarray(image)
 
-        x = image
+        x_det, x_seg = self.get_features(image, video_refs, deterministic=True)
 
-        # if inputs are 2D
-        if x.ndim == 3:
-            x = x[None, ...]
-        assert x.ndim == 4
-        
-        if mask is not None:
-            if mask.ndim == 2:
-                mask = mask[None, ...]
-            assert mask.ndim==3
+        if image.ndim == 3:
+            outputs = self.detector(x_det, mask=image_mask)
 
-        if gt_locations is not None:
-            if gt_locations.shape[-1] == 2:
-                gt_locations = jnp.c_[jnp.zeros_like(gt_locations[:, :1]) + .5, gt_locations]
-        
-            if gt_cls is None:
-                gt_cls = jnp.zeros(gt_locations.shape[0], dtype=int)
+            if self.segmentor is not None:
+                segmentor_out = self.segmentor(
+                    x_seg, outputs["predictions"]["locations"],
+                )
+                outputs = deep_update(outputs, segmentor_out)
 
-            assert gt_locations.ndim == 2 and gt_locations.shape[-1] == 3
+        else:
+            outputs = self.detector_3d(x_det, mask=image_mask)
 
-        if self.stem is not None:
-            x = self.stem(x, mas=mask, training=training)
-
-        x = self.backbone(x, mask=mask, training=training)
-        self.sow("intermediates", "encoder_features", x)
-
-        if self.integrator is not None:
-            x = self.integrator(x, mask=mask, training=training)
-            self.sow("intermediates", "decoder_features", x)
-
-        detector_out = self.detector(x, gt_locations, gt_cls, mask=mask, training=training)
-        outputs = deep_update(outputs, detector_out)
-
-        if self.segmentor is not None:
-            if training:
-                seg_locs= outputs["detector"]["training_locations"]
-                seg_cls = gt_cls
-            elif gt_locations is not None: # not training, but locations of cells are known
-                seg_locs, seg_cls = gt_locations, gt_cls
-            else:
-                seg_locs = outputs["predictions"]["locations"]
-                seg_cls = outputs["predictions"]["classes"]
-
-            self.sow("intermediates", "segmentation_locations", seg_locs)
-            self.sow("intermediates", "segmentation_cls", seg_cls)
-
-            segmentor_out = self.segmentor(x, seg_locs, seg_cls, mask=mask, training=training)
-
-            outputs = deep_update(outputs, segmentor_out)
+            if self.segmentor_3d is not None:
+                segmentor_out = self.segmentor_3d(
+                    x_seg, outputs["predictions"]["locations"],
+                )
+                outputs = deep_update(outputs, segmentor_out)            
 
         return outputs
+
 
     def get_config(self):
         from dataclasses import asdict
@@ -114,84 +79,99 @@ class Lacss(nn.Module):
 
         return cfg
 
+
     @classmethod
     def from_config(cls, config):
-        from collections import defaultdict
+        def _build_sub_module(module, k):
+            if k in config and config[k] is not None:
+                return module(**config[k])
+            else:
+                return None
 
         if isinstance(config, str):
             return cls.get_preconfigued(config)
 
         else:
-            config_ = defaultdict(lambda: {})
-            config_.update(config)
-            return Lacss(
-                backbone=ConvNeXt(**config_["backbone"]),
-                integrator=StackIntegrator(**config_["integrator"]),
-                detector=LPN(**config_["detector"]),
-                segmentor=Segmentor(**config_["segmentor"]),
+            obj = Lacss(
+                backbone=_build_sub_module(Backbone, "backbone"),
+                detector=_build_sub_module(LPN, "detector"),
+                segmentor=_build_sub_module(Segmentor, "segmentor"),
+                detector_3d = _build_sub_module(LPN3D, "detector_3d"),
+                segmentor_3d = _build_sub_module(Segmentor3D, "segmentor_3d"),
             )
 
+            return obj
 
     @classmethod
-    def get_default_model(cls, patch_size=4):
-        if not patch_size in (1, 2, 4):
-            raise ValueError("patch_size must be 1, 2 or 4")
+    def get_default_model(cls, dtype=None):
+        return cls.get_base_model(dtype=dtype)
+
+    @classmethod
+    def get_tiny_model(cls, dtype=None):
         return cls(
-            backbone=ConvNeXt.get_model_small(patch_size=patch_size),
-            integrator=StackIntegrator(dim_out=384),
-            detector=LPN(
-                conv_spec=(256, 256, 256, 256),
-                feature_levels=(0, 1, 2),
-                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            backbone=Backbone(
+                "tiny", 
+                out_dim = 256,
+                layers_det = (192,192,192,192),
+                layers_seg = (192,192,192,48),
+                dtype=dtype,
             ),
-            segmentor=Segmentor(
-                conv_spec=((256, 256, 256), (64,)),
-                feature_level=0,
-                feature_scale=patch_size,
-            ),
+            detector=LPN(dtype=dtype),
+            segmentor=Segmentor(dtype=dtype),
         )
 
     @classmethod
-    def get_small_model(cls, patch_size=4):
+    def get_small_model(cls, dtype=None):
         return cls(
-            backbone=ConvNeXt.get_model_tiny(patch_size=patch_size),
-            integrator=StackIntegrator(dim_out=256),
-            detector=LPN(
-                conv_spec=(192, 192, 192, 192),
-                feature_levels=(0, 1, 2),
-                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            backbone=Backbone(
+                "tiny", 
+                out_dim = 512, 
+                layers_det = (384,384,384,384),
+                layers_seg = (384,384,384,64),
+                dtype=dtype
             ),
-            segmentor=Segmentor(
-                conv_spec=((192, 192, 192), (48,)),
-                feature_level=0,
-                feature_scale=patch_size,
-            ),
+            detector=LPN(dtype=dtype),
+            segmentor=Segmentor(dtype=dtype),
         )
 
     @classmethod
-    def get_large_model(cls, patch_size=4):
+    def get_base_model(cls, dtype=None):
         return cls(
-            backbone=ConvNeXt.get_model_base(patch_size=patch_size),
-            integrator=StackIntegrator(dim_out=512),
-            detector=LPN(
-                conv_spec=(384, 384, 384, 384),
-                feature_levels=(0, 1, 2),
-                feature_level_scales=(patch_size, patch_size * 2, patch_size * 4),
+            backbone=Backbone(
+                "small", 
+                out_dim = 512, 
+                layers_det = (512,512,512,512),
+                layers_seg = (512,512,512,64),
+                dtype=dtype
             ),
-            segmentor=Segmentor(
-                conv_spec=((384, 384, 384), (128,)),
-                feature_level=0,
-                feature_scale=patch_size,
+            detector=LPN(dtype=dtype),
+            segmentor=Segmentor(pos_emb_shape=(16,16,8), dtype=dtype)
+        )
+
+
+    @classmethod
+    def get_large_model(cls, dtype=None):
+        return cls(
+            backbone=Backbone(
+                "base", 
+                out_dim = 768, 
+                layers_det = (768,768,768,768),
+                layers_seg = (768,768,768,64),
+                dtype=dtype
             ),
+            detector=LPN(dtype=dtype),
+            segmentor=Segmentor(pos_emb_shape=(16,16,8), dtype=dtype),
         )
 
     @classmethod
-    def get_preconfigued(cls, config: str, *, patch_size: int = 4):
+    def get_preconfigued(cls, config: str, dtype=None):
         if config == "default" or config == "base":
-            return cls.get_default_model(patch_size)
+            return cls.get_default_model(dtype=dtype)
         elif config == "small":
-            return cls.get_small_model(patch_size)
+            return cls.get_small_model(dtype=dtype)
         elif config == "large":
-            return cls.get_large_model(patch_size)
+            return cls.get_large_model(dtype=dtype)
+        elif config == "tiny":
+            return cls.get_tiny_model(dtype=dtype)
         else:
             raise ValueError(f"Unkown model config {config}")

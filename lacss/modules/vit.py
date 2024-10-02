@@ -18,7 +18,6 @@ class MAPHead(nn.Module):
     """Multihead Attention Pooling."""
     mlp_dim: Optional[int] = None  # Defaults to 4x input dim
     num_heads: int = 12
-    dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, x):
@@ -28,8 +27,9 @@ class MAPHead(nn.Module):
             'probe', 
             nn.initializers.xavier_uniform(), 
             (1, 1, x.shape[-1]),
-            x.dtype,
+            self.param_dtype,
         )
+        probe = probe.astype(x.dtype)
         probe = jnp.tile(probe, [x.shape[0], 1, 1])
 
         x = nn.MultiHeadDotProductAttention(
@@ -60,7 +60,6 @@ class VitEncoder(nn.Module):
         from 0 to the provided value. Our implementation of stochastic depth
         follows timm library, which does per-example layer dropping and uses
         independent dropping patterns for each skip-connection.
-      dtype: Dtype of activations.
     """
     n_layers: int = 6
     n_heads: int = 12
@@ -69,7 +68,6 @@ class VitEncoder(nn.Module):
     dropout: float = 0.1
     attention_dropout: float = 0.1
     stochastic_depth: float = 0.0
-    dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, inputs: ArrayLike, cls_token: ArrayLike|None=None, *, training: bool = False):
@@ -86,7 +84,6 @@ class VitEncoder(nn.Module):
 
         input_shape = inputs.shape
         H, W, C = input_shape[-3:]
-        dtype = jax.dtypes.canonicalize_dtype(self.dtype)
 
         x = inputs.reshape((-1,) + (H*W, C))
 
@@ -120,11 +117,9 @@ class VitEncoder(nn.Module):
                 dropout_rate=self.attention_dropout,
                 kernel_init=nn.initializers.xavier_uniform(),
                 broadcast_dropout=False,
-                dtype=dtype,
                 name=f"attention_{lyr}",
             )(x, deterministic=not training)
             
-            x = nn.Layernorm()(x)
             x = FFN(dim=self.dim_ffn, dropout_rate=self.dropout, name="ffn_{lyr}")(
                 x, deterministic=not training
             )
@@ -156,7 +151,6 @@ class ViT(nn.Module):
             tokens at the beginning of the transformer encoder. 
         dropout: Dropout rate.
         attention_dropout: Dropout for attention heads.
-        dtype: JAX data type for activations.
 
         n_cls: Number of output classes.
         representation_size: Size of the representation layer in the model's head.
@@ -174,7 +168,6 @@ class ViT(nn.Module):
     dropout: float = 0.1
     attention_dropout: float = 0.1
     stochastic_depth: float = 0.0
-    dtype: Any = jnp.float32
 
     # classifier parameters
     n_cls: int = -1
@@ -210,7 +203,8 @@ class ViT(nn.Module):
 
         # Add a class token if suitable
         if self.classifier_type == 'token':
-            cls_token = self.param('cls', nn.initializers.zeros, (1, x.shape[-1]), x.dtype)
+            cls_token = self.param('cls', nn.initializers.zeros, (1, x.shape[-1]), self.param_dtype)
+            cls_toekn = cls_token.astype(x.dtype)
             cls_token = jnp.tile(cls_token, [x.shape[0], 1])
         else:
             cls_token = None
@@ -223,7 +217,6 @@ class ViT(nn.Module):
             dropout=self.dropout,
             attention_dropout=self.attention_dropout,
             stochastic_depth=self.stochastic_depth,
-            dtype=self.dtype,
             name='Transformer',
         )(x, cls_token, training=training)
 
@@ -242,7 +235,6 @@ class ViT(nn.Module):
             x = MAPHead(
                 num_heads=self.n_heads, 
                 mlp_dim=self.dim_ffn, 
-                dtype=self.dtype,
             )(x)
 
         else:

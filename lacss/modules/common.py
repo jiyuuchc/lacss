@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Optional, Sequence, Iterable
+from typing import Callable, Optional, Sequence, Iterable, Any
 
 import flax.linen as nn
 from flax.linen import initializers
@@ -14,9 +14,39 @@ from ..typing import Array, ArrayLike
 # Inputs are PRNGKey, input shape and dtype.
 Initializer = Callable[[jnp.ndarray, Sequence[int], jnp.dtype], jnp.ndarray]
 
-class ChannelAttention(nn.Module):
+import warnings
+
+def picklable_relu(x):
+    return jax.nn.relu(x)
+
+class DefaultUnpicklerMixin:
+    """Provides an unpickling method  which will restore
+    module instances, even if the model has gained new fields
+    or dropped some fields since data was unpickled.
+    """
+    def __setstate__(self, state):
+        try:
+            current_fields = self.__class__.__dataclass_fields__
+        except AttributeError:
+            warnings.warn("DefaultUnpickler used in a class that is not a dataclass")
+            current_fields = {}
+        for key in list(state.keys()):
+            if key not in current_fields:
+                if not key[0] == "_":
+                    warnings.warn(f"Dropping unused field {key}")
+                del state[key]
+        for key in current_fields:
+            if key not in state:
+                if not key == "parent":
+                    warnings.warn(f"Adding missing field {key}")
+                state[key] = current_fields[key].default
+
+        self.__init__(**state)
+
+
+class _ChannelAttention(nn.Module):
     squeeze_factor: int = 16
-    dtype: jnp.dtype = jnp.float32
+    dtype: Any = None
 
     @nn.compact
     def __call__(
@@ -25,29 +55,33 @@ class ChannelAttention(nn.Module):
     ) -> Array:
 
         orig_shape = x.shape
+        se_channels = orig_shape[-1] // self.squeeze_factor
 
-        x = x.reshape((-1,) + orig_shape[-3:])
         x_backup = x
 
-        x = jnp.stack([x.max(axis=(1,2), keepdims=True), x.mean(axis=(1,2), keepdims=True)])
+        x = x.reshape(-1, orig_shape[-1])
+        x = jnp.concatenate([x.max(axis=0), x.mean(axis=0)], axis=-1)
 
-        se_channels = orig_shape[-1] // self.squeeze_factor
         x = nn.Dense(se_channels, dtype=self.dtype)(x)
         x = jax.nn.relu(x)
-        x = x[0] + x[1]
-
         x = nn.Dense(orig_shape[-1], dtype=self.dtype)(x)
         x = jax.nn.sigmoid(x)
 
         x = x_backup * x
-        x = x.reshape(orig_shape)
 
         return x
 
 
+ChannelAttention = nn.vmap(
+    _ChannelAttention, 
+    variable_axes={"params":None}, 
+    split_rngs={"params":False},
+)
+
+
 class SpatialAttention(nn.Module):
-    filter_size: int = 7
-    dtype: jnp.dtype = jnp.float32
+    filter_size: int|tuple[int,...] = 7
+    dtype: Any = None
 
     @nn.compact
     def __call__(
@@ -55,74 +89,18 @@ class SpatialAttention(nn.Module):
         x: ArrayLike,
     ) -> Array:
 
+        try:
+            conv_filter = len(self.filter_size)
+        except:
+            conv_filter = (self.filter_size, self.filter_size)
+        
         y = jnp.stack([x.max(axis=-1), x.mean(axis=-1)], axis=-1)
-        y = nn.Conv(1, [self.filter_size, self.filter_size], dtype=self.dtype)(y)
+        y = nn.Conv(1, conv_filter, dtype=self.dtype)(y)
         y = jax.nn.sigmoid(y)
 
         y = x * y
 
         return y
-
-
-class FPN(nn.Module):
-    out_channels: int = 384
-
-    @nn.compact
-    def __call__(
-        self, inputs: Sequence[ArrayLike], *, training=None
-    ) -> Sequence[Array]:
-        out_channels = self.out_channels
-
-        outputs = [jax.nn.relu(nn.Dense(out_channels)(x)) for x in inputs]
-
-        for k in range(len(outputs) - 1, 0, -1):
-            x = jax.image.resize(outputs[k], outputs[k - 1].shape, "nearest")
-            x += outputs[k - 1]
-            x = nn.Conv(out_channels, (3, 3))(x)
-            x = jax.nn.relu(x)
-            outputs[k - 1] = x
-
-        return outputs
-
-
-class ConvIntegrator(nn.Module):
-    """A UNet-like feature integrator.
-
-    Unlike FPN, its feature spaces are not consistent at different spatial scales.
-    high-res scale should have lower number of features (like unet)
-    """
-
-    n_features: Sequence[int] | None = None
-    n_layers: int = 1
-    norm: Callable = partial(nn.LayerNorm, use_scale=False)
-    activation: Callable = nn.relu
-
-    @nn.compact
-    def __call__(self, x: Sequence[Array], *, training=None):
-        n_features = self.n_features or [f.shape[-1] for f in x]
-
-        y = x[-1]
-        for _ in range(self.n_layers):
-            y = nn.Conv(n_features[-1], (3, 3))(y)
-            y = self.activation(y)
-        output = [y]
-
-        for k in range(-1, -1 * len(x), -1):
-            y = nn.ConvTranspose(
-                x[k - 1].shape[-1],
-                (3, 3),
-                strides=(2, 2),
-            )(output[0])
-
-            y = self.norm()(x[k - 1] + y)
-
-            for _ in range(self.n_layers):
-                y = nn.Conv(n_features[k - 1], (3, 3))(y)
-                y = self.activation(y)
-
-            output.insert(0, y)
-
-        return output
 
 
 class FFN(nn.Module):
@@ -131,149 +109,24 @@ class FFN(nn.Module):
     dim: int|None = None
     dropout_rate: float = 0.0
     deterministic: bool = False
+    dtype: Any = None
 
     @nn.compact
     def __call__(self, x, *, deterministic=None):
         deterministic = deterministic or self.deterministic
-        dim = self.dim or x.shape[-1] * 4
+        orig_dim = x.shape[-1]
+        dim = self.dim or orig_dim * 4
 
-        shortcut = x
+        x = nn.LayerNorm(dtype=self.dtype)(x)
 
-        x = nn.LayerNorm()(x)
-
-        x = nn.Dense(dim)(x)
-        x = jax.nn.gelu(x)
-        x = nn.Dropout(self.dropout_rate)(x, deterministic=deterministic)
-        x = nn.Dense(shortcut.shape[-1])(x)
+        x = nn.Dense(dim, dtype=self.dtype)(x)
+        x = nn.gelu(x)
         x = nn.Dropout(self.dropout_rate)(x, deterministic=deterministic)
 
-        x = shortcut + x
+        x = nn.Dense(orig_dim, dtype=self.dtype)(x)
+        x = nn.Dropout(self.dropout_rate)(x, deterministic=deterministic)
 
         return x
-
-
-class Residual(nn.Module):
-    """Residual connection module.
-
-    Attributes:
-      residual_type: str; residual connection type. Possible values are [
-        'gated', 'sigtanh', 'rezero', 'highway', 'add'].
-      dtype: Jax dtype; The dtype of the computation (default: float32).
-    """
-
-    residual_type: str = 'add'
-    dtype: jnp.dtype = jnp.float32
-
-    @nn.compact
-    def __call__(self, x, y):
-        """Applies the residual connection on given input/output of a module.
-
-        Args:
-          x: Input of the module.
-          y: Output of the module.
-
-        Returns:
-          Output: A combination of the x and y.
-        """
-        if x.shape != y.shape:
-            raise ValueError('x and y should be of the same shape.')
-
-        dtype = self.dtype
-
-        if self.residual_type == 'add':
-            return x + y
-
-        elif self.residual_type == 'highway':
-            features = x.shape[-1]
-            hw_gate = nn.sigmoid(
-                nn.Dense(
-                    features=features,
-                    use_bias=True,
-                    kernel_init=initializers.zeros,
-                    bias_init=lambda rng, shape, *_: jnp.full(shape, -10.0),
-                    dtype=dtype)(x))
-            output = jnp.multiply((1 - hw_gate), x) + jnp.multiply(hw_gate, y)
-
-        elif self.residual_type == 'rezero':
-            # Based on https://arxiv.org/pdf/2003.04887v1.pdf.
-            alpha = self.param('rezero_alpha', initializers.zeros, (1,))
-            return x + (alpha * y)
-
-        elif self.residual_type == 'sigtanh':
-            # Based on https://arxiv.org/pdf/1606.05328.pdf.
-            features = x.shape[-1]
-            # sigmoid(W_g.y).
-            sigmoid_y = nn.sigmoid(
-                nn.Dense(
-                    features=features,
-                    use_bias=True,
-                    kernel_init=initializers.zeros,
-                    bias_init=lambda rng, shape, *_: jnp.full(shape, -10.0),
-                    dtype=dtype)(y))
-            # tanh(U_g.y).
-            tanh_y = nn.tanh(
-                nn.Dense(
-                    features=features,
-                    use_bias=False,
-                    kernel_init=initializers.zeros,
-                    bias_init=initializers.zeros,
-                    dtype=dtype)(y))
-            return x + (sigmoid_y * tanh_y)
-
-        elif self.residual_type == 'gated':
-            # Based on https://arxiv.org/pdf/1910.06764.pdf.
-            features = x.shape[-1]
-            # Reset gate: r = sigmoid(W_r.x + U_r.y).
-            r = nn.sigmoid(
-                nn.Dense(
-                    features=features,
-                    use_bias=False,
-                    kernel_init=initializers.zeros,
-                    bias_init=initializers.zeros,
-                    dtype=dtype)(x) + nn.Dense(
-                        features=features,
-                        use_bias=False,
-                        kernel_init=initializers.zeros,
-                        bias_init=initializers.zeros,
-                        dtype=dtype)(y))
-            # Update gate: z = sigmoid(W_z.x + U_z.y - b_g).
-            # NOTE: the paper claims best initializtion for their task for b is 2.
-            b_g = self.param('b_g',
-                             lambda rng, shape, *_: jnp.full(shape, 10.0),
-                             (features,)).astype(dtype)
-            z = nn.sigmoid(
-                nn.Dense(
-                    features=features,
-                    use_bias=False,
-                    kernel_init=initializers.zeros,
-                    bias_init=initializers.zeros,
-                    dtype=dtype)(x) + nn.Dense(
-                        features=features,
-                        use_bias=False,
-                        kernel_init=initializers.zeros,
-                        bias_init=initializers.zeros,
-                        dtype=dtype)(y) - b_g)
-            # Candidate_activation: h' = tanh(W_g.y + U_g.(r*x)).
-            h = jnp.tanh(
-                nn.Dense(
-                    features=features,
-                    use_bias=False,
-                    kernel_init=initializers.zeros,
-                    bias_init=initializers.zeros,
-                    dtype=dtype)(y) + nn.Dense(
-                        features=features,
-                        use_bias=False,
-                        kernel_init=initializers.zeros,
-                        bias_init=initializers.zeros,
-                        dtype=dtype)(jnp.multiply(r, x)))
-
-            # Output: g = (1-z)*x + z*h.
-            output = jnp.multiply((1.0 - z), x) + jnp.multiply(z, h)
-
-        else:
-            raise ValueError(
-                f'Residual type {self.residual_type} is not defined.')
-        return output
 
 
 class IdentityLayer(nn.Module):
@@ -401,8 +254,8 @@ class PositionEmbedding1D(nn.Module):
         else:
             embedding_length = max_len
 
-        if self.learned_embeddings:
-            pos_emb = self.params("pos_emb", self.posemb_init, (embedding_length, dim))
+        if self.posemb_init is not None:
+            pos_emb = self.param("pos_emb", self.posemb_init, (embedding_length, dim))
         else:
             pos_emb = np.zeros((embedding_length, dim), dtype=np.float32)
             position = np.arange(embedding_length)[:, np.newaxis]
@@ -479,5 +332,19 @@ class PositionEmbedding2D(nn.Module):
         return pos
 
 
-def picklable_relu(x):
-    return jax.nn.relu(x)
+class GRN(nn.Module):
+    epsilon: float = 1e-6
+
+    @nn.compact
+    def __call__(self, x):
+        dim = x.shape[-1]
+        gamma = self.param("gamms", nn.initializers.zeros, (1, 1, 1, dim))
+        beta = self.param("beta", nn.initializers.zeros, (1, 1, 1, dim))
+
+        x_ = jnp.array(x, "float32")
+        mu2 = jax.lax.square(jnp.abs(x_)).mean(axis=(1,2), keepdims=True)
+        mu2 = jnp.maximum(mu2, 1e-6)
+        Gx = jax.lax.sqrt(mu2).astype(x.dtype)
+        Nx = Gx / (Gx.mean(axis=-1, keepdims=True) + self.epsilon)
+
+        return gamma * (x * Nx) + beta + x
