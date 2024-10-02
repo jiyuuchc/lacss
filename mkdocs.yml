@@ -23,7 +23,6 @@ nav:
   - Installation: install.md
   - API Reference:
       - lacss.deploy: 'api/deploy.md'
-      - lacss.train: 'api/train.md'
       - lacss.data: 'api/data.md'
       - lacss.modules: 'api/modules.md'
       - lacss.losses: 'api/losses.md'

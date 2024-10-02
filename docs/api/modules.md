@@ -2,10 +2,6 @@
       options:
         show_root_heading: true
 
-::: lacss.modules.Backbone
-      options:
-        show_root_heading: true
-
 ::: lacss.modules.LPN
       options:
         show_root_heading: true
