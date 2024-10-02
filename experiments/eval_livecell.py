@@ -2,29 +2,33 @@
 
 from pathlib import Path
 
+# from joblib import Parallel, delayed
 import numpy as np
-import orbax.checkpoint as ocp
 import tensorflow as tf
+import tensorflow_datasets as tfds
+
 from absl import app, flags
-from ml_collections import config_flags
 from tqdm import tqdm
+from skimage.transform import rescale
 
 import lacss.data
-import lacss.deploy.predict
 import lacss.ops
+
+from lacss.deploy import Predictor
 from lacss.metrics import AP, LoiAP
 
-_CONFIG = config_flags.DEFINE_config_file("config")
+# _CONFIG = config_flags.DEFINE_config_file("config")
 flags.DEFINE_string("checkpoint", None, "", required=True)
 flags.DEFINE_string("logpath", ".", "")
 flags.DEFINE_float("nms", 0.0, "non-max-supress threshold")
 flags.DEFINE_float("minscore", 0.2, "min score")
 flags.DEFINE_string("datapath", "../../livecell_dataset/", "test data directory")
-flags.DEFINE_bool("normalize", True, "whether normalize image")
 flags.DEFINE_float("minarea", 0.0, "min area of cells")
 flags.DEFINE_float("dicescore", 0.5, "score threshold for Dice score")
 
 FLAGS = flags.FLAGS
+
+_th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
 _format = lambda x: ", ".join([f"{v:.4f}" for v in x])
 
@@ -38,35 +42,6 @@ avg_cell_sizes = {
     "SKOV3": 44.8,
     "SkBr3": 21.8,
 }
-
-
-def get_cell_type_and_scaling(name, version=2, *, target_size=34.6):
-    cell_type = name.split(b"_")[0].decode()
-    cellsize = avg_cell_sizes[cell_type]
-    return cell_type, target_size / cellsize
-
-
-def remove_redundant(inputs):
-    # remove redundant labels
-    boxes = inputs["bboxes"]
-    n_boxes = tf.shape(boxes)[0]
-    selected = tf.image.non_max_suppression(
-        boxes, tf.ones([n_boxes], "float32"), n_boxes, iou_threshold=0.75
-    )
-
-    inputs["bboxes"] = tf.gather(boxes, selected)
-    inputs["masks"] = tf.gather(inputs["masks"], selected)
-    inputs["centroids"] = tf.gather(inputs["centroids"], selected)
-
-    return inputs
-
-
-def compress_masks(inputs):
-
-    inputs["masks"] = tf.where(inputs["masks"] > 0)
-
-    return inputs
-
 
 class Dice:
     """Compute instance Dice values"""
@@ -113,131 +88,123 @@ def get_box_its(pred, gt_b):
 
     return box_its, areas, gt_areas
 
-
 def get_mask_its(pred, gt_m, box_its):
-    m = pred["pred_masks"] >= 0.5
-    mask_sz = m.shape[-1]
+    import cv2
+    pred_polygons = [ct.astype(int) for ct in pred["pred_contours"]]
+    
+    pred_bboxes = pred["pred_bboxes"]
 
-    yc, xc = np.mgrid[:mask_sz, :mask_sz]
-    yc = yc + 1 + pred["y0s"][:, None, None]
-    xc = xc + 1 + pred["x0s"][:, None, None]
+    assert pred_bboxes.shape[-1] == 4
 
-    pred_ids, gt_ids = np.where(box_its > 0)
+    intersects = np.zeros_like(box_its, dtype=int)
 
-    gt_m = np.pad(gt_m, [[0, 0], [1, 1], [1, 1]])  # out-of-bound is 0
-    _, h, w = gt_m.shape
-    yc = np.clip(yc, 0, h - 1)
-    xc = np.clip(xc, 0, w - 1)
+    gt_areas = np.array([len(mi) for mi in gt_m])
+    areas = np.array([ cv2.contourArea(ct) for ct in pred_polygons])
 
-    gt = gt_m[
-        (
-            gt_ids.reshape(-1, 1, 1),
-            yc[pred_ids],
-            xc[pred_ids],
+    def _get_its(pred_id, gt_id):
+        box= pred_bboxes[pred_id]
+        polygon = pred_polygons[pred_id]
+        mis = gt_m[gt_id]
+        img = np.zeros([520, 704], dtype="uint8")
+        cv2.fillPoly(img, [polygon], 1)
+        return np.count_nonzero(
+            img[(mis[:,0], mis[:,1])]
         )
-    ]
 
-    v = np.count_nonzero(
-        m[pred_ids] & gt,
-        axis=(1, 2),
-    )
-
-    intersects = np.zeros_like(box_its, dtype="float32")
-    intersects[(pred_ids, gt_ids)] = v
-
-    areas = np.count_nonzero(m, axis=(1, 2))
-    gt_areas = np.count_nonzero(gt_m, axis=(1, 2))
+    ids = np.where(box_its > 0)
+    intersects[ids] = [_get_its(pid, gid) for pid, gid in zip(*ids)]
 
     return intersects, areas, gt_areas
 
 
-_th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+def test_data():
+    import glob
+    import imageio.v2 as imageio
+    from pycocotools.coco import COCO
 
+    datapath = Path(FLAGS.datapath)
+    annotation_file = datapath / "annotations"/"LIVECell"/"livecell_coco_test.json"
+    image_path = datapath / "images"/"livecell_test_images"
+    coco = COCO(annotation_file=annotation_file)
+
+    for imgid in coco.getImgIds():
+        bboxes, masks = [], []
+        for ann_id in coco.getAnnIds(imgIds=imgid):
+            ann = coco.anns[ann_id]
+            bbox = ann["bbox"]
+            bbox = np.array([bbox[1], bbox[0], bbox[1] + bbox[3], bbox[0] + bbox[2]])
+            bboxes.append(bbox)
+
+            mask = coco.annToMask(ann)
+            masks.append(np.stack(np.where(mask >= 0.5), axis=-1))
+
+        bboxes = np.array(bboxes, dtype="float32")
+
+        # remove redudnant
+        n_boxes = bboxes.shape[0]
+        selected = tf.image.non_max_suppression(
+            bboxes, tf.ones([n_boxes], "float32"), n_boxes, iou_threshold=0.75
+        ).numpy()
+        bboxes = bboxes[selected]
+        masks = [masks[k] for k in selected]
+
+        assert bboxes.shape[0] == len(masks)
+
+        name = coco.imgs[imgid]["file_name"]
+        filepath = list(image_path.glob(f"**/{name}"))
+        assert len(filepath) == 1
+        image = imageio.imread(filepath[0])
+
+        cell_type = name.split("_")[0]
+
+        yield dict(
+            image=image[..., None],
+            bboxes=bboxes,
+            masks=masks,
+            celltype=cell_type,
+        )
 
 def main(_):
-    #     modelpath: Path,
-    #     datapath: Path = Path("../../livecell_dataset"),
-    #     logpath: Path = Path("."),
-    #     nms: int = 8,
-    #     min_area: int = 0,
-    #     min_score: float = 0.2,
-    #     normalize: bool = True,
-    #     dice_score: float = 0.5,
-    #     v1_scaling: bool = False,
-    # ):
-    config = _CONFIG.value
-    print(config)
-
-    cp = ocp.StandardCheckpointer()
-    params = cp.restore(Path(FLAGS.checkpoint).absolute(),)[
-        "train_state"
-    ]["params"]
-
+    model = Predictor(FLAGS.checkpoint)
     print(f"Model parameters loaded from {FLAGS.checkpoint}")
 
-    model = lacss.deploy.predict.Predictor((config.model, params))
-
-    model.detector.test_nms_threshold = FLAGS.nms
-    model.detector.test_max_output = 3074
-    model.detector.test_min_score = FLAGS.minscore
+    model.module.detector.max_output = 2560
+    model.module.detector.min_score = FLAGS.minscore
 
     print(model.module)
 
+    # loi_ap = {"all": LoiAP([5, 2, 1])}
     mask_ap = {"all": AP(_th)}
     box_ap = {"all": AP(_th)}
-    # loi_ap = {"all": LoiAP([5, 2, 1])}
     dice = {"all": Dice()}
 
-    datapath = Path(FLAGS.datapath)
-    test_data = (
-        lacss.data.dataset_from_coco_annotations(
-            datapath / "annotations/LIVECell/livecell_coco_test.json",
-            datapath / "images/livecell_test_images",
-            [520, 704, 1],
-            None,
-        )
-        .map(remove_redundant)
-        .map(compress_masks)
-        .cache(str(datapath / "test_cache"))
-    )
-    print(test_data.element_spec)
-
-    for data in tqdm(test_data.as_numpy_iterator()):
-        t, scale = get_cell_type_and_scaling(data["filename"])
-
+    for data in tqdm(test_data()):
+        t = data['celltype']
+        image = data["image"]
+        scale = 32 / avg_cell_sizes[t]
+        img_h, img_w, _ = image.shape
+        
         if not t in mask_ap:
+            # loi_ap[t] = LoiAP([5, 2, 1])
             mask_ap[t] = AP(_th)
             box_ap[t] = AP(_th)
-            # loi_ap[t] = LoiAP([5, 2, 1])
             dice[t] = Dice()
 
-        # inference
-        image = data["image"]
-        if FLAGS.normalize:
-            image = image - image.mean()
-            image = image / image.std()
-        image = np.repeat(image, 3, axis=-1)
-
+        target_sz = np.round(np.array([img_h, img_w]) * scale).astype(int).tolist()
         pred = model.predict(
             image,
+            reshape_to=target_sz,
             min_area=FLAGS.minarea,
             score_threshold=FLAGS.minscore,
-            scaling=scale,
-            output_type="raw",
+            nms_iou=FLAGS.nms,
+            output_type="contour",
         )
-
-        # recover masks from the compressed
-        mi = data["masks"]
-        n_instances = mi[:, 0].max() + 1
-        img_h, img_w, _ = image.shape
-        masks = np.zeros([n_instances, img_h, img_w], dtype="bool")
-        masks[tuple(mi.transpose())] = True
 
         # compute ious matrix
         box_its, box_areas, gt_box_areas = get_box_its(pred, data["bboxes"])
         box_ious = box_its / (box_areas[:, None] + gt_box_areas - box_its + 1e-8)
 
-        mask_its, areas, gt_areas = get_mask_its(pred, masks, box_its)
+        mask_its, areas, gt_areas = get_mask_its(pred, data['masks'], box_its)
         mask_ious = mask_its / (areas[:, None] + gt_areas - mask_its + 1e-8)
 
         scores = pred["pred_scores"]
@@ -268,9 +235,9 @@ def main(_):
     for t in sorted(mask_ap.keys()):
         print()
         print(t)
-        # print("LOIAP: ", _format(loi_ap[t].compute()))
-        print("BoxAP: ", _format(box_ap[t].compute()))
-        print("MaskAP: ", _format(mask_ap[t].compute()))
+        # print("LOIAP: ", loi_ap[t].compute())
+        print("BoxAP: ", box_ap[t].compute())
+        print("MaskAP: ", mask_ap[t].compute())
         print("Dice: ", dice[t].compute())
 
 
