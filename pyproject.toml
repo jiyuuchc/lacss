@@ -8,7 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-xtrain = {version = "^0.3.7", extras = ["cuda12"]}
+xtrain = {version = "^0.4.0", extras = ["cuda12"]}
 ml-collections = "^0.1.1"
 tensorflow = "^2.16.1"
 typer = "^0.12.3"
@@ -25,6 +25,7 @@ cloudpickle = "^3.0.0"
 jupyterlab = "^3.6.1"
 pytest = "^7.4.0"
 protoc-wheel-0 = "^24.4"
+grpcio-tools = "^1"
 
 [tool.poetry.group.docs]
 optional = true
@@ -37,3 +38,6 @@ mkdocs-gen-files = "^0.5.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pyright]
+exclude = ["**/__pycache__/**", "**/runs/**", ".venv/"]

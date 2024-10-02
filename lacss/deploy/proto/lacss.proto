@@ -20,6 +20,9 @@ message Image {
     DType dtype = 4;
     bytes data = 5;
     uint64 depth = 6;
+    float voxel_dim_x = 7;
+    float voxel_dim_y = 8;
+    float voxel_dim_z = 9;
 }
 
 message Settings {
@@ -30,6 +33,7 @@ message Settings {
     float detection_threshold = 5;
 	float segmentation_threshold = 6;
     bool return_polygon = 7;
+    float cell_size_hint = 8;
 }
 
 message Input {

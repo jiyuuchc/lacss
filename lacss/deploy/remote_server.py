@@ -13,16 +13,43 @@ _AUTH_HEADER_KEY = "authorization"
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
+_MAX_MSG_SIZE=1024*1024*64
+_TARGET_CELL_SIZE=32
 
 def process_input(msg):
     image = msg.image
+    settings = msg.settings
+
+    if image.voxel_dim_x != 0 and image.voxel_dim_y != 0 and settings.cell_size_hint != 0:
+        scale_x = _TARGET_CELL_SIZE / settings.cell_size_hint * image.voxel_dim_x
+        scale_y = _TARGET_CELL_SIZE / settings.cell_size_hint * image.voxel_dim_y
+        if msg.voxel_dim_z != 0:
+            scale_z = _TARGET_CELL_SIZE / settings.cell_size_hint / 3 * image.voxel_dim_z
+        else:
+            scale_z = scale_x
+    elif settings.scaling != 0:
+        scale_x = scale_y = scale_z = settings.scaling
+    else:
+        scale_x = scale_y = scale_z = 1
+
+    logging.debug(f"Requested rescaling factor is {(scale_z, scale_y, scale_x)}")
+
     np_img = np.frombuffer(image.data, dtype=">f4").astype("float32")
     if image.depth == 0 or image.depth == 1:
         np_img = np_img.reshape(image.height, image.width, image.channel)
+        shape_hint = (
+            int(scale_y * image.height + .5),
+            int(scale_x * image.width + .5),
+        )
     else:
         np_img = np_img.reshape(image.depth, image.height, image.width, image.channel)
+        shape_hint = (
+            int(scale_z * image.depth +.5),
+            int(scale_y * image.height + .5),
+            int(scale_x * image.width + .5),
+        )
 
-    return np_img, msg.settings
+    return np_img, shape_hint
 
 
 def process_result(preds, is3d):
@@ -30,17 +57,29 @@ def process_result(preds, is3d):
 
     scores = preds["pred_scores"]
     if is3d:
-        from skimage.measure import regionprops
-        label = preds["pred_label"].astype(int)
+        bboxes = preds["pred_bboxes"]
+        centroids = bboxes.reshape(-1, 2, 3).mean(1)
 
-        for rp, score in zip(regionprops(label), scores):
+        for loc, score in zip(centroids, preds["pred_scores"]):
             polygon_msg = lacss_pb2.Polygon()
             polygon_msg.score = score
             point = lacss_pb2.Point()
-            point.z, point.y, point.x = rp.centroid
+            point.z, point.y, point.x = loc
             polygon_msg.points.append(point)
-    
+
             msg.polygons.append(polygon_msg)
+
+        # from skimage.measure import regionprops
+        # label = preds["pred_label"].astype(int)
+
+        # for rp, score in zip(regionprops(label), scores):
+        #     polygon_msg = lacss_pb2.Polygon()
+        #     polygon_msg.score = score
+        #     point = lacss_pb2.Point()
+        #     point.z, point.y, point.x = rp.centroid
+        #     polygon_msg.points.append(point)
+    
+        #     msg.polygons.append(polygon_msg)
 
     else:
         polygons = preds["pred_contours"]
@@ -73,23 +112,31 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
         else:
             return self._abort_handler
 
+
 class LacssServicer(lacss_pb2_grpc.LacssServicer):
     def __init__(self, model):
         self.model = model
 
     def RunDetection(self, request, context):
-        img, settings = process_input(request)
+        img, shape_hint = process_input(request)
+        settings = request.settings
         is3d = img.ndim == 4
+
         logging.debug(f"received image {img.shape}")
+
+        # dont' reshape image if the request is almost same as the orginal 
+        rel_diff = np.abs(np.array(shape_hint) / img.shape[:-1] - 1)
+        if (rel_diff < 0.1).all():
+            shape_hint = None 
 
         preds = self.model.predict(
             img,
+            reshape_to = shape_hint,
             min_area=settings.min_cell_area,
-            scaling=settings.scaling,
             nms_iou=settings.nms_iou,
             score_threshold=settings.detection_threshold,
             segmentation_threshold=settings.segmentation_threshold,
-            output_type="label" if is3d else "contour" ,
+            output_type="bbox" if is3d else "contour" ,
         )
 
         result = process_result(preds, is3d)
@@ -109,7 +156,12 @@ def get_predictor(modelpath):
     model.module.detector.max_output = 512  # FIXME good default?
     model.module.detector.min_score = 0.2
 
+    logging.debug(f"lacss_server: precompile for most common shapes")
+    _ = model.predict(np.ones([544,544,3]))
+    _ = model.predict(np.ones([64,256,256,3]))
+
     return model
+
 
 def show_urls():
     from .predict import model_urls
@@ -167,7 +219,7 @@ def main(
         futures.ThreadPoolExecutor(max_workers=workers),
         compression=grpc.Compression.Gzip if compression else grpc.Compression.NoCompression,
         interceptors=(TokenValidationInterceptor(token),),
-        options=(("grpc.max_receive_message_length", 1024*1024*16),),
+        options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
 
     lacss_pb2_grpc.add_LacssServicer_to_server(LacssServicer(model), server)
