@@ -2,7 +2,7 @@
       options:
         show_root_heading: true
 
-::: lacss.modules.ConvNeXt
+::: lacss.modules.Backbone
       options:
         show_root_heading: true
 
@@ -11,9 +11,5 @@
         show_root_heading: true
 
 ::: lacss.modules.Segmentor
-      options:
-        show_root_heading: true
-
-::: lacss.modules.StackIntegrator
       options:
         show_root_heading: true

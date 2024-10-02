@@ -8,11 +8,6 @@
         show_root_heading: false
         show_root_toc_entry: false
 
-::: lacss.ops.locations
-      options:
-        show_root_heading: false
-        show_root_toc_entry: false
-
 ::: lacss.ops.nms
       options:
         show_root_heading: false
@@ -22,4 +17,3 @@
       options:
         show_root_heading: false
         show_root_toc_entry: false
-        
