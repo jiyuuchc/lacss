@@ -5,8 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from ..typing import *
-from .boxes import box_iou_similarity
-from .locations import distance_similarity
+from .boxes import box_iou_similarity, distance_similarity
 
 NMS_TILE_SIZE = 1024
 
@@ -184,15 +183,15 @@ def non_max_suppression(
         min_score,
     )
 
-    # find index of selected
-    idx_of_selected = jnp.argwhere(
-        selected, size=max_output_size, fill_value=-1
-    ).squeeze(-1)
-
-    scores = jnp.where(idx_of_selected >= 0, scores[idx_of_selected], -1.0)
-    boxes = jnp.where(idx_of_selected[:, None] >= 0, boxes[idx_of_selected], -1.0)
-
     if return_selection:
-        return scores, boxes, selected
+        return selected
     else:
+        # find index of selected
+        idx_of_selected = jnp.argwhere(
+            selected, size=max_output_size, fill_value=-1
+        ).squeeze(-1)
+
+        scores = jnp.where(idx_of_selected >= 0, scores[idx_of_selected], -1.0)
+        boxes = jnp.where(idx_of_selected[:, None] >= 0, boxes[idx_of_selected], -1.0) 
+               
         return scores, boxes

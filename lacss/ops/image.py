@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import partial
 
+import numpy as np
 import jax
 from jax.scipy.signal import convolve
 
@@ -10,7 +11,63 @@ jnp = jax.numpy
 from ..typing import *
 
 
-def sorbel_edges(image: ArrayLike) -> Array:
+def sorbel_edges_3d(images: ArrayLike) -> Array:
+    """Returns a tensor holding Sobel edge maps in 3d.
+
+    Args:
+        images: [n, d, h, w]
+
+    Returns:
+        Tensor holding edge maps for each channel. [3, n, d, h, w]
+    """
+    kernels_z = jnp.array([
+       [[ 0, -1,  0],
+        [-1, -2, -1],
+        [ 0, -1,  0]],
+       [[ 0,  0,  0],
+        [ 0,  0,  0],
+        [ 0,  0,  0]],
+       [[ 0,  1,  0],
+        [ 1,  2,  1],
+        [ 0,  1,  0]]
+    ])        
+    kernels_y = jnp.array([
+       [[ 0, -1,  0],
+        [ 0,  0,  0],
+        [ 0,  1,  0]],
+       [[-1, -2, -1],
+        [ 0,  0,  0],
+        [ 1,  2,  1]],
+       [[ 0, -1,  0],
+        [ 0,  0,  0],
+        [ 0,  1,  0]]
+    ])
+    kernel_x = jnp.array([
+       [[ 0,  0,  0],
+        [-1,  0,  1],
+        [ 0,  0,  0]],
+       [[-1,  0,  1],
+        [-2,  0,  2],
+        [-1,  0,  1]],
+       [[ 0,  0,  0],
+        [-1,  0,  1],
+        [ 0,  0,  0]]])
+    kernels = jnp.stack([kernels_z, kernels_y, kernel_x])
+    sorbel_filter = jax.vmap(
+        jax.vmap(
+            partial(convolve, mode="valid"),
+            in_axes=[0, None],
+        ),
+        in_axes=[None, 0],
+    )
+
+    images = jnp.pad(images, [[0, 0], [1, 1], [1, 1], [1, 1]])
+    output = sorbel_filter(images, kernels)
+
+    return output
+
+
+def sorbel_edges(images: ArrayLike) -> Array:
     """Returns a tensor holding Sobel edge maps.
 
     Examples:
@@ -26,7 +83,6 @@ def sorbel_edges(image: ArrayLike) -> Array:
     Returns:
         Tensor holding edge maps for each channel. [2, n, h, w]
     """
-
     kernels = jnp.array(
         [[[-1, -2, -1], [0, 0, 0], [1, 2, 1]], [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]
     )
@@ -39,8 +95,8 @@ def sorbel_edges(image: ArrayLike) -> Array:
         in_axes=[None, 0],
     )
 
-    image = jnp.pad(image, [[0, 0], [1, 1], [1, 1]])
-    output = sorbel_filter(image, kernels)
+    images = jnp.pad(images, [[0, 0], [1, 1], [1, 1]])
+    output = sorbel_filter(images, kernels)
 
     return output
 
@@ -90,6 +146,8 @@ def sub_pixel_samples(
     loc_shape = locs.shape
     img_shape = img.shape
     d_loc = loc_shape[-1]
+    locs = jnp.asarray(locs)
+    img = jnp.asarray(img)
 
     if edge_indexing:
         locs = locs - 0.5
@@ -126,13 +184,12 @@ def sub_pixel_crop_and_resize(
 
     bbox = jnp.asarray(bbox).reshape(2, -1)
     img = jnp.asarray(img)
-    output_shape = jnp.asarray(output_shape)
+    output_shape = tuple(output_shape)
 
-    assert output_shape.ndim == 1
     assert bbox.shape[1] == len(output_shape), f"bbox dim is {bbox.shape[1]}, but output_shape dim is {len(output_shape)}."
     assert bbox.shape[1] <= img.ndim, f"bbox dim is {bbox.shape[1]}, but img dim {img.ndim} is smaller."
 
-    delta = (bbox[1] - bbox[0]) / output_shape
+    delta = (bbox[1] - bbox[0]) / np.asarray(output_shape)
     slices = [slice(d) for d in output_shape]
     g = jnp.moveaxis(jnp.mgrid[slices], 0, -1)
     g = g * delta

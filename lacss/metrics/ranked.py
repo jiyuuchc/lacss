@@ -94,21 +94,24 @@ class AP:
         self._result = None
 
     def compute(self):
-        if self._result is not None:
-            return self._result
+        if self._result is None:
+            scores = np.concatenate(self.scores)
+            indices = np.argsort(scores)
+            aps, recalls, accs = [], [], []
+            for indicators in self.indicator_list:
+                indicators = np.concatenate(indicators)
+                indicators = indicators[indices[::-1]]
+                p_k = np.cumsum(indicators) / (np.arange(len(indicators)) + 1)
+                if self.coco_style:
+                    p_k = np.maximum.accumulate(p_k[::-1])[::-1]
 
-        scores = np.concatenate(self.scores)
-        indices = np.argsort(scores)
-        aps = []
-        for indicators in self.indicator_list:
-            indicators = np.concatenate(indicators)
-            indicators = indicators[indices[::-1]]
-            p_k = np.cumsum(indicators) / (np.arange(len(indicators)) + 1)
-            if self.coco_style:
-                p_k = np.maximum.accumulate(p_k[::-1])[::-1]
-            aps.append(np.sum(p_k[indicators == 1]) / self.cell_counts)
-
-        self._result = np.array(aps, dtype=float)
+                aps.append(np.sum(p_k[indicators == 1]) / self.cell_counts)
+                recalls.append(np.count_nonzero(indicators) / self.cell_counts)
+                accs.append(np.count_nonzero(indicators) / len(indicators))
+                
+            self._result = dict(zip(self.thresholds, aps))
+            self._recall = dict(zip(self.thresholds, recalls))
+            self._acc = dict(zip(self.thresholds, accs))
 
         return self._result
 
@@ -129,7 +132,8 @@ class LoiAP(AP):
       m.compute()
     """
 
-    def __init__(self, thresholds=[0.5], **kwargs):
+    def __init__(self, thresholds=[5], **kwargs):
+        self.loi_thresholds = thresholds
         super().__init__([1 / th / th for th in thresholds], **kwargs)
 
     def update(self, batch, prediction):
@@ -146,13 +150,18 @@ class LoiAP(AP):
 
         row_mask = score > 0
         col_mask = (gt >= 0).all(axis=-1)
-        dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
 
+        dist2 = ((pred[:, None, :] - gt[:, :]) ** 2).sum(axis=-1)
         dist2 = 1.0 / (dist2 + 1e-8)
         dist2 = dist2[row_mask][:, col_mask]
+
         score = np.asarray(score)[row_mask]
 
         super().update(dist2, score)
+
+    def compute(self):
+        results = super().compute()
+        return dict(zip(self.loi_thresholds, results.values()))
 
 
 class BoxAP(AP):
@@ -167,16 +176,17 @@ class BoxAP(AP):
 
     def update(self, batch, prediction):
         preds = prediction["predictions"]
-        _, labels, _ = unpack_x_y_sample_weight(batch)
-        gt_bboxes = labels["gt_bboxes"]
+        if 'segmentations' in preds:
+            _, labels, _ = unpack_x_y_sample_weight(batch)
+            gt_bboxes = labels["gt_bboxes"]
 
-        pred_bboxes = np.asarray(bboxes_of_patches(preds))
-        gt_bboxes = np.asarray(gt_bboxes)
-        iou = box_iou_similarity(pred_bboxes, gt_bboxes)
-        score = np.asarray(preds["scores"])
-        gt_is_valid = (gt_bboxes >= 0).all(axis=-1)
+            pred_bboxes = np.asarray(bboxes_of_patches(preds))
+            gt_bboxes = np.asarray(gt_bboxes)
+            iou = box_iou_similarity(pred_bboxes, gt_bboxes)
+            score = np.asarray(preds["scores"])
+            gt_is_valid = (gt_bboxes >= 0).all(axis=-1)
 
-        valid_preds = score >= 0
-        iou = iou[valid_preds][:, gt_is_valid]
-        score = score[valid_preds]
-        super().update(iou, score)
+            valid_preds = score >= 0
+            iou = iou[valid_preds][:, gt_is_valid]
+            score = score[valid_preds]
+            super().update(iou, score)

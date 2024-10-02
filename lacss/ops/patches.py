@@ -86,7 +86,7 @@ def _get_patch_data(pred):
     return patches, yc, xc
 
 
-def bboxes_of_patches(pred: dict, threshold: float = 0, *, is2d:bool|None=None) -> jnp.ndarray:
+def bboxes_of_patches(pred: dict, threshold: float = 0, *, image_shape:tuple|None = None, is2d:bool|None=None) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
     Args:
@@ -94,12 +94,14 @@ def bboxes_of_patches(pred: dict, threshold: float = 0, *, is2d:bool|None=None) 
         threshold: for segmentation, default 0
 
     Keyward Args:
+        image_shape: if not None, the boxes are clipped to be within the bound
         is2d: whether to force 2d output
 
     Returns:
         bboxes: [n, 4] or [n, 6]
     """
     patches = pred["segmentations"]
+    z0 = pred["segmentation_z0_coord"]
     y0 = pred["segmentation_y0_coord"]
     x0 = pred["segmentation_x0_coord"]
 
@@ -117,6 +119,8 @@ def bboxes_of_patches(pred: dict, threshold: float = 0, *, is2d:bool|None=None) 
     min_x = x_mask.argmax(axis=1)
     max_x = d2 - x_mask[:, ::-1].argmax(axis=1)
 
+    min_z += z0
+    max_z += z0
     min_y += y0
     max_y += y0
     min_x += x0
@@ -125,41 +129,29 @@ def bboxes_of_patches(pred: dict, threshold: float = 0, *, is2d:bool|None=None) 
     if is2d is None:
         is2d = d0 == 1
 
+    if image_shape is not None:
+        if is2d:
+            d = 1
+            h, w = image_shape
+        else:
+            d, h, w = image_shape
+        min_z = np.clip(min_z, 0, d-1)
+        min_y = np.clip(min_y, 0, h-1)
+        min_x = np.clip(min_x, 0, w-1)
+        max_z = np.clip(max_z, 1, d)
+        max_y = np.clip(max_y, 1, h)
+        max_x = np.clip(max_x, 1, w)
+
     if is2d:
         bboxes = jnp.stack([min_y, min_x, max_y, max_x], axis=-1)
     else:
         bboxes = jnp.stack([min_z, min_y, min_x, max_z, max_y, max_x], axis=-1)
 
-    is_valid = z_mask.any(axis=1, keepdims=True)
-    bboxes = jnp.where(is_valid, bboxes, -1)
+    is_valid = z_mask.any(axis=1)
+    is_valid &= (max_z > min_z) & (max_y > min_y) & (max_x > min_x)
+    bboxes = jnp.where(is_valid[:, None], bboxes, -1)
 
     return bboxes
-
-
-# def patches_to_segmentations(
-#     pred: DataDict, input_size: Shape, threshold: float = 0
-# ) -> Array:
-#     """Expand the predicted patches to the full image size.
-#     The default model segmentation output shows only a small patch around each instance. This
-#     function expand each patch to the size of the orginal image.
-
-#     Args:
-#         pred: A model prediction dictionary
-#         input_size: shape of the input image. Tuple of H, W
-#         threshold: for segmentation. Default is 0.5.
-
-#     Returns:
-#         segmentations: [n, height, width] n full0-size segmenatation masks.
-
-#     """
-#     patches, yc, xc = _get_patch_data(pred)
-#     n_patches, patch_size, _ = yc.shape
-
-#     page_nums = jnp.arange(n_patches)
-#     segms = jnp.zeros((n_patches,) + input_size)
-#     segms = segms.at[page_nums[:, None, None], yc, xc].set(patches)
-
-#     return (segms >= threshold).astype(int)
 
 
 def patches_to_label(
@@ -189,30 +181,25 @@ def patches_to_label(
     else:
         label = jnp.zeros(input_size)
 
-    patches = pred["segmentations"]
-    y0 = pred["segmentation_y0_coord"]
-    x0 = pred["segmentation_x0_coord"]
-
-    ps = patches.shape[-1]
-    yy, xx = jnp.mgrid[:ps, :ps]
-    yy += y0[:, None, None]
-    xx += x0[:, None, None]
-
     if mask is None:
         mask = pred["segmentation_is_valid"]
     else:
         mask &= pred["segmentation_is_valid"]
-
     if score_threshold > 0:
         mask &= pred["scores"] >= score_threshold
+
+    assert label.ndim == 3, f'invalid input_size {input_size}'
+    assert mask.ndim == 1
+
+    patches = pred["segmentations"]
+    (zz, yy, xx), cmask = coords_of_patches(pred, label.shape)
 
     idx = jnp.cumsum(mask) * mask
     idx = jnp.where(mask, idx.max() + 1 - idx, 0)
 
     pr = (patches > threshold).astype(int) * idx[:, None, None, None]
-    pr = pr.swapaxes(0,1) # [D, N, Ps, Ps]
 
-    label = jax.vmap(lambda a, b: a.at[yy, xx].max(b))(label, pr)
+    label = label.at[zz, yy, xx].max(jnp.where(cmask, pr, 0))
 
     label = jnp.where(label, label.max() + 1 - label, 0)
     
@@ -270,28 +257,27 @@ def rescale_patches(
     return new_patch, yy, xx
 
 
-def crop_and_resize_patches(pred:dict, target_shape:tuple[int] = (48,48), bboxes = None, *, threshold:float=0, convert_logits:bool=False):
+def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = (48,48), convert_logits:bool=False):
     """ crop and rescale all instances to a target_size
 
     Args:
         pred: model predictions
-        target_shape: output shape. usually a 3-tuple but can be a 2-tuple if input is a 2D image.
         bboxes: optionally supply bboxes for cropping
     Keyward Args:
-        threshold: only used if bboxes is None. Threshold for computing the bboxes
+        target_shape: output shape. usually a 3-tuple but can be a 2-tuple if input is a 2D image.
         convert_logits: whether to convert the logits to probability
     
     Returns:
         Array [N] + target_shape.
     """
     from lacss.ops.image import sub_pixel_crop_and_resize
+
     patches = pred["segmentations"]
+    z0 = pred["segmentation_z0_coord"]
     y0 = pred["segmentation_y0_coord"]
     x0 = pred["segmentation_x0_coord"]
 
-    if bboxes is None:
-        bboxes = bboxes_of_patches(pred, threshold=threshold, is2d=False)
-    elif bboxes.shape[-1] == 4:
+    if bboxes.shape[-1] == 4:
         assert patches.shape[1] == 1, f"bboxes are for 2d but the patches are 3d"
         bboxes = jnp.c_[
             jnp.zeros_like(bboxes[:, 0]), 
@@ -300,14 +286,11 @@ def crop_and_resize_patches(pred:dict, target_shape:tuple[int] = (48,48), bboxes
             bboxes[:, 2:],
         ]
 
-    bboxes = bboxes.at[:,1].add(-y0)
-    bboxes = bboxes.at[:,4].add(-y0)
-    bboxes = bboxes.at[:,2].add(-x0)
-    bboxes = bboxes.at[:,5].add(-x0)
+    bboxes = bboxes - jnp.c_[z0, y0, x0, z0, y0, x0] # relative to instance crops
 
     target_shape = tuple(target_shape)
     if len(target_shape) == 2:
-        assert patches.shape[1] == 1, f"bboxes are for 2d but the patches are 3d"
+        assert patches.shape[1] == 1, f"target shape is 2d but the patches are 3d"
         target_size_ = (1,) + target_shape
     else:
         target_size_ = target_shape
@@ -325,3 +308,71 @@ def crop_and_resize_patches(pred:dict, target_shape:tuple[int] = (48,48), bboxes
         
     return segs
 
+# def merge_patches(
+#         preds:dict, 
+#         input_size:tuple[int,...], 
+#         *, 
+#         min_score:float=0.5, 
+#         reduction:str="sum",
+#         convert_logits:bool=False,
+# )->Array:
+#     instance_mask = preds["segmentation_is_valid"]
+#     if min_score > 0:
+#         instance_mask &= preds["scores"] >= min_score
+#     if len(input_size) == 2:
+#         input_size = (1,) + tuple(input_size)
+
+#     instances = preds["segmentations"]
+#     if convert_logits:
+#         instances = jax.nn.sigmoid(instances) #[N, sz, sy, sx]
+    
+#     sz, sy, sx = instances.shape[-3:]
+#     pz, py, px = sz//2+1, sy//2+1, sx//2+1
+#     zc, yc, xc = jnp.mgrid[:sz, :sy, :sx]
+#     zc = zc + preds["segmentation_z0_coord"][:, None, None, None] + pz
+#     yc = yc + preds["segmentation_y0_coord"][:, None, None, None] + py
+#     xc = xc + preds["segmentation_x0_coord"][:, None, None, None] + px
+
+#     merged = jnp.zeros(input_size, dtype=instances.dtype)
+#     merged = jnp.pad(merged, [[pz, pz], [py, py], [px, px]])
+
+#     if reduction == "sum":
+#         merged = merged.at[zc, yc, xc].add(instances)
+#     elif reduction == "max":
+#         merged = merged.at[zc, yc, xc].max(instances)
+#     else:
+#         raise ValueError(f"invalid reduction {reduction}. should be 'sum' | 'max'")
+
+#     merged = merged[pz:pz+sz, py:py+sy, px:px+sx]
+
+#     return merged
+
+
+def coords_of_patches(preds:dict, image_shape:tuple[int, ...])->tuple[Array, Array]:
+    """ get the zyx coordinates of segmentations
+
+    Args:
+        preds: the model prediction dictionary
+        image_shape: the original input image shape. (H, W) for 2d and (D, H, W) for 3d
+
+    returns: a tuple of (coordinates, boolean_masks)
+        coordinates: integer tensor of shape: (3,) + preds['segmentations'].shape
+        boolan_masks: boolean tensor indicating whether the coordinate is a real one of padding.
+    """
+    locs = jnp.stack([ 
+        preds["segmentation_z0_coord"],
+        preds["segmentation_y0_coord"],
+        preds["segmentation_x0_coord"],
+    ]) #[3, N]
+
+    sz, sy, sx = preds['segmentations'].shape[1:4] 
+    if len(image_shape) == 2:
+        assert sz == 1, f"2d image_shape but 3d predictions"
+        image_shape = (1,) + tuple(image_shape)
+
+    coords = jnp.mgrid[:sz, :sy, :sx] # [3, sz, sy, sx]
+    coords = coords[:, None, ...] + locs[..., None, None, None] #[3, N, sz, sy, sx]
+    mask = (coords >= 0).all(axis=0) & (jnp.moveaxis(coords, 0, -1) < jnp.asarray(image_shape)).all(axis=-1)
+    mask = mask & preds["segmentation_is_valid"][:, None, None, None]
+
+    return coords, mask
