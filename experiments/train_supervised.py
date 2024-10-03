@@ -140,7 +140,7 @@ def run_training(_):
     if "backbone_dropout" in config.train:
         model.backbone.drop_path_rate = config.train.backbone_dropout
 
-    with open(logpath / "model.json", "wb") as f:
+    with open(logpath / "model.pkl", "wb") as f:
         pickle.dump(model, f)
 
     pprint.pp(model.get_config())
