@@ -53,42 +53,6 @@ def get_config(DATAPATH):
 
     return config
 
-class Dice:
-    """Compute instance Dice values"""
-
-    def __init__(self):
-        self.pred_areas = []
-        self.gt_areas = []
-        self.pred_scores = []
-        self.gt_scores = []
-
-    def update(self, pred_its, pred_areas, gt_areas):
-        self.pred_areas.append(pred_areas)
-        self.gt_areas.append(gt_areas)
-
-        pred_best = pred_its.max(axis=1)
-        pred_best_matches = pred_its.argmax(axis=1)
-        pred_dice = pred_best * 2 / (pred_areas + gt_areas[pred_best_matches])
-        self.pred_scores.append(pred_dice)
-
-        gt_best = pred_its.max(axis=0)
-        gt_best_matches = pred_its.argmax(axis=0)
-        gt_dice = gt_best * 2 / (gt_areas + pred_areas[gt_best_matches])
-        self.gt_scores.append(gt_dice)
-
-    def compute(self):
-        pred_areas = np.concatenate(self.pred_areas)
-        gt_areas = np.concatenate(self.gt_areas)
-        pred_scores = np.concatenate(self.pred_scores)
-        gt_scores = np.concatenate(self.gt_scores)
-
-        pred_dice = (pred_areas / pred_areas.sum() * pred_scores).sum()
-        gt_dice = (gt_areas / gt_areas.sum() * gt_scores).sum()
-
-        dice = (pred_dice + gt_dice) / 2
-
-        return [dice]
-
 def _count_mask_overlaps(pred_mask, coords, bucket_size=100000):
     from lacss.ops import sub_pixel_samples
     n_coords = coords.shape[0]
@@ -145,6 +109,7 @@ def main(_):
     import pickle
     from lacss.deploy import Predictor
     from lacss.metrics import AP 
+    from lacss.metrics.dice import Dice
     from lacss.utils import load_from_pretrained
     from tqdm import tqdm
 
@@ -225,7 +190,8 @@ def main(_):
         pp(model)
 
         for cp_path in all_cps:
-            params = ocp.StandardCheckpointer().restore(cp_path.absolute())["train_state"]["params"]        
+            model, params= load_from_pretrained(cp_path)
+            # params = ocp.StandardCheckpointer().restore(cp_path.absolute())["train_state"]["params"]        
             print(f"loaded parameters from {cp_path}")
             run_eval(model, params)
 

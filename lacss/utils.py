@@ -109,7 +109,10 @@ def load_from_pretrained(pretrained: str):
         import orbax.checkpoint as ocp
 
         pretrained = os.path.abspath(pretrained)
-        params = ocp.StandardCheckpointer().restore(pretrained)
+        if os.path.exists(os.path.join(pretrained, "default")):
+            params = ocp.StandardCheckpointer().restore(os.path.join(pretrained, "default"))
+        else:
+            params = ocp.StandardCheckpointer().restore(pretrained)
         params = params['train_state']['params']
         with open(os.path.join(os.path.dirname(pretrained), "model.pkl"), "rb") as f:
             module = pickle.load(f)

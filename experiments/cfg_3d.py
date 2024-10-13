@@ -88,24 +88,7 @@ def get_config():
     config = ml_collections.ConfigDict()
     config.name = "train_3d"
 
-    config.train = dict(
-        seed = 4242,
-
-        steps = 50000,
-        finetune_steps = 10000,
-        validation_interval = 5000,
-        lr = 1e-4,
-        weight_decay = 0.05,
-
-        freeze=["backbone"],
-    )
-    config.train.config = ml_collections.ConfigDict()
-    config.train.config.max_training_instances = 32
-    config.train.config.n_labels_max = 40
-    config.train.config.n_labels_min = 6
-    config.train.config.similarity_score_scaling = 8
-
-    model = Lacss.get_default_model()
+    model = Lacss.get_tiny_model()
     model.detector_3d = LPN3D()
     model.segmentor_3d = Segmentor3D()
     config.model = model.get_config()
@@ -116,13 +99,31 @@ def get_config():
         .filter(check_cell_number)
         .map(format_train_data)
         .repeat()
-        # .batch(1)
-        # .prefetch(1)
     )
 
     config.data = ml_collections.ConfigDict()
     config.data.ds_train = ds_3d_train
     config.data.ds_val = tfds.load("combined_3d", split="train").map(format_test_data_3d)
     config.data.batch_size = 1
+
+    config.train = ml_collections.ConfigDict()
+    config.train.seed = 4242
+    config.train.steps = 80000
+    config.train.validation_interval = 5000
+    config.train.lr = 4e-4
+    config.train.weight_decay = 0.001
+    config.train.warm_up = 0.1
+
+    config.train.instance_loss_weight = 0.04
+    config.train.backbone_dropout = 0.0
+    config.train.n_checkpoints = 10
+
+    config.train.freeze=["backbone"]
+
+    config.train.config = ml_collections.ConfigDict()
+    config.train.config.max_training_instances = 32
+    config.train.config.n_labels_max = 64
+    config.train.config.n_labels_min = 1
+    config.train.config.similarity_score_scaling = 4
 
     return config

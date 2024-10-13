@@ -12,7 +12,7 @@ jnp = jax.numpy
 
 def _compute_losses(module, gt_locs, mask, decoded, config):
     gamma = config.get("detection_loss_gamma", 2)
-    delta = config.get("detection_loss_delta", 1.0)
+    delta = config.get("detection_loss_delta", 4.0)
 
     pred_locs = decoded['pred_locs']
     ref_locs = decoded['ref_locs']
@@ -30,12 +30,11 @@ def _compute_losses(module, gt_locs, mask, decoded, config):
         pred_logits, regr_mask, gamma=gamma,
     ).mean(where=mask)
 
-    regr_loss = optax.huber_loss(
-        pred_locs/4, 
-        gt_regr/4,
-        delta=delta,
+    regr_loss = optax.l2_loss(
+        pred_locs/delta, 
+        gt_regr/delta,
     ).mean(axis=-1).sum(where = regr_mask)
-    regr_loss /= jnp.count_nonzero(regr_mask) + 1e-8
+    regr_loss /= jnp.count_nonzero(regr_mask) + 1e-6
 
     return dict(
         lpn_localization_loss=regr_loss,
@@ -46,8 +45,10 @@ def _compute_losses(module, gt_locs, mask, decoded, config):
 def _assign_label(module, gt_locs, decoded, config):
     locs = decoded['pred_locs']
     ref_locs = decoded['ref_locs']
-    assert locs.ndim == 2 and locs.shape[1] == 2, f"{locs.shape}"
-    assert ref_locs.ndim == 2 and ref_locs.shape[1] == 2, f"{ref_locs.shape}"
+    assert locs.ndim == 2 and locs.shape[-1] in (2, 3), f"{locs.shape}"
+    assert gt_locs.shape[-1] == locs.shape[-1]
+
+    assert ref_locs.ndim == 2 and ref_locs.shape[-1] in (2, 3), f"{ref_locs.shape}"
 
     detection_roi = config.get("detection_roi", 8)
     n_labels_max = config.get("n_labels_max", 25)
@@ -86,21 +87,29 @@ def train_fn(
     image_mask: ArrayLike|None = None,
     config: ConfigDict = ConfigDict(),
 ) -> dict:
-    max_proposal_offset = config.get("max_proposal_offset", 12)
-    max_training_instances = config.get("max_training_instances", 256)
+    assert image.ndim in (3, 4) and image.shape[-1] == 3, f"wrong img shape {image.shape}"
+    assert gt_locations.ndim == 2 and gt_locations.shape[1] in (2,3), f"wrong location data shape {gt_locations.shape}"
 
-    assert image.ndim == 3, f"wrong img shape {image.shape}"
-    assert gt_locations.ndim == 2 and gt_locations.shape[1] == 2, f"wrong location data shape {gt_locations.shape}"
+    is_3d = image.ndim == 4
 
     if image_mask is not None:
         image_mask = jnp.broadcast_to(image_mask, image.shape[:-1])
 
-    x_det, x_seg = module.get_features(image, video_refs, deterministic=False)
+    x_det, x_seg = module.get_features(image, video_refs, deterministic=is_3d)
 
-    outputs = module.detector(x_det, image_mask)
+    if not is_3d:
+        assert x_det.ndim == 3
+        outputs = module.detector(x_det, image_mask)
+    else:
+        assert x_det.ndim == 4
+        outputs = module.detector_3d(x_det, image_mask)
+
     outputs['losses'] = _compute_losses(module, gt_locations, image_mask, outputs['detector'], config)
 
-    if module.segmentor is not None:
+    if not is_3d and module.segmentor is not None:
+        max_proposal_offset = config.get("max_proposal_offset", 12)
+        max_training_instances = config.get("max_training_instances", 256)
+
         match_th = 1 / max_proposal_offset / max_proposal_offset
         seg_locs = match_and_replace(
             gt_locations,  outputs["predictions"]["locations"], match_th
@@ -110,32 +119,11 @@ def train_fn(
         segmentor_out = module.segmentor(x_seg, seg_locs)
 
         outputs = deep_update(outputs, segmentor_out)
-    
-    return outputs
 
+    elif is_3d and module.segmentor_3d is not None:
+        max_proposal_offset = config.get("max_proposal_offset", 12)
+        max_training_instances = config.get("max_training_instances", 32)
 
-def train_fn_3d(
-    module,
-    image: ArrayLike,
-    gt_locations: ArrayLike,
-    image_mask: ArrayLike|None = None,
-    config: ConfigDict = ConfigDict(),
-) -> dict:
-    max_proposal_offset = config.get("max_proposal_offset", 12)
-    max_training_instances = config.get("max_training_instances", 256)
-
-    assert image.ndim == 4, f"wrong img shape {image.shape}"
-    assert gt_locations.ndim == 2 and gt_locations.shape[1] == 3, f"wrong location data shape {gt_locations.shape}"
-
-    if image_mask is not None:
-        image_mask = jnp.broadcast_to(image_mask, image.shape[:-1])
-
-    x_det, x_seg = module.get_features(image, deterministic=True)
-
-    outputs = module.detector_3d(x_det, image_mask)
-    outputs['losses'] = _compute_losses(module, gt_locations, image_mask, outputs['detector'], config)
-
-    if module.segmentor_3d is not None:
         match_th = 1 / max_proposal_offset / max_proposal_offset
         seg_locs = match_and_replace(
             gt_locations,  outputs["predictions"]["locations"], match_th
@@ -145,5 +133,5 @@ def train_fn_3d(
         segmentor_out = module.segmentor_3d(x_seg, seg_locs)
 
         outputs = deep_update(outputs, segmentor_out)
-
+    
     return outputs

@@ -110,24 +110,7 @@ def get_config():
     from lacss.modules import Lacss
 
     config = ml_collections.ConfigDict()
-    config.name = "train_2d"
-
-    config.train = ml_collections.ConfigDict()
-    config.train.seed = 4242
-    config.train.steps = 200000
-    config.train.finetune_steps = 50000
-    config.train.validation_interval = 10000
-    config.train.lr = 1e-4
-    config.train.weight_decay = 0.05
-    config.train.backbone_dropout = 0.4
-
-    # config.train.freeze = ["backbone/ConvNeXt_0"]
-
-    config.train.config = ml_collections.ConfigDict()
-    config.train.config.detection_roi = 8
-    config.train.config.similarity_score_scaling = 4
-    config.train.config.n_labels_min = 4
-    config.train.config.n_labels_max = 25
+    config.name = "lacss_v3_2d"
 
     labeled_train_data = (
         tf.data.Dataset.sample_from_datasets(
@@ -139,12 +122,8 @@ def get_config():
                 _get_ds("a431"), 
                 _get_ds("ovules_2d")
             ],
-            [.20, .40, .20, .1, .05, .05],
+            [.20, .30, .35, .05, .05, .05],
         )
-        # .ragged_batch(4)
-        # .map(lacss.data.mosaic, num_parallel_calls=tf.data.AUTOTUNE)
-        # .map(partial(lacss.data.random_crop_or_pad, target_size=IMG_SIZE, area_ratio_threshold=0.5),
-        #     num_parallel_calls=tf.data.AUTOTUNE)
         .map(
             partial(lacss.data.cutout, size=10, n=50),
             num_parallel_calls=tf.data.AUTOTUNE,
@@ -163,6 +142,29 @@ def get_config():
         livecell = tfds.load("livecell", split="val").map(format_test_data),
         nips = tfds.load("nips", split="val").map(format_test_data),
     )
-    config.data.batch_size = 8
+    config.data.batch_size = 3
+
+    config.train = ml_collections.ConfigDict()
+    config.train.seed = 4242
+    config.train.validation_interval = 30000 // config.data.get_ref("batch_size")
+    config.train.steps = config.train.get_ref("validation_interval") * 20
+    config.train.lr = 4e-4
+    config.train.weight_decay = 0.05
+    config.train.warm_up = 0.1
+    config.train.layer_wise_lr_decay = 1.0
+
+    config.train.instance_loss_weight = 0.01
+    config.train.backbone_dropout = 0.8
+    config.train.n_checkpoints = 3
+
+    config.train.config = ml_collections.ConfigDict()
+    config.train.config.detection_roi = 8
+    config.train.config.similarity_score_scaling = 2
+    config.train.config.n_labels_min = 1
+    config.train.config.n_labels_max = 25
+    config.train.config.detection_loss_delta = 8.0
+
+    # config.train.freeze = ["backbone/cnn"]
 
     return config
+    

@@ -16,15 +16,16 @@ import lacss.ops
 
 from lacss.deploy import Predictor
 from lacss.metrics import AP, LoiAP
+from lacss.metrics.dice import Dice
 
 # _CONFIG = config_flags.DEFINE_config_file("config")
 flags.DEFINE_string("checkpoint", None, "", required=True)
 flags.DEFINE_string("logpath", ".", "")
 flags.DEFINE_float("nms", 0.0, "non-max-supress threshold")
-flags.DEFINE_float("minscore", 0.2, "min score")
-flags.DEFINE_string("datapath", "../../livecell_dataset/", "test data directory")
+flags.DEFINE_float("minscore", 0.1, "min score")
+flags.DEFINE_string("datapath", "/home/FCAM/jyu/datasets/livecell", "test data directory")
 flags.DEFINE_float("minarea", 0.0, "min area of cells")
-flags.DEFINE_float("dicescore", 0.5, "score threshold for Dice score")
+flags.DEFINE_float("dicescore", 0.3, "score threshold for Dice score")
 
 FLAGS = flags.FLAGS
 
@@ -33,7 +34,7 @@ _th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 _format = lambda x: ", ".join([f"{v:.4f}" for v in x])
 
 avg_cell_sizes = {
-    "A172": 34.6,
+    "A172": 48.0,
     "BT474": 24.6,
     "BV2": 13.3,
     "Huh7": 40.8,
@@ -42,43 +43,6 @@ avg_cell_sizes = {
     "SKOV3": 44.8,
     "SkBr3": 21.8,
 }
-
-class Dice:
-    """Compute instance Dice values"""
-
-    def __init__(self):
-        self.pred_areas = []
-        self.gt_areas = []
-        self.pred_scores = []
-        self.gt_scores = []
-
-    def update(self, pred_its, pred_areas, gt_areas):
-        self.pred_areas.append(pred_areas)
-        self.gt_areas.append(gt_areas)
-
-        pred_best = pred_its.max(axis=1)
-        pred_best_matches = pred_its.argmax(axis=1)
-        pred_dice = pred_best * 2 / (pred_areas + gt_areas[pred_best_matches])
-        self.pred_scores.append(pred_dice)
-
-        gt_best = pred_its.max(axis=0)
-        gt_best_matches = pred_its.argmax(axis=0)
-        gt_dice = gt_best * 2 / (gt_areas + pred_areas[gt_best_matches])
-        self.gt_scores.append(gt_dice)
-
-    def compute(self):
-        pred_areas = np.concatenate(self.pred_areas)
-        gt_areas = np.concatenate(self.gt_areas)
-        pred_scores = np.concatenate(self.pred_scores)
-        gt_scores = np.concatenate(self.gt_scores)
-
-        pred_dice = (pred_areas / pred_areas.sum() * pred_scores).sum()
-        gt_dice = (gt_areas / gt_areas.sum() * gt_scores).sum()
-
-        dice = (pred_dice + gt_dice) / 2
-
-        return dice
-
 
 def get_box_its(pred, gt_b):
     b = pred["pred_bboxes"]

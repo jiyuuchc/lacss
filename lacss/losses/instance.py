@@ -80,7 +80,11 @@ def supervised_instance_loss(batch, prediction):
 
     loss = optax.sigmoid_binary_cross_entropy(instance_logit, gt_patches)
 
-    return mean_over_boolean_mask(loss, instance_mask)
+    loss = loss.mean(axis=(1,2,3)).sum(where=instance_mask)
+
+    return loss
+    
+    # return mean_over_boolean_mask(loss, instance_mask)
 
 def instance_overlap_loss(batch, prediction, *, soft_label: bool = True):
     preds = prediction["predictions"]

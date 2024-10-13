@@ -25,35 +25,13 @@ def get_config(model="tiny"):
     config = ml_collections.ConfigDict()
     config.name = "lacss_livecell_test"
 
-    config.train = ml_collections.ConfigDict()
-    config.train.seed = 42
-    config.train.steps = 100000
-    config.train.finetune_steps = 20000
-    config.train.validation_interval = 10000
-    config.train.lr = 1e-4
-    config.train.weight_decay = 0.05
-
-    config.train.config = ml_collections.ConfigDict()
-    config.train.config.detection_roi = 8
-    config.train.config.similarity_score_scaling = 4
-    config.train.config.n_labels_min = 1
-    config.train.config.n_labels_max = 25
-
-    config.train.backbone_dropout = 0.4
-
-    config.model = Lacss.get_preconfigued(model)
+    config.model = Lacss.get_preconfigued(model).get_config()
     config.model.detector.max_output = 1024
-    config.model.backbone.activation = picklable_relu
-    # config.model.backbone.drop_path_rate = 0.6
 
     livecell_train = (
         tfds.load(DATASET, split="train")
         .repeat()
         .map(augment, num_parallel_calls=tf.data.AUTOTUNE)
-        # .ragged_batch(4)
-        # .map(lacss.data.mosaic, num_parallel_calls=tf.data.AUTOTUNE)
-        # .map(partial(lacss.data.random_crop_or_pad, target_size=IMG_SIZE, area_ratio_threshold=0.5),
-        #     num_parallel_calls=tf.data.AUTOTUNE)
         .map(
             partial(lacss.data.cutout, size=10, n=50),
             num_parallel_calls=tf.data.AUTOTUNE,
@@ -66,5 +44,22 @@ def get_config(model="tiny"):
     config.data.ds_train = livecell_train
     config.data.ds_val = tfds.load(DATASET, split="val").map(format_test_data)
     config.data.batch_size = 3
+
+    config.train = ml_collections.ConfigDict()
+    config.train.seed = 42
+    config.train.validation_interval = 30000 // config.data.get_ref("batch_size")
+    config.train.steps = config.train.get_ref("validation_interval") * 12
+    config.train.lr = 4e-4
+    config.train.weight_decay = 0.05
+    config.train.instance_loss_weight = 0.1
+
+    config.train.config = ml_collections.ConfigDict()
+    config.train.config.detection_roi = 8
+    config.train.config.similarity_score_scaling = 2
+    config.train.config.n_labels_min = 1
+    config.train.config.n_labels_max = 25
+    config.train.config.detection_loss_delta = 8.0
+
+    config.train.backbone_dropout = 0.4
 
     return config
