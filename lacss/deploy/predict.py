@@ -23,11 +23,6 @@ from ..data.utils import image_standardization
 
 Shape = Sequence[int]
 
-model_urls: Mapping[str, str] = {
-    "lacss_v2_default": "https://huggingface.co/yulabuchc/lacss_v2_default/resolve/main/LACSSV2-DEFAULT-240927"
-}
-model_urls["default"] = model_urls["lacss_v2_default"]
-
 def _remove_edge_instances(
     pred, pos, img_sz,
     gs: int = 1024+64,
@@ -57,7 +52,7 @@ def _get_contour(mask, chain_approx=cv2.CHAIN_APPROX_SIMPLE):
 def _to_polygons(
     predictions, mask,
     *,
-    segmentation_threshold=0,
+    segmentation_threshold=0.0,
     chain_approx=cv2.CHAIN_APPROX_SIMPLE,
 ) -> list:
     polygons = []
@@ -65,27 +60,62 @@ def _to_polygons(
     y0s = np.asarray(predictions["segmentation_y0_coord"])
     x0s = np.asarray(predictions["segmentation_x0_coord"])
     segs = np.asarray(predictions["segmentations"] >= segmentation_threshold).astype("uint8")
-    mask = np.asarray(mask)
+    mask = np.array(mask) 
 
     assert segs.shape[1] == 1
     segs = segs.squeeze(1)
 
-    segs = segs[mask]
-    y0s = y0s[mask]
-    x0s = x0s[mask]
+    for k in range(segs.shape[0]):
+        if mask[k]:
+            polygon = _get_contour(segs[k], chain_approx) + [x0s[k], y0s[k]]
+            if len(polygon) > 0:
+                polygons.append(polygon)
+            else:
+                mask[k] = False
 
-    for y0, x0, seg in zip(y0s, x0s, segs):
-        polygon = _get_contour(seg) +[x0, y0]
-        polygons.append(polygon)
+    return polygons, mask
 
-    return polygons
+
+def _get_mesh(seg):
+    from skimage.measure import marching_cubes
+    try:
+        verts, faces, norms, _ = marching_cubes(seg, allow_degenerate=False)
+        return dict(verts=verts, faces=faces, norms=norms)
+    except:
+        return None
+
+def _to_mesh(
+    predictions, mask,
+    *,
+    segmentation_threshold=0,
+):
+    from skimage.measure import marching_cubes
+    meshes = []
+
+    z0s = np.asarray(predictions["segmentation_z0_coord"])
+    y0s = np.asarray(predictions["segmentation_y0_coord"])
+    x0s = np.asarray(predictions["segmentation_x0_coord"])
+    segs = np.asarray(predictions["segmentations"] >= segmentation_threshold).astype("uint8")
+    mask = np.array(mask) 
+
+    for k in range(segs.shape[0]):
+        if mask[k]:
+            mesh = _get_mesh(segs[k])
+            if mesh:
+                mesh['verts'] += [z0s[k], y0s[k], x0s[k]]
+                meshes.append(mesh)
+            else:
+                mask[k] = False
+
+    return meshes, mask  
 
 def _format_image(image, target_shape, normalize):
     from skimage.transform import resize
 
-    image = resize(image, target_shape)
+    if image.shape[:-1] != tuple(target_shape):
+        image = resize(image, target_shape)
+
     is2d = image.ndim == 3
-    default_size = 544 if is2d else 256
 
     if normalize:
         image = image - image.mean()
@@ -98,10 +128,17 @@ def _format_image(image, target_shape, normalize):
 
     padding_shape = (target_shape - 1) // 32 * 32 + 32
 
-    if (padding_shape <  default_size).all():
-        padding_shape[:] = default_size
-    elif not is2d:
+    if is2d:
+        if (padding_shape <=  544).all():
+            padding_shape[:] = 544
+        elif (padding_shape <=  1088).all():
+            padding_shape[:] = 1088
+    else:
         padding_shape[:] = padding_shape.max()
+        if (padding_shape <  256).all():
+            padding_shape[:] = 256
+        else:
+            padding_shape[:] = padding_shape.max()
     
     padding = [ [0, s-s0] for s, s0 in zip(padding_shape, image.shape[:-1])]
     padding += [[0, 3-image.shape[-1]]]
@@ -218,6 +255,8 @@ class Predictor:
                 - pred_bboxes: The bounding-boxes of detected instances in y0x0y1x1 format
                 - pred_masks:  A 3d array representing (rescaled) segmentation mask within bboxes
         """
+        image = np.asarray(image)
+        
         logging.debug(f"started prediction with image {image.shape}")
         start_time = time.time()
 
@@ -230,15 +269,16 @@ class Predictor:
             image = image[..., None]
 
         orig_shape = image.shape[:-1]
-        assert image.ndim == 3 or image.ndim == 4, f"ilegal image dim {image.shape}"
+        assert image.ndim == 3 or image.ndim == 4, f"illegal image dim {image.shape}"
+        is_3d = image.ndim == 4
 
-        if not output_type in ("bbox", "label", "contour"):
+        if not output_type in ("bbox", "label", "contour", "_raw"):
             raise ValueError(
                 f"output_type should be 'bbox'|'label'|'contour'. Got {output_type} instead."
             )
 
-        if output_type == "contour" and image.ndim == 4:
-            raise ValueError(f"contour output is only supported on 2D inputs")
+        # if output_type == "contour" and image.ndim == 4:
+        #     raise ValueError(f"contour output is only supported on 2D inputs")
         
         if reshape_to is None: 
             reshape_to = np.array(orig_shape)
@@ -282,7 +322,19 @@ class Predictor:
             )
             instance_mask = instance_mask & sel
 
-        if output_type == "bbox":
+        if output_type == "_raw":
+            return dict(
+                pred_scores=np.asarray(scores)[instance_mask],
+                pred_locations=np.asarray(preds["locations"])[instance_mask] / scaling,
+                pred_bboxes=(np.asarray(bboxes) / np.r_[scaling, scaling])[instance_mask],
+                pred_segmentations=np.asarray(preds["segmentations"])[instance_mask],
+                pred_segmentation_pos=np.stack([
+                    preds["segmentation_z0_coord"],
+                    preds["segmentation_y0_coord"],
+                    preds["segmentation_x0_coord"],
+                ], axis=-1)[instance_mask],
+            )
+        elif output_type == "bbox":
             target_shape = np.broadcast_to([36], [len(orig_shape)])
             segmentations = crop_and_resize_patches(
                 preds, bboxes,
@@ -297,60 +349,43 @@ class Predictor:
             )
 
         elif output_type == "contour":
-            contours = _to_polygons(
-                preds, instance_mask,
-                segmentation_threshold=seg_logit_threshold,
-            )
-            contours = [(c + 0.5) / scaling for c in contours]
+            if not is_3d:
+                polygons, instance_mask = _to_polygons(
+                    preds, instance_mask, segmentation_threshold=seg_logit_threshold,
+                )
+                polygons = [(c + 0.5) / scaling[::-1] for c in polygons]
 
-            results = dict(
-                pred_scores=np.asarray(scores)[instance_mask],
-                pred_bboxes=(np.asarray(bboxes) / np.r_[scaling, scaling])[instance_mask],
-                pred_contours=contours,
-            )
+                results = dict(
+                    pred_scores=np.asarray(scores)[instance_mask],
+                    pred_bboxes=(np.asarray(bboxes) / np.r_[scaling, scaling])[instance_mask],
+                    pred_contours=polygons,
+                )
+            else:
+                meshes, instance_mask = _to_mesh(
+                    preds, instance_mask,
+                    segmentation_threshold=seg_logit_threshold,
+                )
+
+                for mesh in meshes:
+                    mesh['verts'] /=  scaling
+
+                results = dict(
+                    pred_scores=np.asarray(scores)[instance_mask],
+                    pred_bboxes=(np.asarray(bboxes) / np.r_[scaling, scaling])[instance_mask],
+                    pred_contours=meshes,
+                )                
 
         else:  # Label
-            if (scaling == 1.0).all():
-                label = np.asarray(patches_to_label(
-                    preds, orig_shape,
-                    mask=instance_mask,
-                    score_threshold=0,
-                    threshold=seg_logit_threshold,
-                ))
-            else:
-                from scipy.interpolate import interpn
-                dim = bboxes.shape[-1] // 2
-                label = np.zeros(orig_shape, dtype=int)
-                bboxes = (np.array(bboxes) / np.r_[scaling, scaling])[instance_mask]
-                bbox_p0s = np.maximum(0, np.floor(bboxes[:,:dim]).astype(int))
-                bbox_p1s = np.minimum(np.ceil(bboxes[:,dim:]).astype(int), orig_shape)
-                if dim == 3:
-                    c0s = np.stack([
-                        preds["segmentation_z0_coord"],
-                        preds["segmentation_y0_coord"],
-                        preds["segmentation_x0_coord"],
-                    ], axis=-1)[instance_mask]
-                    segs = np.array(jax.nn.sigmoid(preds['segmentations']))[instance_mask]
-                    seg_grid = (np.arange(segs.shape[1]), np.arange(segs.shape[2]), np.arange(segs.shape[3]))
-                else:
-                    c0s = np.stack([
-                        preds["segmentation_y0_coord"],
-                        preds["segmentation_x0_coord"],
-                    ], axis=-1)[instance_mask]
-                    segs = np.array(jax.nn.sigmoid(preds['segmentations']))[instance_mask].squeeze(1)
-                    seg_grid = (np.arange(segs.shape[1]), np.arange(segs.shape[2]))
-                for c, (p0, p1, c0, seg) in enumerate(zip(bbox_p0s, bbox_p1s, c0s, segs)):
-                    slices = [slice(a,b) for a,b in zip(p0, p1)]
-                    coords = tuple(np.mgrid[slices])
-                    src_coords = np.stack(coords, axis=-1) + .5
-                    src_coords = src_coords * scaling - c0 -.5
-                    values = interpn(seg_grid, seg, src_coords, bounds_error=False, fill_value=0)
-                    values = (values > segmentation_threshold) * (c+1)
-                    label[coords] = np.where(
-                        label[coords] == 0,
-                        values,
-                        label[coords],
-                    )
+            label = np.asarray(patches_to_label(
+                preds, reshape_to,
+                mask=instance_mask,
+                score_threshold=0,
+                threshold=seg_logit_threshold,
+            ))
+            if not (scaling == 1.0).all():
+                label = jax.image.resize(
+                    label, orig_shape, "nearest",
+                )
 
             results = dict(
                 pred_scores=np.asarray(scores)[instance_mask],
@@ -369,7 +404,7 @@ class Predictor:
         reshape_to: tuple[int,...]|None = None,
         gs: int|None = None,
         ss: int|None = None,
-        nms_iou: float = 0.5,
+        nms_iou: float = 0.0,
         score_threshold: float = 0.5,
         segmentation_threshold: float = 0.5,
         min_area: float = 0,
@@ -411,9 +446,6 @@ class Predictor:
         orig_shape = image.shape[:-1]
         assert image.ndim == 3 or image.ndim == 4, f"ilegal image dim {image.shape}"
 
-        if output_type == "contour" and image.ndim == 4:
-            raise ValueError(f"contour output is only supported on 2D inputs")
-
         if ss is None:
             ss = 1024 if image.ndim == 3 else 192
             gs = None
@@ -446,6 +478,7 @@ class Predictor:
                 score_threshold=score_threshold,
                 segmentation_threshold=segmentation_threshold,
                 min_area=min_area,
+                nms_iou=nms_iou,
                 normalize=False,
                 output_type="bbox",
             )
@@ -479,14 +512,27 @@ class Predictor:
             return preds
 
         if output_type == "contour":
-            polygons = []
-            _, sy, sx = preds['pred_masks'].shape
-            for box, mask in zip(preds['pred_bboxes'], preds['pred_masks']):
-                y0, x0, y1, x1 = box
-                polygon = _get_contour((mask >= 0.5).astype("uint8"))
-                polygon = polygon / [sx, sy] * [x1-x0, y1-y0] + [x0, y0]
-                polygons.append(polygon)
-            preds['pred_contous'] = polygons
+            if len(orig_shape) == 2:
+                polygons = []
+                _, sy, sx = preds['pred_masks'].shape
+                for box, seg in zip(preds['pred_bboxes'], preds['pred_masks']):
+                    y0, x0, y1, x1 = box
+                    polygon = _get_contour((seg >= 0.5).astype("uint8"))
+                    polygon = polygon / [sx, sy] * [x1-x0, y1-y0] + [x0, y0]
+                    polygons.append(polygon)
+                preds['pred_contours'] = polygons
+
+            else:
+                meshes = []
+                _, sz, sy, sx = preds['pred_masks'].shape
+                for box, seg in zip(preds['pred_bboxes'], preds['pred_masks']):
+                    z0, y0, x0, z1, y1, x1 = box
+                    mesh = _get_mesh((seg >= 0.5).astype("uint8"))
+                    assert mesh is not None
+                    mesh['verts'] = mesh['verts'] / [sz, sy, sx] * [z1-z0, y1-y0, x1-x0] + [z0, y0, x0]
+                    meshes.append(mesh)
+
+                preds['pred_contours'] = meshes
 
             return preds
 
