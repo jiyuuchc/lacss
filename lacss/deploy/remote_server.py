@@ -1,6 +1,8 @@
 import logging
 from concurrent import futures
+
 from pathlib import Path
+import threading
 
 import grpc
 import jax
@@ -13,24 +15,25 @@ _AUTH_HEADER_KEY = "authorization"
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-_MAX_MSG_SIZE=1024*1024*64
+_MAX_MSG_SIZE=1024*1024*128
 _TARGET_CELL_SIZE=32
 
 def process_input(msg):
     image = msg.image
     settings = msg.settings
 
-    if image.voxel_dim_x != 0 and image.voxel_dim_y != 0 and settings.cell_size_hint != 0:
-        scale_x = _TARGET_CELL_SIZE / settings.cell_size_hint * image.voxel_dim_x
-        scale_y = _TARGET_CELL_SIZE / settings.cell_size_hint * image.voxel_dim_y
-        if msg.voxel_dim_z != 0:
-            scale_z = _TARGET_CELL_SIZE / settings.cell_size_hint / 3 * image.voxel_dim_z
-        else:
-            scale_z = scale_x
-    elif settings.scaling != 0:
-        scale_x = scale_y = scale_z = settings.scaling
+    dim_x = image.voxel_dim_x or 1.0
+    dim_y = image.voxel_dim_y or 1.0
+    dim_z = image.voxel_dim_z or 1.0
+
+    if settings.cell_size_hint != 0:
+        scale_x = _TARGET_CELL_SIZE / settings.cell_size_hint * dim_x
+        scale_y = _TARGET_CELL_SIZE / settings.cell_size_hint * dim_y
+        scale_z = _TARGET_CELL_SIZE / settings.cell_size_hint * dim_z
     else:
-        scale_x = scale_y = scale_z = 1
+        scale_x = scale_y = scale_z = settings.scaling or 1.0
+        z_ratio = dim_z / dim_x
+        scale_z = scale_z * z_ratio
 
     logging.debug(f"Requested rescaling factor is {(scale_z, scale_y, scale_x)}")
 
@@ -53,46 +56,35 @@ def process_input(msg):
 
 
 def process_result(preds, is3d):
-    msg = lacss_pb2.PolygonResult()
-
-    scores = preds["pred_scores"]
-    if is3d:
-        bboxes = preds["pred_bboxes"]
-        centroids = bboxes.reshape(-1, 2, 3).mean(1)
-
-        for loc, score in zip(centroids, preds["pred_scores"]):
-            polygon_msg = lacss_pb2.Polygon()
-            polygon_msg.score = score
-            point = lacss_pb2.Point()
-            point.z, point.y, point.x = loc
-            polygon_msg.points.append(point)
-
-            msg.polygons.append(polygon_msg)
-
-        # from skimage.measure import regionprops
-        # label = preds["pred_label"].astype(int)
-
-        # for rp, score in zip(regionprops(label), scores):
-        #     polygon_msg = lacss_pb2.Polygon()
-        #     polygon_msg.score = score
-        #     point = lacss_pb2.Point()
-        #     point.z, point.y, point.x = rp.centroid
-        #     polygon_msg.points.append(point)
-    
-        #     msg.polygons.append(polygon_msg)
+    msg = lacss_pb2.Results()
+    if not is3d:
+        for polygon, score in zip(preds["pred_contours"], preds["pred_scores"]):
+            if len(polygon) == 0:
+                continue
+            roi = lacss_pb2.Roi()
+            roi.polygon.score = score
+            for p in polygon:
+                roi.polygon.points.append(lacss_pb2.Point(
+                    x=p[0],
+                    y=p[1]
+                ))
+            msg.rois.append(roi)
 
     else:
-        polygons = preds["pred_contours"]
-        for polygon, score in zip(polygons, scores):
-            if len(polygon) > 0:
-                polygon_msg = lacss_pb2.Polygon()
-                polygon_msg.score = score
-                for p in polygon:
-                    point = lacss_pb2.Point()
-                    point.x = p[0]
-                    point.y = p[1]
-                    polygon_msg.points.append(point)
-                msg.polygons.append(polygon_msg)
+        for mesh, score in zip(preds["pred_contours"], preds["pred_scores"]):
+            roi = lacss_pb2.Roi()
+            roi.mesh.score = score
+            for v in mesh['verts']:
+                point = lacss_pb2.Point(
+                    z = v[0], y = v[1], x = v[2]
+                )
+                roi.mesh.verts.append(point)
+            for f in mesh['faces']:
+                roi.mesh.faces.append(f[0])
+                roi.mesh.faces.append(f[1])
+                roi.mesh.faces.append(f[2])
+
+            msg.rois.append(roi)
 
     return msg
 
@@ -116,34 +108,48 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
 class LacssServicer(lacss_pb2_grpc.LacssServicer):
     def __init__(self, model):
         self.model = model
+        self._lock = threading.RLock()
 
     def RunDetection(self, request, context):
-        img, shape_hint = process_input(request)
-        settings = request.settings
-        is3d = img.ndim == 4
+        with self._lock:
+            img, shape_hint = process_input(request)
+            settings = request.settings
+            is3d = img.ndim == 4
 
-        logging.debug(f"received image {img.shape}")
+            is_img_too_big = is3d and max(shape_hint) > 256
+            is_img_too_big |= (not is3d) and max(shape_hint) > 1088
+            if is_img_too_big:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "image size exeeds limit")
 
-        # dont' reshape image if the request is almost same as the orginal 
-        rel_diff = np.abs(np.array(shape_hint) / img.shape[:-1] - 1)
-        if (rel_diff < 0.1).all():
-            shape_hint = None 
+            logging.debug(f"received image {img.shape}")
 
-        preds = self.model.predict(
-            img,
-            reshape_to = shape_hint,
-            min_area=settings.min_cell_area,
-            nms_iou=settings.nms_iou,
-            score_threshold=settings.detection_threshold,
-            segmentation_threshold=settings.segmentation_threshold,
-            output_type="bbox" if is3d else "contour" ,
-        )
+            # dont' reshape image if the request is almost same as the orginal 
+            rel_diff = np.abs(np.array(shape_hint) / img.shape[:-1] - 1)
+            if (rel_diff < 0.1).all():
+                shape_hint = None
 
-        result = process_result(preds, is3d)
+            try:
+                preds = self.model.predict(
+                    img,
+                    reshape_to = shape_hint,
+                    min_area=settings.min_cell_area,
+                    nms_iou=settings.nms_iou,
+                    score_threshold=settings.detection_threshold,
+                    segmentation_threshold=settings.segmentation_threshold,
+                    output_type="contour",
+                )
 
-        logging.debug(f"Reply with message of size {result.ByteSize()}")
+                results = process_result(preds, is3d)
 
-        return result
+                logging.debug(f"Reply with message of size {results.ByteSize()}")
+
+                return results
+
+            except Exception as e:
+
+                logging.error(f"prediction failed: {repr(e)}")
+
+                context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
 
 
 def get_predictor(modelpath):
@@ -154,11 +160,13 @@ def get_predictor(modelpath):
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
     model.module.detector.max_output = 512  # FIXME good default?
-    model.module.detector.min_score = 0.2
+    model.module.detector.min_score = 0.05
 
     logging.debug(f"lacss_server: precompile for most common shapes")
-    _ = model.predict(np.ones([544,544,3]))
-    _ = model.predict(np.ones([64,256,256,3]))
+
+    _ = model.predict(np.ones([512,512,3]))
+    _ = model.predict(np.ones([1088,1088,3]))
+    _ = model.predict(np.ones([256,256,256,3]))
 
     return model
 
@@ -190,12 +198,14 @@ def main(
         show_urls()
         return
 
+    print ("server starting ...")
+
     model = get_predictor(modelpath)
 
     logging.info(f"lacss_server: default backend is {jax.default_backend()}")
 
     if jax.default_backend() == "cpu":
-        logging.warn(
+        logging.warning(
             f"lacss_server: WARNING: No GPU configuration. This might be very slow ..."
         )
 
@@ -204,7 +214,7 @@ def main(
     if token:
         import secrets
 
-        token = secrets.token_urlsafe(32)
+        token = secrets.token_urlsafe(64)
 
         print()
         print("COPY THE TOKEN BELOW FOR ACCESS.")
@@ -230,6 +240,8 @@ def main(
         server.add_insecure_port(f"{ip}:{port}")
 
     logging.info(f"lacss_server: listening on port {port}")
+
+    print ("server starting ... ready")
 
     server.start()
     server.wait_for_termination()

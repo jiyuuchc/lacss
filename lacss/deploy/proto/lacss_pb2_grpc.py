@@ -17,7 +17,7 @@ class LacssStub(object):
         self.RunDetection = channel.unary_unary(
                 '/trackmate.lacss.Lacss/RunDetection',
                 request_serializer=lacss__pb2.Input.SerializeToString,
-                response_deserializer=lacss__pb2.PolygonResult.FromString,
+                response_deserializer=lacss__pb2.Results.FromString,
                 )
 
 
@@ -36,7 +36,7 @@ def add_LacssServicer_to_server(servicer, server):
             'RunDetection': grpc.unary_unary_rpc_method_handler(
                     servicer.RunDetection,
                     request_deserializer=lacss__pb2.Input.FromString,
-                    response_serializer=lacss__pb2.PolygonResult.SerializeToString,
+                    response_serializer=lacss__pb2.Results.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -61,6 +61,6 @@ class Lacss(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/trackmate.lacss.Lacss/RunDetection',
             lacss__pb2.Input.SerializeToString,
-            lacss__pb2.PolygonResult.FromString,
+            lacss__pb2.Results.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

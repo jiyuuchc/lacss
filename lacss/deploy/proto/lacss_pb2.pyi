@@ -61,26 +61,6 @@ class Input(_message.Message):
     image: Image
     def __init__(self, settings: _Optional[_Union[Settings, _Mapping]] = ..., image: _Optional[_Union[Image, _Mapping]] = ...) -> None: ...
 
-class Label(_message.Message):
-    __slots__ = ("height", "width", "depth", "data")
-    HEIGHT_FIELD_NUMBER: _ClassVar[int]
-    WIDTH_FIELD_NUMBER: _ClassVar[int]
-    DEPTH_FIELD_NUMBER: _ClassVar[int]
-    DATA_FIELD_NUMBER: _ClassVar[int]
-    height: int
-    width: int
-    depth: int
-    data: bytes
-    def __init__(self, height: _Optional[int] = ..., width: _Optional[int] = ..., depth: _Optional[int] = ..., data: _Optional[bytes] = ...) -> None: ...
-
-class Result(_message.Message):
-    __slots__ = ("score", "label")
-    SCORE_FIELD_NUMBER: _ClassVar[int]
-    LABEL_FIELD_NUMBER: _ClassVar[int]
-    score: Label
-    label: Label
-    def __init__(self, score: _Optional[_Union[Label, _Mapping]] = ..., label: _Optional[_Union[Label, _Mapping]] = ...) -> None: ...
-
 class Point(_message.Message):
     __slots__ = ("x", "y", "z")
     X_FIELD_NUMBER: _ClassVar[int]
@@ -99,8 +79,30 @@ class Polygon(_message.Message):
     points: _containers.RepeatedCompositeFieldContainer[Point]
     def __init__(self, score: _Optional[float] = ..., points: _Optional[_Iterable[_Union[Point, _Mapping]]] = ...) -> None: ...
 
-class PolygonResult(_message.Message):
-    __slots__ = ("polygons",)
-    POLYGONS_FIELD_NUMBER: _ClassVar[int]
-    polygons: _containers.RepeatedCompositeFieldContainer[Polygon]
-    def __init__(self, polygons: _Optional[_Iterable[_Union[Polygon, _Mapping]]] = ...) -> None: ...
+class Mesh(_message.Message):
+    __slots__ = ("score", "verts", "faces", "normals", "values")
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    VERTS_FIELD_NUMBER: _ClassVar[int]
+    FACES_FIELD_NUMBER: _ClassVar[int]
+    NORMALS_FIELD_NUMBER: _ClassVar[int]
+    VALUES_FIELD_NUMBER: _ClassVar[int]
+    score: float
+    verts: _containers.RepeatedCompositeFieldContainer[Point]
+    faces: _containers.RepeatedScalarFieldContainer[int]
+    normals: _containers.RepeatedCompositeFieldContainer[Point]
+    values: _containers.RepeatedScalarFieldContainer[float]
+    def __init__(self, score: _Optional[float] = ..., verts: _Optional[_Iterable[_Union[Point, _Mapping]]] = ..., faces: _Optional[_Iterable[int]] = ..., normals: _Optional[_Iterable[_Union[Point, _Mapping]]] = ..., values: _Optional[_Iterable[float]] = ...) -> None: ...
+
+class Roi(_message.Message):
+    __slots__ = ("polygon", "mesh")
+    POLYGON_FIELD_NUMBER: _ClassVar[int]
+    MESH_FIELD_NUMBER: _ClassVar[int]
+    polygon: Polygon
+    mesh: Mesh
+    def __init__(self, polygon: _Optional[_Union[Polygon, _Mapping]] = ..., mesh: _Optional[_Union[Mesh, _Mapping]] = ...) -> None: ...
+
+class Results(_message.Message):
+    __slots__ = ("rois",)
+    ROIS_FIELD_NUMBER: _ClassVar[int]
+    rois: _containers.RepeatedCompositeFieldContainer[Roi]
+    def __init__(self, rois: _Optional[_Iterable[_Union[Roi, _Mapping]]] = ...) -> None: ...
