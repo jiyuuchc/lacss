@@ -107,45 +107,53 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
         return cls.get_base_model(dtype=dtype)
 
     @classmethod
-    def get_tiny_model(cls, dtype=None):
-        return cls(
-            backbone=Backbone(
-                "tiny", 
-                out_dim = 256,
-                layers_det = (192,192,192,192),
-                layers_seg = (192,192,192,48),
-                dtype=dtype,
-            ),
-            detector=LPN(dtype=dtype),
-            segmentor=Segmentor(dtype=dtype),
-        )
-
-    @classmethod
     def get_small_model(cls, dtype=None):
         return cls(
             backbone=Backbone(
                 "tiny", 
-                out_dim = 512, 
-                layers_det = (384,384,384,384),
-                layers_seg = (384,384,384,64),
-                dtype=dtype
+                fpn_dim = 384,
+                out_dim = 256,
+                dtype=dtype,
             ),
             detector=LPN(dtype=dtype),
-            segmentor=Segmentor(dtype=dtype),
+            segmentor=Segmentor(
+                patch_dim = 32,
+                sig_dim = 512,
+                pos_emb_shape=(16,16,4), 
+                dtype=dtype,
+            ),
+            detector_3d=LPN3D(dim=384, dtype=self.dtype),
+            segmentor_3d=Segmentor3D(
+                patch_dim=48, 
+                sig_dim=1024, 
+                pos_emb_shape=(8,8,8,4),
+                dtype=self.dtype,
+            ),
         )
 
     @classmethod
     def get_base_model(cls, dtype=None):
         return cls(
             backbone=Backbone(
-                "small", 
-                out_dim = 512, 
-                layers_det = (512,512,512,512),
-                layers_seg = (512,512,512,64),
+                "base_v2",
+                fpn_dim = 512, 
+                out_dim = 384, 
                 dtype=dtype
             ),
             detector=LPN(dtype=dtype),
-            segmentor=Segmentor(pos_emb_shape=(16,16,8), dtype=dtype)
+            segmentor=Segmentor(
+                patch_dim=64, 
+                sig_dim=768, 
+                pos_emb_shape=(16,16,6), 
+                dtype=dtype,
+            ),
+            detector_3d=LPN3D(dim=512, dtype=self.dtype),
+            segmentor_3d=Segmentor3D(
+                patch_dim=64, 
+                sig_dim=1384, 
+                pos_emb_shape=(8,8,8,6),
+                dtype=self.dtype,
+            ),
         )
 
 
@@ -153,14 +161,25 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
     def get_large_model(cls, dtype=None):
         return cls(
             backbone=Backbone(
-                "base", 
-                out_dim = 768, 
-                layers_det = (768,768,768,768),
-                layers_seg = (768,768,768,64),
+                "large_v2", 
+                fpn_dim = 768,
+                out_dim = 512, 
                 dtype=dtype
             ),
             detector=LPN(dtype=dtype),
-            segmentor=Segmentor(pos_emb_shape=(16,16,8), dtype=dtype),
+            segmentor=Segmentor(
+                patch_dim=96,
+                sig_dim=1024,
+                pos_emb_shape=(16,16,8),
+                dtype=dtype,
+            ),
+            detector_3d=LPN3D(dim=768, dtype=self.dtype),
+            segmentor_3d=Segmentor3D(
+                patch_dim=96, 
+                sig_dim=2048, 
+                pos_emb_shape=(8,8,8,8),
+                dtype=self.dtype,
+            ),
         )
 
     @classmethod
@@ -171,7 +190,5 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
             return cls.get_small_model(dtype=dtype)
         elif config == "large":
             return cls.get_large_model(dtype=dtype)
-        elif config == "tiny":
-            return cls.get_tiny_model(dtype=dtype)
         else:
             raise ValueError(f"Unkown model config {config}")

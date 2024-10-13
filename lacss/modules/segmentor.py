@@ -22,6 +22,8 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
     """
     feature_scale: int = 4
     instance_crop_size: int = 96
+    patch_dim: int = 32
+    sig_dim: int = 512
     pos_emb_shape: Sequence[int] = (16, 16, 4)
     dtype: Any = None
 
@@ -29,7 +31,9 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
     def patch_size(self):
         return self.instance_crop_size // self.feature_scale
 
-    def _get_patch(self, feature, locations):
+    def _get_patch(self, feature, locations)->tuple[Array, Array]:
+        feature = nn.Conv(self.patch_dim, (3,3), dtype=self.dtype)(feature)
+
         patch_shape = (self.patch_size, self.patch_size)
         locations = locations.astype(int) - jnp.asarray(patch_shape) // 2  # so we can use loc for indexing
         coords = jnp.mgrid[:patch_shape[0], :patch_shape[1]] + locations[..., None, None] # N, 2, PS, PS
@@ -44,31 +48,29 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
         )
         return patches, locations
 
+
     def _get_signiture(self, patches):
-        w = self.patch_size // 4
+        bw = self.patch_size // 4
         n, _, _, n_ch = patches.shape
         x = jax.image.resize(
-            patches[:, w:-w, w:-w, :],
+            patches[:, bw:-bw, bw:-bw, :],
             (n, 8, 8, n_ch),
             "linear",
         ).reshape(n, -1)
 
-        dim = math.prod(self.pos_emb_shape)
-        x = nn.LayerNorm(dtype=self.dtype)(nn.Dense(dim, dtype=self.dtype)(x))
+        x = nn.LayerNorm(dtype=self.dtype)(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
 
         return x
 
 
     def _add_pos_encoding(self, patches, sig_vec):
         x = sig_vec
-        dim = x.shape[-1]
+        x = nn.gelu(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
+        x = nn.gelu(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
 
-        x = nn.gelu(nn.Dense(dim, dtype=self.dtype)(x))
-        x = nn.gelu(nn.Dense(dim, dtype=self.dtype)(x))
-        x = nn.Dense(dim, dtype=self.dtype)(x)
-
+        x = nn.Dense(math.prod(self.pos_emb_shape), dtype=self.dtype)(x)
         x = jax.image.resize(
-            x.reshape((-1,) + self.pos_emb_shape),
+            x.reshape(-1, *self.pos_emb_shape),
             (patches.shape[0], self.patch_size, self.patch_size, self.pos_emb_shape[-1]),
             "linear",
         )
@@ -95,9 +97,9 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
               * predictions/segmentation_x0_coord: x coord of patch top-left corner [N]
               * predictions/segmentation_is_valid: mask for valid patches [N]
         """
-        locations = locations / self.feature_scale
+        locations = jnp.asarray(locations) / self.feature_scale
 
-        x = feature
+        x = jnp.asarray(feature)
 
         patches, patch_locs = self._get_patch(x, locations) # N, PS, PS, ch
 

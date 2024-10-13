@@ -14,11 +14,12 @@ from .video_integrator import VideoIntegrator
 class Backbone(nn.Module, DefaultUnpicklerMixin):
     base_type: str = "tiny"
     patch_size: int = 4
+    fpn_dim: int = 384
     out_dim: int = 256
     det_layer: int = 0
     seg_layer: int = 0
-    layers_det: tuple[int,...] = (192,192,192,192)
-    layers_seg: tuple[int,...] = (192,192,192,48)
+    n_layers_det: int = 4
+    n_layers_seg: int = 3
     drop_path_rate: float=0.4
     activation: Callable[[ArrayLike], Array]=nn.gelu
     deterministic: bool|None = None
@@ -69,20 +70,21 @@ class Backbone(nn.Module, DefaultUnpicklerMixin):
         if video_refs is not None:
             x = VideoIntegrator(dtype=self.dtype)(x, video_refs, deterministic=deterministic)
 
-        x = FPN(self.out_dim, activation=self.activation, dtype=self.dtype)(x)
+        x = FPN(self.fpn_dim, activation=self.activation, dtype=self.dtype)(x)
 
         self.sow("intermediates", "decoder", x)
 
         x_det = x[self.det_layer]
-        for dim in self.layers_det:
-            x_det = nn.Conv(dim, (3,3), dtype=self.dtype)(x_det)
-            x_det = nn.gelu(nn.GroupNorm(dtype=self.dtype)(x_det))
+        for _ in range(self.n_layers_det):
+            y = nn.Conv(self.out_dim, (3,3), dtype=self.dtype)(x_det)
+            y = nn.GroupNorm(dtype=self.dtype)(y)
+            x_det = nn.gelu(y)
 
         x_seg = x[self.seg_layer]
-        for dim in self.layers_seg[:-1]:
-            x_seg = nn.Conv(dim, (3,3), dtype=self.dtype)(x_seg)
-            x_seg = nn.gelu(nn.GroupNorm(dtype=self.dtype)(x_seg))
-        x_seg = nn.Conv(self.layers_seg[-1], (3,3), dtype=self.dtype)(x_seg)
+        for _ in range(self.n_layers_seg):
+            y = nn.Conv(self.out_dim, (3,3), dtype=self.dtype)(x_seg)
+            y = nn.GroupNorm(dtype=self.dtype)(y)
+            x_seg = nn.gelu(y)
 
         if image.ndim == 3:
             x_det = x_det.squeeze(0)
@@ -91,7 +93,7 @@ class Backbone(nn.Module, DefaultUnpicklerMixin):
         return x_det, x_seg
 
 
-    def __call__(self, image:ArrayLike, video_refs:tuple|None=None, deterministic:bool=True):
+    def __call__(self, image:ArrayLike, video_refs:tuple|None=None, deterministic:bool|None=True):
         image = jnp.asarray(image)
         if deterministic is None:
             deterministic = self.deterministic
@@ -105,7 +107,7 @@ class Backbone(nn.Module, DefaultUnpicklerMixin):
                     return None
                 else:
                     return (vf[0][axis], vf[1])
-            
+
             img_shape = image.shape
             image_ = image
             image_ = image_.reshape((-1, self.patch_size) + img_shape[1:]).mean(axis=1)

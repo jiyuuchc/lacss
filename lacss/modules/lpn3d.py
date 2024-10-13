@@ -23,6 +23,7 @@ class LPN3D(nn.Module, DefaultUnpicklerMixin):
 
     # network hyperparams
     n_layers: int = 2
+    dim: int = 384
     feature_scale: int = 4
     dtype: Any = None
 
@@ -32,8 +33,9 @@ class LPN3D(nn.Module, DefaultUnpicklerMixin):
     max_output: int = 256
     min_score: float = 0.2
 
-    def _block(self, feature: ArrayLike) -> dict:
+    def _block(self, feature: Array) -> dict:
         x = feature
+
         depth, height, width = x.shape[:-1]
 
         logits = nn.Conv(1, (1, 1), dtype=self.dtype)(x)
@@ -50,9 +52,9 @@ class LPN3D(nn.Module, DefaultUnpicklerMixin):
         )
 
 
-    def _mix_feaures(self, feature: ArrayLike) -> Array:
+    def _mix_feaures(self, feature: Array) -> Array:
         x = feature
-        dim = x.shape[-1] // 3
+        dim = self.dim
         for _ in range(self.n_layers):
             x = nn.Conv(dim, (3,3,3), dtype=self.dtype)(x)
             x = nn.gelu(x)
@@ -61,6 +63,8 @@ class LPN3D(nn.Module, DefaultUnpicklerMixin):
 
     @nn.compact
     def __call__(self, feature: ArrayLike, mask: ArrayLike|None = None) -> dict:
+        feature = jnp.asarray(feature)
+
         x = self._mix_feaures(feature)
         x = self._block(x)
         predictions = generate_predictions(self, x)

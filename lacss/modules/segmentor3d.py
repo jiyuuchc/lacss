@@ -20,12 +20,13 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         instance_crop_size: Crop size for segmentation.
         pos_emb_shape: Dim of the learned position encoder.
     """
-    n_layers: int = 2
+    n_layers: int = 1
+
     feature_scale: int = 4
     instance_crop_size: int = 96
+    patch_dim: int = 48
     sig_dim: int = 1024
-    pos_emb_res: int = 16
-    pos_emb_dim: int = 4
+    pos_emb_shape: Sequence[int] = (8, 8, 8, 4)
     dtype: Any = None
 
     @property
@@ -48,10 +49,10 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         return patches, locations
 
     def _get_signiture(self, patches):
-        w = self.patch_size // 4
+        bw = self.patch_size // 4
         n, _, _, _, n_ch = patches.shape
         x = jax.image.resize(
-            patches[:, w:-w, w:-w, w:-w, :],
+            patches[:, bw:-bw, bw:-bw, bw:-bw, :],
             (n, 4, 4, 4, n_ch),
             "linear",
         ).reshape(n, -1)
@@ -67,25 +68,34 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         x = nn.gelu(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
         x = nn.gelu(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
 
-        xa_dim = self.pos_emb_res * self.pos_emb_res * self.pos_emb_dim
-        xa = nn.Dense(xa_dim, dtype=self.dtype)(x)
-        xa = jax.image.resize(
-            xa.reshape(-1, self.pos_emb_res, self.pos_emb_res, self.pos_emb_dim),
-            (xa.shape[0], self.patch_size, self.patch_size, self.pos_emb_dim),
+        x = nn.Dense(math.prod(self.pos_emb_shape), dtype=self.dtype)(x)
+        x = jax.image.resize(
+            x.reshape(-1, *self.pos_emb_shape),
+            (patches.shape[0], self.patch_size, self.patch_size, self.patch_size, self.pos_emb_shape[-1]),
             "linear",
         )
-        xa = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(xa) #[n, ps, ps, dim]
 
-        xb_dim = self.pos_emb_res * self.pos_emb_dim
-        xb = nn.Dense(xb_dim, dtype=self.dtype)(x)
-        xb = jax.image.resize(
-            xb.reshape(-1, self.pos_emb_res, self.pos_emb_dim),
-            (xa.shape[0], self.patch_size, self.pos_emb_dim),
-            "linear",
-        )
-        xb = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(xb) #[n, ps, dim]
+        encoding = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(x) #[n, ps, ps, ps, dim]
 
-        encoding = xa[:, None, :, :, :] + xb[:, :, None, None, :]
+        # xa_dim = self.pos_emb_res * self.pos_emb_res * self.pos_emb_dim
+        # xa = nn.Dense(xa_dim, dtype=self.dtype)(x)
+        # xa = jax.image.resize(
+        #     xa.reshape(-1, self.pos_emb_res, self.pos_emb_res, self.pos_emb_dim),
+        #     (xa.shape[0], self.patch_size, self.patch_size, self.pos_emb_dim),
+        #     "linear",
+        # )
+        # xa = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(xa) #[n, ps, ps, dim]
+
+        # xb_dim = self.pos_emb_res * self.pos_emb_dim
+        # xb = nn.Dense(xb_dim, dtype=self.dtype)(x)
+        # xb = jax.image.resize(
+        #     xb.reshape(-1, self.pos_emb_res, self.pos_emb_dim),
+        #     (xa.shape[0], self.patch_size, self.pos_emb_dim),
+        #     "linear",
+        # )
+        # xb = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(xb) #[n, ps, dim]
+
+        # encoding = xa[:, None, :, :, :] + xb[:, :, None, None, :]
 
         patches = jax.nn.relu(patches + encoding)
 
@@ -110,8 +120,8 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         locations = locations / self.feature_scale
 
         x = feature
-        dim = x.shape[-1] // 3
-        for _ in range(self.n_layers - 1):
+        dim = self.patch_dim
+        for _ in range(self.n_layers):
             x = nn.Conv(dim, (3,3,3), dtype=self.dtype)(x)
             x = nn.gelu(x)
         x = nn.Conv(dim, (3,3,3), dtype=self.dtype)(x)
