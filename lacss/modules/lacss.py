@@ -122,12 +122,12 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
                 pos_emb_shape=(16,16,4), 
                 dtype=dtype,
             ),
-            detector_3d=LPN3D(dim=384, dtype=self.dtype),
+            detector_3d=LPN3D(dim=384, dtype=dtype),
             segmentor_3d=Segmentor3D(
                 patch_dim=48, 
                 sig_dim=1024, 
                 pos_emb_shape=(8,8,8,4),
-                dtype=self.dtype,
+                dtype=dtype,
             ),
         )
 
@@ -147,12 +147,12 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
                 pos_emb_shape=(16,16,6), 
                 dtype=dtype,
             ),
-            detector_3d=LPN3D(dim=512, dtype=self.dtype),
+            detector_3d=LPN3D(dim=512, dtype=dtype),
             segmentor_3d=Segmentor3D(
                 patch_dim=64, 
                 sig_dim=1384, 
                 pos_emb_shape=(8,8,8,6),
-                dtype=self.dtype,
+                dtype=dtype,
             ),
         )
 
@@ -173,12 +173,12 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
                 pos_emb_shape=(16,16,8),
                 dtype=dtype,
             ),
-            detector_3d=LPN3D(dim=768, dtype=self.dtype),
+            detector_3d=LPN3D(dim=768, dtype=dtype),
             segmentor_3d=Segmentor3D(
                 patch_dim=96, 
                 sig_dim=2048, 
                 pos_emb_shape=(8,8,8,8),
-                dtype=self.dtype,
+                dtype=dtype,
             ),
         )
 
