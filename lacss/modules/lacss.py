@@ -58,6 +58,8 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
                 outputs = deep_update(outputs, segmentor_out)
 
         else:
+            if self.detector_3d is None:
+                raise(ValueError("not a 3d detector"))
             outputs = self.detector_3d(x_det, mask=image_mask)
 
             if self.segmentor_3d is not None:
@@ -92,9 +94,14 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
             return cls.get_preconfigued(config)
 
         else:
+            backbone = _build_sub_module(Backbone, "backbone")
+            detector = _build_sub_module(LPN, "detector")
+
+            assert backbone is not None and detector is not None, f"invalid config"
+
             obj = Lacss(
-                backbone=_build_sub_module(Backbone, "backbone"),
-                detector=_build_sub_module(LPN, "detector"),
+                backbone=backbone,
+                detector=detector,
                 segmentor=_build_sub_module(Segmentor, "segmentor"),
                 detector_3d = _build_sub_module(LPN3D, "detector_3d"),
                 segmentor_3d = _build_sub_module(Segmentor3D, "segmentor_3d"),

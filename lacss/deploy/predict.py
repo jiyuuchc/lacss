@@ -376,12 +376,12 @@ class Predictor:
                 )                
 
         else:  # Label
-            label = np.asarray(patches_to_label(
+            label = patches_to_label(
                 preds, reshape_to,
                 mask=instance_mask,
                 score_threshold=0,
                 threshold=seg_logit_threshold,
-            ))
+            )
             if not (scaling == 1.0).all():
                 label = jax.image.resize(
                     label, orig_shape, "nearest",
@@ -389,7 +389,7 @@ class Predictor:
 
             results = dict(
                 pred_scores=np.asarray(scores)[instance_mask],
-                pred_label=label,
+                pred_label=np.asarray(label),
             )
 
         elapsed = (time.time() - start_time) * 1000
