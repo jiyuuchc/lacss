@@ -160,9 +160,10 @@ def run_training(_):
 
     print("=========MODEL===========")
     if _FLAGS.resume:
-        with open(logpath / "model.pkl", "rb") as f:
-            model = pickle.load(f)
-        init_vars = None
+        with ocp.CheckpointManager(Path(_FLAGS.logpath).absolute()) as mng:
+            latest = mng.latest_step()
+        model, params = load_from_pretrained(Path(_FLAGS.logpath)/str(latest))
+        init_vars = dict(params=params)
 
     elif _FLAGS.initfrom is not None:
         model, params = load_from_pretrained(Path(_FLAGS.initfrom))
@@ -232,7 +233,7 @@ def run_training(_):
         options=options,
     ) as cpm:
         if _FLAGS.resume:
-            train_it = cpm.restore(cpm.latest_step(), train_it)
+            train_it = cpm.restore(cpm.latest_step(), items=train_it)
             logging.info(f"restored checkpoint from {cpm.latest_step()}")
             wandb.config["checkpoint"] = cpm.latest_step()
         elif "param_override" in config.train:
