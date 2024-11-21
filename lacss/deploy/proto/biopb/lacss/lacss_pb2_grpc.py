@@ -5,6 +5,7 @@ import warnings
 
 from biopb.lacss import detection_request_pb2 as biopb_dot_lacss_dot_detection__request__pb2
 from biopb.lacss import detection_response_pb2 as biopb_dot_lacss_dot_detection__response__pb2
+from google.protobuf import any_pb2 as google_dot_protobuf_dot_any__pb2
 
 GRPC_GENERATED_VERSION = '1.66.2'
 GRPC_VERSION = grpc.__version__
@@ -45,13 +46,25 @@ class LacssStub(object):
                 request_serializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
                 response_deserializer=biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.FromString,
                 _registered_method=True)
+        self.RunDetectionOnGrid = channel.stream_unary(
+                '/biopb.lacss.Lacss/RunDetectionOnGrid',
+                request_serializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
+                response_deserializer=biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.FromString,
+                _registered_method=True)
+        self.RunModelAdaptation = channel.stream_unary(
+                '/biopb.lacss.Lacss/RunModelAdaptation',
+                request_serializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_any__pb2.Any.FromString,
+                _registered_method=True)
 
 
 class LacssServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def RunDetection(self, request, context):
-        """Unitary call for computing cell detection / segmentation
+        """Implementing the `RunDetection` call is mandatory. The rest are optional. 
+
+        Unitary call for computing cell detection / segmentation. 
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -69,6 +82,29 @@ class LacssServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RunDetectionOnGrid(self, request_iterator, context):
+        """Send the image dataset as a stream of (partially overlapping) image
+        patches, instead of one large chunk of binary data. There are two use
+        cases for this call: (1) The image dataset is too large therefore sending
+        all data in one message would exceed GRPC message size limit; (2) The
+        original data were taken as a grid scan so it is convinent to read/write
+        as patches.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunModelAdaptation(self, request_iterator, context):
+        """Run model adaptation based on the submitted stream of DetectionReqeust,
+        which may or may not contain ROI annotations. The all returns an opaque
+        data strcuture representing the model configuration after model
+        adaptation, which in turn should be included in future inference reuest
+        as a DetectionSetting field.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LacssServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -81,6 +117,16 @@ def add_LacssServicer_to_server(servicer, server):
                     servicer.RunDetectionStream,
                     request_deserializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.FromString,
                     response_serializer=biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.SerializeToString,
+            ),
+            'RunDetectionOnGrid': grpc.stream_unary_rpc_method_handler(
+                    servicer.RunDetectionOnGrid,
+                    request_deserializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.FromString,
+                    response_serializer=biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.SerializeToString,
+            ),
+            'RunModelAdaptation': grpc.stream_unary_rpc_method_handler(
+                    servicer.RunModelAdaptation,
+                    request_deserializer=biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_any__pb2.Any.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -137,6 +183,60 @@ class Lacss(object):
             '/biopb.lacss.Lacss/RunDetectionStream',
             biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
             biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunDetectionOnGrid(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/biopb.lacss.Lacss/RunDetectionOnGrid',
+            biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
+            biopb_dot_lacss_dot_detection__response__pb2.DetectionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunModelAdaptation(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/biopb.lacss.Lacss/RunModelAdaptation',
+            biopb_dot_lacss_dot_detection__request__pb2.DetectionRequest.SerializeToString,
+            google_dot_protobuf_dot_any__pb2.Any.FromString,
             options,
             channel_credentials,
             insecure,
