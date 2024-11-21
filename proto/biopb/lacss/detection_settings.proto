@@ -5,6 +5,7 @@ package biopb.lacss;
 option java_package = "biopb.lacss";
 option java_multiple_files = true;
 
+import "google/protobuf/any.proto";
 
 message DetectionSettings {
 
@@ -44,4 +45,15 @@ message DetectionSettings {
     
     }
 
+    // Specify the model name for servers that support more than one model
+    // variants.
+    string model_name = 8;
+
+
+    // An opaque data structure that specify a server side model configuration.
+    // An important use case is to perform few-shot model adaptations. The model
+    // adaptation call returns a new model configuration. This stucture should
+    // be included in all new inference requests, so that the server understand
+    // that it should perform computation using the adapted model.
+    google.protobuf.Any model_configuration = 9;
 }

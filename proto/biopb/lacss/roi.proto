@@ -75,14 +75,15 @@ message Mesh {
         uint32 p1 = 1;
         uint32 p2 = 2;
         uint32 p3 = 3;
+
+        // Optionally one can cache the computed normal vectors here
+        repeated Point normals = 4;
+    
+        // Optionally one can cache the associated face values here
+        repeated float values = 5;
+
     }
     repeated Face faces = 2;
-
-    // Optionally one can cache the computed normal vectors here
-    repeated Point normals = 3;
-
-    // Optionally one can cache the associated face values here
-    repeated float values = 4;
 
 }
 

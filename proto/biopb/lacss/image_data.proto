@@ -49,13 +49,25 @@ message Pixels {
     // physical size unit, default "µm"
     string physical_size_unit = 17;
 
-    // TimeIncrement is used for time series that have a global timing
+    // time_increment is used for time series that have a global timing
     // specification instead of per-timepoint timing info. For example in a
     // video stream. Units are set by TimeIncrementUnit.
     optional float time_increment = 18;
 
     // time unit, default "s"
     string time_increment_unit = 21;
+
+    // for large image dataset, it is necessary to send a stream of image
+    // patches instead of one monolithic data structure of the whole dataset.
+    // The offset values allows one to specify the relative locations of each
+    // patch.
+    optional uint32 offset_x = 22;
+
+    optional uint32 offset_y = 23;
+
+    optional uint32 offset_z = 24;
+
+    optional uint32 offset_t = 25;
 
 }
 

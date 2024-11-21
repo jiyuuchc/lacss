@@ -5,4 +5,4 @@ A place for collecting protobuf definitions for bio-research data. Currently it 
 2. `biopb.lacss` A GRPC protocol for single-cell segmentation services, designed originally for the [Lacss](https://github.com/jiyuuchc/lacss/) project.
 
 ## Documentation
-[Documentation](https://jiyuuchc.github.io/lacss/)
+[Documentation](https://jiyuuchc.github.io/biopb/)

@@ -6,13 +6,18 @@ option java_package = "biopb.lacss";
 option java_multiple_files = true;
 
 
+import "google/protobuf/any.proto";
+
 import "biopb/lacss/detection_request.proto";
 import "biopb/lacss/detection_response.proto";
 
 service Lacss {
 
-    // Unitary call for computing cell detection / segmentation
+    // Implementing the `RunDetection` call is mandatory. The rest are optional. 
+
+    // Unitary call for computing cell detection / segmentation. 
     rpc RunDetection(DetectionRequest) returns (DetectionResponse) ;
+
 
     // The streaming version allows dynamic updating of the DetectionRequest and
     // getting updated results. For example, a client may request analyses at
@@ -21,6 +26,23 @@ service Lacss {
     // data anymore, but only the new parameter settings, which saves network
     // bandwidth.
     rpc RunDetectionStream(stream DetectionRequest) returns (stream DetectionResponse) ;
+
+
+    // Send the image dataset as a stream of (partially overlapping) image
+    // patches, instead of one large chunk of binary data. There are two use
+    // cases for this call: (1) The image dataset is too large therefore sending
+    // all data in one message would exceed GRPC message size limit; (2) The
+    // original data were taken as a grid scan so it is convinent to read/write
+    // as patches.
+    rpc RunDetectionOnGrid(stream DetectionRequest) returns (DetectionResponse) ;
+
+
+    // Run model adaptation based on the submitted stream of DetectionReqeust,
+    // which may or may not contain ROI annotations. The all returns an opaque
+    // data strcuture representing the model configuration after model
+    // adaptation, which in turn should be included in future inference reuest
+    // as a DetectionSetting field.
+    rpc RunModelAdaptation(stream DetectionRequest) returns (google.protobuf.Any) ;
 
 }
 
