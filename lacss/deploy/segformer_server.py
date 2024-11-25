@@ -14,6 +14,9 @@ import typer
 from . import proto
 from .common import decode_image, TokenValidationInterceptor
 
+from predict import *
+from predict import _normalize
+
 app = typer.Typer(pretty_exceptions_enable=False)
 
 _MAX_MSG_SIZE=1024*1024*128
@@ -23,7 +26,7 @@ def process_input(request: proto.DetectionRequest):
     pixels = request.image_data.pixels
     settings = request.detection_settings
 
-    image = decode_image(pixels)
+    image = decode_image(pixels).squeeze(0)
 
     return image
 
@@ -55,29 +58,35 @@ def process_result(masks, image):
 
 class SegformerServicer(proto.LacssServicer):
 
-    def __init__(self, mod, gpu, model_path, model_path2):
-        self.mod = mod
+    def __init__(self, gpu, model_path, model_path2):
         self.model_path = model_path
         self.model_path2 = model_path2
         self.device = "cuda:0" if gpu else "cpu"
         self._lock = threading.RLock()
 
     def predict(self, img_data):
-        hflip_tta = self.mod.HorizontalFlip()
-        vflip_tta = self.mod.VerticalFlip()
+        hflip_tta = HorizontalFlip()
+        vflip_tta = VerticalFlip()
 
         if img_data.shape[-1] == 1:
             img_data = np.repeat(img_data, 3, axis=-1)
         elif img_data.shape[-1] == 2:
             raise ValueError("Model accept either 1-channel or 3-channel images.")
 
-        img_data = self.mod._normalize(img_data)
+        H, W = img_data.shape[:2]
+        H1 = (H - 1) // 32 * 32 + 32
+        W1 = (W - 1) // 32 * 32 + 32
+        img_data = np.pad(img_data, [[0, H1-H], [0, W1-W], [0,0]])
+
+        img_data = _normalize(img_data)
+        img_data = img_data.astype("float32")
         img_data = np.moveaxis(img_data, -1, 0)
+        img_data = img_data[None, ...]
 
         model = torch.load(self.model_path, map_location=self.device)
         model.eval()
 
-        img_data = img_data.to(self.device)
+        img_data = torch.from_numpy(img_data).to(self.device)
         img_size = img_data.shape[-1] * img_data.shape[-2]
         
         if img_size < 1150000 and 900000 < img_size:
@@ -87,7 +96,7 @@ class SegformerServicer(proto.LacssServicer):
 
         with torch.no_grad():
             img0 = img_data
-            outputs0 = self.mod.sliding_window_inference(
+            outputs0 = sliding_window_inference(
                 img0,
                 512,
                 4,
@@ -105,7 +114,7 @@ class SegformerServicer(proto.LacssServicer):
                 model.eval()
                 
                 img2 = hflip_tta.apply_aug_image(img_data, apply=True)
-                outputs2 = self.mod.sliding_window_inference(
+                outputs2 = sliding_window_inference(
                     img2,
                     512,
                     4,
@@ -126,7 +135,7 @@ class SegformerServicer(proto.LacssServicer):
             else:
                 # Hflip TTA
                 img2 = hflip_tta.apply_aug_image(img_data, apply=True)
-                outputs2 = self.mod.sliding_window_inference(
+                outputs2 = sliding_window_inference(
                     img2,
                     512,
                     4,
@@ -150,7 +159,7 @@ class SegformerServicer(proto.LacssServicer):
                 model.eval()
                 
                 img1 = img_data
-                outputs1 = self.mod.sliding_window_inference(
+                outputs1 = sliding_window_inference(
                     img1,
                     512,
                     4,
@@ -164,7 +173,7 @@ class SegformerServicer(proto.LacssServicer):
                 
                 # Vflip TTA
                 img3 = vflip_tta.apply_aug_image(img_data, apply=True)
-                outputs3 = self.mod.sliding_window_inference(
+                outputs3 = sliding_window_inference(
                     img3,
                     512,
                     4,
@@ -184,7 +193,7 @@ class SegformerServicer(proto.LacssServicer):
                 outputs[1] = (outputs0[1] + outputs1[1] - outputs2[1] + outputs3[1]) / 4
                 outputs[2] = (outputs0[2] + outputs1[2] + outputs2[2] + outputs3[2]) / 4
                 
-            pred_mask = self.mod.post_process(outputs.squeeze(0).cpu().numpy(), self.device)
+            pred_mask = post_process(outputs.squeeze(0).cpu().numpy(), self.device)
 
             return pred_mask
 
@@ -198,7 +207,7 @@ class SegformerServicer(proto.LacssServicer):
                 image = process_input(request)
 
                 if image.ndim == 4:
-                    raise ValueError("Model does not support 3D input")
+                    raise ValueError(f"Model does not support 3D input, got shape {image.shape}")
 
                 logging.info(f"received image {image.shape}")
 
@@ -257,17 +266,16 @@ def main(
     debug: bool = False,
     compression: bool = True,
     gpu: bool = True,
-    predict_py_file: Path = "./predict.py",
     model_path : Path = "./main_model.pt",
-    model_path2 : Path = "./sub_model.pt"
+    model_path2 : Path = "./sub_model.pth"
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
     print ("server starting ...")
 
-    loader = importlib.machinery.SourceFileLoader('predict', predict_py_file)
-    mod = types.ModuleType( loader.name )
-    loader.exec_module(mod)
+    # loader = importlib.machinery.SourceFileLoader('predict', str(predict_py_file))
+    # mod = types.ModuleType( loader.name )
+    # loader.exec_module(mod)
 
     if token is None:
         token = not local
@@ -293,7 +301,7 @@ def main(
     )
 
     proto.add_LacssServicer_to_server(
-        SegformerServicer(mod, gpu, model_path, model_path2), 
+        SegformerServicer(gpu, model_path, model_path2), 
         server,
     )
 
