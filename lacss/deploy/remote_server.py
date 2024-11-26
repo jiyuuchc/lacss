@@ -10,7 +10,7 @@ import numpy as np
 import typer
 
 from . import proto
-from .common import get_dtype, decode_image, TokenValidationInterceptor
+from .common import get_dtype, decode_image, TokenValidationInterceptor, LacssServicerBase
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -60,7 +60,6 @@ def process_input(request: proto.DetectionRequest):
 
     return image, kwargs
 
-
 def process_result(preds, image) -> proto.DetectionResponse:
     response = proto.DetectionResponse()
 
@@ -96,14 +95,75 @@ def process_result(preds, image) -> proto.DetectionResponse:
     return response
 
 
-class LacssServicer(proto.LacssServicer):
+def _process_grid_input(request_iterator):
+    images, r0s = [], []
+    for k, request in enumerate(request_iterator):
+        pixels = request.image_data.pixels
+
+        if k ==0 :
+            image, kwargs = process_input(request)
+
+            if kwargs['reshape_to'] is None:
+                rel_diff = np.zeros([3])
+            else:
+                rel_diff = np.abs(np.array(reshape_to) / image.shape[:-1] - 1)
+                if (rel_diff < 0.1).all():
+                    rel_diff[:] = 0
+
+        else:
+            image, _ = process_input(request)
+
+        if image.ndim == 3:
+            image = image[None, ...]
+
+        r0 = np.array([
+            pixels.offset_z,
+            pixels.offset_y,
+            pixels.offset_x,
+        ], dtype=int)
+
+        r1 = r0 + image.shape[:3]
+        
+        if k == 0:
+            r_max = r1
+        else:
+            r_max = np.maximum(r_max, r1)
+        
+        images.append(image)
+
+        r0s.append(r0)
+    
+    full_image = np.zeros(r_max, dtype="float32")
+
+    for image, r0 in zip(images, r0s):
+        full_image[
+            r0[0]:r0[0] + image.shape[0],
+            r0[1]:r0[1] + image.shape[1],
+            r0[2]:r0[2] + image.shape[2],            
+        ] = image
+    
+    if len(rel_diff) == 2:
+        rel_diff = np.r_[0, rel_diff]
+    kwargs['reshape_to'] = np.round(
+        np.array(full_image.shape[:-1]) * (rel_diff + 1)
+    ).astype(int)
+
+    if full_image.shape[0] == 1:
+        full_image = full_image.squeeze(0)
+        kwargs['reshape_to'] = kwargs['reshape_to'][1:]
+
+    return full_image, kwargs
+
+
+class LacssServicer(LacssServicerBase):
 
     def __init__(self, model, max_image_size, max_image_size_3d):
+        super().__init__()
+
         self.model = model
         self.max_image_size = max_image_size
         self.max_image_size_3d = max_image_size_3d
 
-        self._lock = threading.RLock()
 
     def RunDetection(self, request, context):
         with self._lock:
@@ -158,23 +218,39 @@ class LacssServicer(proto.LacssServicer):
 
 
 
-    def RunDetectionStream(self, request_iterator, context):
-        with self._lock:
-            request = proto.DetectionRequest()
+    def RunDetectionOnGrid(self, request_iterator, context):
+        try:
+            image, kwargs = _process_grid_input(request_iterator)
 
-            for next_request in request_iterator:
+            logging.info(f"Received full image of size {image.shape[:-1]}")
 
-                if next_request.image_data.HasField("pixels"):
-                    request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
+            with self._lock:
 
-                if next_request.image_data.HasField("image_annotation"):
-                    request.image_data.image_annotation.CopyFrom(next_request.image_data.image_annotation)
-                
-                if next_request.HasField("detection_settings"):
-                    request.detection_settings.CopyFrom(next_request.detection_settings)
-                
-                if request.image_data.HasField("pixels"):
-                    yield self.RunDetection(request, context)
+                preds = self.model.predict_on_large_image(
+                    image, output_type="contour", **kwargs,
+                )
+
+                response = process_result(preds, image)
+
+                logging.info(f"Reply with message of size {response.ByteSize()}")
+
+                return response
+
+        except ValueError as e:
+            
+            logging.error(repr(e))
+
+            logging.error(traceback.format_exc())
+
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
+
+        except Exception as e:
+
+            logging.error(repr(e))
+
+            logging.error(traceback.format_exc())
+
+            context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
 
 
 def get_predictor(modelpath):

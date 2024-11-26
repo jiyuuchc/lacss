@@ -1,3 +1,5 @@
+import threading
+
 import grpc
 import numpy as np
 
@@ -64,3 +66,28 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
         else:
             return self._abort_handler
 
+
+
+class LacssServicerBase(proto.LacssServicer):
+
+    def __init__(self):
+        self._lock = threading.RLock()
+
+
+    def RunDetectionStream(self, request_iterator, context):
+        with self._lock:
+            request = proto.DetectionRequest()
+
+            for next_request in request_iterator:
+
+                if next_request.image_data.HasField("pixels"):
+                    request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
+
+                if next_request.image_data.HasField("image_annotation"):
+                    request.image_data.image_annotation.CopyFrom(next_request.image_data.image_annotation)
+                
+                if next_request.HasField("detection_settings"):
+                    request.detection_settings.CopyFrom(next_request.detection_settings)
+                
+                if request.image_data.HasField("pixels"):
+                    yield self.RunDetection(request, context)

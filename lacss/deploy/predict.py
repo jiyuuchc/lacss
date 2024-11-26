@@ -264,8 +264,10 @@ class Predictor:
             self, 
             url: str | tuple[nn.Module, dict],
             *,
-            grid_size = 544,
-            step_size = 480,
+            grid_size = 1024,
+            step_size = 800,
+            grid_size_3d = 256,
+            step_size_3d = 192,
         ):
         """Construct Predictor
 
@@ -294,10 +296,14 @@ class Predictor:
 
         assert step_size < grid_size, f"step_size ({step_size}) not smaller than grid_size ({grid_size})"
         assert grid_size % 32 == 0, f"grid_size ({grid_size}) is not divisable by 32"
+        assert step_size_3d < grid_size_3d, f"step_size ({step_size_3d}) not smaller than grid_size ({grid_size_3d})"
+        assert grid_size_3d % 32 == 0, f"grid_size ({grid_size_3d}) is not divisable by 32"
 
         self.gs = grid_size
         self.ss = step_size
 
+        self.gs_3d = grid_size_3d
+        self.ss_3d = step_size_3d
 
     def predict(
         self,
@@ -535,10 +541,10 @@ class Predictor:
         assert image.ndim == 3 or image.ndim == 4, f"ilegal image dim {image.shape}"
 
         if ss is None:
-            ss = 1024 if image.ndim == 3 else 192
+            ss = self.ss if image.ndim == 3 else self.ss_3d
             gs = None
         if gs is None:
-            gs = ss + 64 if image.ndim == 3 else 32
+            gs = self.gs if image.ndim == 3 else self.gs_3d
 
         if reshape_to is None: 
             reshape_to = np.array(orig_shape)
