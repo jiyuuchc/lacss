@@ -36,7 +36,7 @@ For a GUI client see the [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate
 
   * Multi-modality: works on both 2D (multichannel) images and 3D image stacks.
 
-  * Speed: Inference time of the base model (150M parameters) is < 200 ms on GPU for an 1024x1024x3 image. We achieve this by desigining an end-to-end algorithm and aggressively eliminate CPU-dependent post-processings.
+  * Speed: optimized for GPU due to the end-to-end design and the elimination of CPU-dependent post-processings.
 
   * Point-supervised training: Lacss is a multi-task model with a separate "localization" head (besides the segmentation head) predicting cell locations. This also means that you can train/fine-tune cell-segmentation using only point labels. See [references](#references) for details.
 
