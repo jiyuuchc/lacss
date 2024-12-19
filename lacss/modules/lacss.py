@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import field
+from functools import partial
 
 import jax
 import flax.linen as nn
@@ -69,9 +70,21 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
             outputs = deep_update(outputs, detector_outputs)
 
             if self.segmentor_3d is not None:
-                segmentor_out = self.segmentor_3d(
-                    x_seg, outputs["predictions"]["locations"],
+                locs = outputs["predictions"]["locations"]
+                locs = locs_.reshape( (locs.shape[0] // 8, 8) + locs.shape[1:] )
+                _, segmentor_out = jax.lax.scan(
+                    lambda _, locs_: None, self.segmentor_3d(x_seg, locs_),
+                    None,
+                    locs,
                 )
+                # segmentor_out = self.segmentor_3d(
+                    # x_seg, outputs["predictions"]["locations"],
+                # )
+                segmentor_out = jax.tree_util.tree_map(
+                    lambda data: data.reshape(-1, data.shape[1:]),
+                    segmentor_out,
+                )
+
                 outputs = deep_update(outputs, segmentor_out)            
 
         return outputs

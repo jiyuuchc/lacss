@@ -265,9 +265,9 @@ def get_predictor(modelpath):
 
     logging.debug(f"lacss_server: precompile for most common shapes")
 
+    _ = model.predict(np.ones([256,256,256,3]), output_type="contour")
     _ = model.predict(np.ones([512,512,3]), output_type="contour")
     _ = model.predict(np.ones([1088,1088,3]), output_type="contour")
-    _ = model.predict(np.ones([256,256,256,3]), output_type="contour")
 
     return model
 

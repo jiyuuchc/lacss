@@ -144,7 +144,7 @@ def _format_image(image, target_shape, normalize):
     padding += [[0, 3-image.shape[-1]]]
     image = np.pad(image, padding)
 
-    return image
+    return image.astype("float16")
 
 
 def _nms(preds, th):
