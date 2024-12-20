@@ -29,13 +29,16 @@ You can deploy the models as an [GRPC](https://grpc.io/) server using the [biopb
    python -m lacss.deploy.remote_server --modelpath=<model_file_path>
 ```
 
-To communicate with the server you can use a GUI client, e.g. [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss), FIJI/ImageJ plugin for interactive cell segmentation/tracking.
-
 #### Public server
 
 The Lacss public GRPC server is available here: `lacss.biopb.org:443`
 
 The server is running the base model supporting both 2d and 3d segmentation.
+
+#### For end user 
+
+ - [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) is the recommended GUI client. This is a `FIJI/ImageJ` plugin for interactive cell segmentation and cell tracking.
+ - For setting up your analysis pipeline programmatically, see this example [notebook](https://github.com/jiyuuchc/lacss/blob/main-jax/notebooks/grpc.ipynb).
 
 ## Why LACSS?
 
