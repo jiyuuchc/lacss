@@ -23,14 +23,19 @@ LACSS is a deep-learning model for 2D/3D single-cell segmentation from microscop
 
 #### Deployment
 
-You can now deploy the pretrained models as GRPC server:
+You can deploy the models as an [GRPC](https://grpc.io/) server using the [biopb.image](https://github.com/jiyuuchc/biopb) protocol:
 
 ```sh
    python -m lacss.deploy.remote_server --modelpath=<model_file_path>
 ```
 
-For a GUI client see the [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) project, which provides a FIJI/ImageJ plugin to perform cell segmentation/tracking in an interactive manner.
+To communicate with the server you can use a GUI client, e.g. [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss), FIJI/ImageJ plugin for interactive cell segmentation/tracking.
 
+#### Public server
+
+The Lacss public GRPC server is available here: `lacss.biopb.org:443`
+
+The server is running the base model supporting both 2d and 3d segmentation.
 
 ## Why LACSS?
 
