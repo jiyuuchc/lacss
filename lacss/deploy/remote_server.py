@@ -253,10 +253,10 @@ class LacssServicer(LacssServicerBase):
             context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
 
 
-def get_predictor(modelpath):
+def get_predictor(modelpath, f16):
     from .predict import Predictor
 
-    model = Predictor(modelpath)
+    model = Predictor(modelpath, f16=f16)
 
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
@@ -294,6 +294,7 @@ def main(
     compression: bool = True,
     max_image_size: int = 1088,
     max_image_size_3d: int = 512,
+    f16: bool = False,
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
@@ -303,7 +304,7 @@ def main(
 
     print ("server starting ...")
 
-    model = get_predictor(modelpath)
+    model = get_predictor(modelpath, f16)
 
     logging.info(f"lacss_server: default backend is {jax.default_backend()}")
 

@@ -144,8 +144,7 @@ def _format_image(image, target_shape, normalize):
     padding += [[0, 3-image.shape[-1]]]
     image = np.pad(image, padding)
 
-    return image.astype("float16")
-
+    return image
 
 def _nms(preds, th):
     from lacss.ops import box_iou_similarity
@@ -264,6 +263,7 @@ class Predictor:
             self, 
             url: str | tuple[nn.Module, dict],
             *,
+            f16 = False,
             grid_size = 1024,
             step_size = 800,
             grid_size_3d = 256,
@@ -294,6 +294,12 @@ class Predictor:
         self.module = module
         self.params = params
 
+        self.f16 = f16
+        if self.f16:
+            self.params = jax.tree_util.tree_map(
+                lambda x: x.astype("float16"), self.params,
+            )
+
         assert step_size < grid_size, f"step_size ({step_size}) not smaller than grid_size ({grid_size})"
         assert grid_size % 32 == 0, f"grid_size ({grid_size}) is not divisable by 32"
         assert step_size_3d < grid_size_3d, f"step_size ({step_size_3d}) not smaller than grid_size ({grid_size_3d})"
@@ -304,6 +310,7 @@ class Predictor:
 
         self.gs_3d = grid_size_3d
         self.ss_3d = step_size_3d
+
 
     def predict(
         self,
@@ -381,6 +388,10 @@ class Predictor:
         scaling = reshape_to / orig_shape
 
         image = _format_image(image, reshape_to, normalize=normalize)
+        if self.f16:
+            image = image.astype("float16")
+        else:
+            image = image.astype("float32")
 
         seg_logit_threshold = math.log(segmentation_threshold / (1 - segmentation_threshold))
 
