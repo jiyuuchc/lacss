@@ -37,7 +37,8 @@ The server is running the base model supporting both 2d and 3d segmentation.
 
 #### For end user 
 
- - [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) is the recommended GUI client. This is a `FIJI/ImageJ` plugin for interactive cell segmentation and cell tracking.
+ - [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) is the recommended GUI client for FIJI users. This plugin integrate with TrackMate for interactive cell segmentation and cell tracking.
+ - [napari-biopb](https://github.com/jiyuuchc/napari-biopb) is recommended for napari users. 
  - For setting up your analysis pipeline programmatically, see this example [notebook](https://github.com/jiyuuchc/lacss/blob/main-jax/notebooks/grpc.ipynb).
 
 ## Why LACSS?
@@ -51,7 +52,7 @@ The server is running the base model supporting both 2d and 3d segmentation.
 ## Give It A Try:
 
 #### Gradio Demo: try your own images (2D only)
-  * [Demo site](https://huggingface.co/spaces/yulabuchc/lacss-space)
+  * [Demo site](https://biopb.org/demo/)
 
 #### Colabs
 ##### Inference
