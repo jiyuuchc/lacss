@@ -135,11 +135,13 @@ def _format_image(image, target_shape, normalize):
             padding_shape[:] = 1088
     else:
         padding_shape[:] = padding_shape.max()
-        if (padding_shape <  256).all():
+        if (padding_shape <= 256).all():
             padding_shape[:] = 256
+        elif (padding_shape <=  384).all():
+            padding_shape[:] = 384
         else:
             padding_shape[:] = padding_shape.max()
-    
+
     padding = [ [0, s-s0] for s, s0 in zip(padding_shape, image.shape[:-1])]
     padding += [[0, 3-image.shape[-1]]]
     image = np.pad(image, padding)
