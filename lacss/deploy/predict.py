@@ -89,13 +89,28 @@ def _to_mesh(
         if mask[k]:
             try:
                 # verts, faces, norms, _ = marching_cubes(seg, allow_degenerate=False)
-                verts, faces, norms, _ = marching_cubes(segs[k], step_size=step_size, level=segmentation_threshold)
+                verts, faces, _, _ = marching_cubes(segs[k], step_size=step_size, level=segmentation_threshold)
                 verts += [z0s[k], y0s[k], x0s[k]]
-                meshes.append(dict(verts=verts, faces=faces, norms=norms))
+
+                meshes.append(dict(verts=verts, faces=faces))
+
             except:
                 mask[k] = False
 
     return meshes, mask  
+
+
+def _clean_up_mesh(mesh, n=500, regularization=0.1):
+    from vedo import Mesh
+    
+    vedo_mesh = (
+        Mesh([mesh["verts"], mesh["faces"]])
+        .decimate(n=n, regularization=regularization)
+    )
+    return dict(
+        verts=vedo_mesh.vertices,
+        faces=np.array(vedo_mesh.cells),
+    )
 
 
 def _nms(boxes, iou_threshold, selected, asort=None):
@@ -554,6 +569,9 @@ class Predictor:
 
                 for mesh in meshes:
                     mesh['verts'] /=  scaling
+
+                # clean up
+                meshes = [_clean_up_mesh(m) for m in meshes]
 
                 results = dict(
                     pred_scores=preds["scores"][instance_mask],
