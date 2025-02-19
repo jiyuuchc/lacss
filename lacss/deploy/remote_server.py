@@ -4,6 +4,8 @@ import traceback
 from concurrent import futures
 from pathlib import Path
 
+from typing import Iterable
+
 import grpc
 import jax
 import numpy as np
@@ -16,13 +18,15 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 _MAX_MSG_SIZE=1024*1024*128
 _TARGET_CELL_SIZE=32
+_MAX_STREAM_MSG_SIZE = _MAX_MSG_SIZE * 16
+MAX_IMG_SIZE = 1024 * 1024 * 1024
 
-
-def process_input(request: proto.DetectionRequest):
+def _process_input(request: proto.DetectionRequest, image=None):
     pixels = request.image_data.pixels
     settings = request.detection_settings
 
-    image = decode_image(pixels)
+    if image is None:
+        image = decode_image(pixels)
 
     physical_size = np.array([
         pixels.physical_size_z or pixels.physical_size_x, # one might set xy but not z
@@ -60,7 +64,8 @@ def process_input(request: proto.DetectionRequest):
 
     return image, kwargs
 
-def process_result(preds, image) -> proto.DetectionResponse:
+
+def _process_result(preds, image) -> proto.DetectionResponse:
     response = proto.DetectionResponse()
 
     if image.ndim == 3: # returns polygon
@@ -95,126 +100,96 @@ def process_result(preds, image) -> proto.DetectionResponse:
     return response
 
 
-def _process_grid_input(request_iterator):
-    images, r0s = [], []
-    for k, request in enumerate(request_iterator):
+def _process_grid_input(request_iterator:Iterable[proto.DetectionRequest]):
+    d, h, w, c = 0, 0, 0, 0
+    images, grids = [], []
+    request = None
+    total_msg_size = 0
+    for request in request_iterator:
+        total_msg_size += request.ByteSize()
+        if total_msg_size > _MAX_STREAM_MSG_SIZE:
+            raise ValueError("input message size  {total_msg_size} exceeded limit.")
+
         pixels = request.image_data.pixels
 
-        if k ==0 :
-            image, kwargs = process_input(request)
+        image = decode_image(pixels)
 
-            if kwargs['reshape_to'] is None:
-                rel_diff = np.zeros([3])
-            else:
-                rel_diff = np.abs(np.array(reshape_to) / image.shape[:-1] - 1)
-                if (rel_diff < 0.1).all():
-                    rel_diff[:] = 0
-
-        else:
-            image, _ = process_input(request)
-
-        if image.ndim == 3:
-            image = image[None, ...]
-
-        r0 = np.array([
+        grids.append([
             pixels.offset_z,
             pixels.offset_y,
             pixels.offset_x,
-        ], dtype=int)
-
-        r1 = r0 + image.shape[:3]
-        
-        if k == 0:
-            r_max = r1
-        else:
-            r_max = np.maximum(r_max, r1)
-        
+        ])
         images.append(image)
 
-        r0s.append(r0)
-    
-    full_image = np.zeros(r_max, dtype="float32")
+        d = max(d, pixels.offset_z + image.shape[0])
+        h = max(d, pixels.offset_z + image.shape[1])
+        w = max(d, pixels.offset_z + image.shape[2])
+        c = max(c, image.shape[3])
 
-    for image, r0 in zip(images, r0s):
+        if d * h * w > MAX_IMG_SIZE:
+            raise ValueError(f"input image is too large {(d, h, w)}")
+
+    # empty input iterator
+    if request is None:
+        return None, None
+
+    assert c <= 3
+
+    full_image = np.zeros([d, h, w, c], dtype=images[0].dtype)
+    for image, grid in zip(images, grids):
         full_image[
-            r0[0]:r0[0] + image.shape[0],
-            r0[1]:r0[1] + image.shape[1],
-            r0[2]:r0[2] + image.shape[2],            
+            grid[0]:grid[0]+image.shape[0],
+            grid[1]:grid[1]+image.shape[1],
+            grid[2]:grid[2]+image.shape[2],
+            :image.shape[3],
         ] = image
-    
-    if len(rel_diff) == 2:
-        rel_diff = np.r_[0, rel_diff]
-    kwargs['reshape_to'] = np.round(
-        np.array(full_image.shape[:-1]) * (rel_diff + 1)
-    ).astype(int)
 
-    if full_image.shape[0] == 1:
-        full_image = full_image.squeeze(0)
-        kwargs['reshape_to'] = kwargs['reshape_to'][1:]
-
-    return full_image, kwargs
+    return _process_input(request, full_image)
 
 
 class LacssServicer(LacssServicerBase):
 
-    def __init__(self, model, max_image_size, max_image_size_3d):
+    def __init__(self, model):
         super().__init__()
 
         self.model = model
-        self.max_image_size = max_image_size
-        self.max_image_size_3d = max_image_size_3d
-
 
     def RunDetection(self, request, context):
-        with self._lock:
+        logging.info(f"Received message of size {request.ByteSize()}")
 
-            logging.info(f"Received message of size {request.ByteSize()}")
+        try:
+            image, kwargs = _process_input(request)
 
-            try:
-                image, kwargs = process_input(request)
+            logging.info(f"received image {image.shape}")
 
-                reshape_to = kwargs["reshape_to"]
+        except Exception as e:
+            logging.error(repr(e))
 
-                if image.ndim == 4:
-                    is_img_too_big = max(reshape_to) > self.max_image_size_3d
-                else:
-                    is_img_too_big = max(reshape_to) > self.max_image_size
+            logging.error(traceback.format_exc())
 
-                if is_img_too_big:
-                    raise ValueError("image size exeeds limit")
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
 
-                logging.info(f"received image {image.shape}")
+            return
 
-                # dont' reshape image if the request is almost same as the orginal 
-                rel_diff = np.abs(np.array(reshape_to) / image.shape[:-1] - 1)
-                if (rel_diff < 0.1).all():
-                    kwargs['reshape_to'] = None
-
+        try:    
+            with self._lock:
                 preds = self.model.predict(
                     image, output_type="contour", **kwargs,
                 )
 
-                response = process_result(preds, image)
+            response = _process_result(preds, image)
 
-                logging.info(f"Reply with message of size {response.ByteSize()}")
+            logging.info(f"Reply with message of size {response.ByteSize()}")
 
-                return response
-            
-            except ValueError as e:
-                
-                logging.error(repr(e))
+            return response
+        
+        except Exception as e:
 
-                logging.error(traceback.format_exc())
+            logging.error(repr(e))
 
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
+            logging.error(traceback.format_exc())
 
-            except Exception as e:
-
-                logging.error(repr(e))
-
-                logging.error(traceback.format_exc())
-
-                context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
+            context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
 
 
 
@@ -222,19 +197,21 @@ class LacssServicer(LacssServicerBase):
         try:
             image, kwargs = _process_grid_input(request_iterator)
 
+            if image is None:
+                return proto.DetectionResponse()
+
             logging.info(f"Received full image of size {image.shape[:-1]}")
 
             with self._lock:
-
-                preds = self.model.predict_on_large_image(
+                preds = self.model.predict(
                     image, output_type="contour", **kwargs,
                 )
 
-                response = process_result(preds, image)
+            response = _process_result(preds, image)
 
-                logging.info(f"Reply with message of size {response.ByteSize()}")
+            logging.info(f"Reply with message of size {response.ByteSize()}")
 
-                return response
+            return response
 
         except ValueError as e:
             
@@ -261,7 +238,7 @@ def get_predictor(modelpath, f16):
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
     model.module.detector.max_output = 512  # FIXME good default?
-    model.module.detector.min_score = 0.05
+    model.module.detector.min_score = 0.2
 
     logging.debug(f"lacss_server: precompile for most common shapes")
 
@@ -293,8 +270,6 @@ def main(
     token: bool|None = None,
     debug: bool = False,
     compression: bool = True,
-    max_image_size: int = 1088,
-    max_image_size_3d: int = 512,
     f16: bool = False,
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
@@ -338,11 +313,7 @@ def main(
     )
 
     proto.add_LacssServicer_to_server(
-        LacssServicer(
-            model,
-            max_image_size,
-            max_image_size_3d,
-        ), 
+        LacssServicer(model), 
         server,
     )
 
@@ -360,7 +331,4 @@ def main(
 
 
 if __name__ == "__main__":
-    # jax.config.update("jax_compilation_cache_dir", "jax_cache")
-    # jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-    # jax.config.update("jax_persistent_cache_min_compile_time_secs", 5)
     app()

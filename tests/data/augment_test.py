@@ -46,7 +46,7 @@ def test_flip_image(test_data_2d):
     flipped = flip_left_right(flip_left_right(orig))
     assert_same_data(orig, flipped)
 
-    flipped = flip_up_down(flip_left_right(orig))
+    flipped = flip_up_down(flip_up_down(orig))
     assert_same_data(orig, flipped)
 
 def test_flip_image_3d(test_data_3d):
@@ -55,10 +55,10 @@ def test_flip_image_3d(test_data_3d):
     flipped = flip_left_right(flip_left_right(orig))
     assert_same_data(orig, flipped)
 
-    flipped = flip_up_down(flip_left_right(orig))
+    flipped = flip_up_down(flip_up_down(orig))
     assert_same_data(orig, flipped)
 
-    flipped = flip_top_bottom(flip_left_right(orig))
+    flipped = flip_top_bottom(flip_top_bottom(orig))
     assert_same_data(orig, flipped)
 
 

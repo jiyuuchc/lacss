@@ -1,3 +1,5 @@
+import os
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -91,7 +93,7 @@ def dataclass_from_dict(klass, dikt):
         return dikt
 
 
-def load_from_pretrained(pretrained: str):
+def load_from_pretrained(pretrained: str | os.PathLike):
     """Load a saved model.
 
     Args:
