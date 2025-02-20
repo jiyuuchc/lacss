@@ -289,16 +289,16 @@ class Predictor:
     def _format_image(self, image, target_shape, normalize=True):
         from skimage.transform import resize
 
-        if self.f16:
-            image = image.astype("float16")
-        else:
-            image = image.astype("float32")
+        # process the data in float32 to avoid overflow
+        # only convert to float16 (if needed) at the end
+
+        image = image.astype("float32")
 
         orig_shape = image.shape[:-1]        
         
         if normalize:
             image = image - image.mean()
-            image = image / (image.std() + 1e-8)
+            image = image / (image.std() + 1e-6)
 
         if target_shape is None: 
             target_shape = np.array(orig_shape)
@@ -313,6 +313,9 @@ class Predictor:
 
             else:
                 image = resize(image, target_shape)
+
+        if self.f16:
+            image = image.astype("float16")
 
         logger.debug(f"resized image data from {orig_shape} to {target_shape}")
 
