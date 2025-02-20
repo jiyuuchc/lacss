@@ -235,13 +235,13 @@ lxml = ["lxml"]
 
 [[package]]
 name = "biopb"
-version = "0.1.0"
-description = "A place for collecting protobuf definitions for bio-research data"
+version = "0.1.2"
+description = "Python bindings of BioPB: open protobuf/gRPC protocols for biomedical image processing"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "biopb-0.1.0-py3-none-any.whl", hash = "sha256:0d6736707ca62ea2483d1fb03a1e5291440cf532b16ce4076dafea8232e669a4"},
-    {file = "biopb-0.1.0.tar.gz", hash = "sha256:179a9535e7958ad57da38a05c4dc0a5b4013d82cd8fc407e235ebb0f812f08fe"},
+    {file = "biopb-0.1.2-py3-none-any.whl", hash = "sha256:2612d998c618176bc158a64c67901d9672caaf69b70e9915332318bfc06dc296"},
+    {file = "biopb-0.1.2.tar.gz", hash = "sha256:4a11f43b206391116b2e8b922380e954d5514ce4cc4b415aa925d6ff99441be0"},
 ]
 
 [[package]]
@@ -1434,7 +1434,7 @@ tpu = ["jaxlib (==0.4.38)", "libtpu (==0.0.7)", "libtpu-nightly (==0.1.dev202410
 name = "jax-cuda12-pjrt"
 version = "0.4.38"
 description = "JAX XLA PJRT Plugin for NVIDIA GPUs"
-optional = true
+optional = false
 python-versions = "*"
 files = [
     {file = "jax_cuda12_pjrt-0.4.38-py3-none-manylinux2014_x86_64.whl", hash = "sha256:83be4c59fbcf30077a60085d98e7d59dc738b1c91e0d628e4ac1779fde15ac2b"},
@@ -1444,7 +1444,7 @@ files = [
 name = "jax-cuda12-plugin"
 version = "0.4.38"
 description = "JAX Plugin for NVIDIA GPUs"
-optional = true
+optional = false
 python-versions = ">=3.10"
 files = [
     {file = "jax_cuda12_plugin-0.4.38-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:9d42e999cd64dd567c149ed68f79392ba88644364218bb636cdcefa0197c92fe"},
@@ -2773,7 +2773,7 @@ files = [
 name = "nvidia-cublas-cu12"
 version = "12.6.4.1"
 description = "CUBLAS native runtime libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cublas_cu12-12.6.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:08ed2686e9875d01b58e3cb379c6896df8e76c75e0d4a7f7dace3d7b6d9ef8eb"},
@@ -2785,7 +2785,7 @@ files = [
 name = "nvidia-cuda-cupti-cu12"
 version = "12.6.80"
 description = "CUDA profiling tools runtime libs."
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cuda_cupti_cu12-12.6.80-py3-none-manylinux2014_aarch64.whl", hash = "sha256:358b4a1d35370353d52e12f0a7d1769fc01ff74a191689d3870b2123156184c4"},
@@ -2797,7 +2797,7 @@ files = [
 name = "nvidia-cuda-nvcc-cu12"
 version = "12.6.85"
 description = "CUDA nvcc"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cuda_nvcc_cu12-12.6.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:d75d9d74599f4d7c0865df19ed21b739e6cb77a6497a3f73d6f61e8038a765e4"},
@@ -2809,7 +2809,7 @@ files = [
 name = "nvidia-cuda-runtime-cu12"
 version = "12.6.77"
 description = "CUDA Runtime native Libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cuda_runtime_cu12-12.6.77-py3-none-manylinux2014_aarch64.whl", hash = "sha256:d461264ecb429c84c8879a7153499ddc7b19b5f8d84c204307491989a365588e"},
@@ -2821,7 +2821,7 @@ files = [
 name = "nvidia-cudnn-cu12"
 version = "9.6.0.74"
 description = "cuDNN runtime libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cudnn_cu12-9.6.0.74-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:7ce9c6a738b151f9e4d0a8716bdd73181a6bf28cc841d6525915c6980837667e"},
@@ -2836,7 +2836,7 @@ nvidia-cublas-cu12 = "*"
 name = "nvidia-cufft-cu12"
 version = "11.3.0.4"
 description = "CUFFT native runtime libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_aarch64.whl", hash = "sha256:8510990de9f96c803a051822618d42bf6cb8f069ff3f48d93a8486efdacb48fb"},
@@ -2851,7 +2851,7 @@ nvidia-nvjitlink-cu12 = "*"
 name = "nvidia-cusolver-cu12"
 version = "11.7.1.2"
 description = "CUDA solver native runtime libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_aarch64.whl", hash = "sha256:0ce237ef60acde1efc457335a2ddadfd7610b892d94efee7b776c64bb1cac9e0"},
@@ -2868,7 +2868,7 @@ nvidia-nvjitlink-cu12 = "*"
 name = "nvidia-cusparse-cu12"
 version = "12.5.4.2"
 description = "CUSPARSE native runtime libraries"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_aarch64.whl", hash = "sha256:7aa32fa5470cf754f72d1116c7cbc300b4e638d3ae5304cfa4a638a5b87161b1"},
@@ -2883,7 +2883,7 @@ nvidia-nvjitlink-cu12 = "*"
 name = "nvidia-nccl-cu12"
 version = "2.23.4"
 description = "NVIDIA Collective Communication Library (NCCL) Runtime"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_aarch64.whl", hash = "sha256:aa946c8327e22ced28e7cef508a334673abc42064ec85f02d005ba1785ea4cec"},
@@ -2894,7 +2894,7 @@ files = [
 name = "nvidia-nvjitlink-cu12"
 version = "12.6.85"
 description = "Nvidia JIT LTO Library"
-optional = true
+optional = false
 python-versions = ">=3"
 files = [
     {file = "nvidia_nvjitlink_cu12-12.6.85-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:eedc36df9e88b682efe4309aa16b5b4e78c2407eac59e8c10a6a47535164369a"},
@@ -5189,10 +5189,10 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 type = ["pytest-mypy"]
 
 [extras]
-cuda12 = ["jax"]
-train = ["jax", "ml-collections", "tensorflow", "xtrain"]
+cuda12 = []
+train = ["ml-collections", "tensorflow", "xtrain"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "2514e845a2c8cef7dd0f145cd1ab98b3328f26ac4832995adca1dbbf88650470"
+content-hash = "7b868538d44428a42f9d5b8c9d196d5ffa50618ba7be7250fef99369c3fbbe5b"
