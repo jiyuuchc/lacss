@@ -91,7 +91,7 @@ def grpc_server(model_f16):
     server.stop(grace=None)
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture()
 def grpc_channel(grpc_server):
     with grpc.insecure_channel(grpc_server) as channel:
         yield channel

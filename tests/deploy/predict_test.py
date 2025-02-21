@@ -1,6 +1,6 @@
 import pytest
 
-def test_predict(model, test_image_2d, test_image_3d):
+def test_predict(model, test_image_2d):
     label = model.predict(test_image_2d)["pred_label"]
 
     assert label.shape == test_image_2d.shape
@@ -16,6 +16,20 @@ def test_predict(model, test_image_2d, test_image_3d):
     assert len(preds['pred_scores']) == 22
     assert len(preds['pred_contours']) == 22
 
+
+def test_predict_3d(model, test_image_3d):
+    preds = model.predict(
+        test_image_3d, 
+        score_threshold=0.3,
+        reshape_to=(60, 256, 256),
+        nms_iou=0.4,
+    )
+
+    n_preded = len(preds['pred_scores'])
+
+    assert len(preds['pred_scores']) > 0
+    assert len(preds['pred_scores']) == preds['pred_label'].max()
+
     preds = model.predict(
         test_image_3d, 
         score_threshold=0.3,
@@ -24,7 +38,7 @@ def test_predict(model, test_image_2d, test_image_3d):
         output_type="contour",
     )
 
-    assert len(preds['pred_scores']) > 0
+    assert len(preds['pred_scores']) == n_preded
     assert len(preds['pred_scores']) == len(preds['pred_contours'])
 
 

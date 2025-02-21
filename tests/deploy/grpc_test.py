@@ -41,7 +41,7 @@ def test_grpc_3d(grpc_channel, test_image_3d):
         physical_size_z=4.0,
     )
 
-    stub = proto.ObjectDetectionStub(grpc_channel)
+    stub = proto.ObjectDetectionStub(grpc_channel) 
 
     request = proto.DetectionRequest(
         image_data=proto.ImageData(pixels=pixels),

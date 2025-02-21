@@ -25,6 +25,7 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
     patch_dim: int = 32
     sig_dim: int = 512
     pos_emb_shape: Sequence[int] = (16, 16, 4)
+    full_scale_output: bool = True
     dtype: Any = None
 
     @property
@@ -110,13 +111,16 @@ class Segmentor(nn.Module, DefaultUnpicklerMixin):
         patches = self._add_pos_encoding(patches, patch_sigs)
 
         logits = nn.ConvTranspose(1, (3, 3), strides=(2, 2), dtype=self.dtype)(patches)
+        logits = logits.squeeze(-1)
 
-        output_shape = (
-            locations.shape[0],
-            self.instance_crop_size,
-            self.instance_crop_size
-        )
-        logits = jax.image.resize(logits.squeeze(-1), output_shape, "linear")
+        if self.full_scale_output:
+            output_shape = (
+                locations.shape[0],
+                self.instance_crop_size,
+                self.instance_crop_size
+            )
+            logits = jax.image.resize(logits, output_shape, "linear")
+
         instance_mask = locations[:, -1] >= 0
         patch_locs = jnp.where(
             instance_mask[:, None],
