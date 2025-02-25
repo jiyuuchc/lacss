@@ -121,9 +121,22 @@ class Predictor:
             # make a prediction
             label = predictor.predict(image)
 
-    Attributes:
-        module: The underlying FLAX module
-        params: Model weights.
+    Args:
+        url: Model file (local or remote) or (module, parameters) tuple. If 
+            the parameters are a sequence instead of a dictionary, treat it 
+            as a model ensemble.
+        f16: If true, compute in f16 precision (instead of the default f32)
+        grid_size: Grid size for large images. Large image are broken down 
+            into grids to avoid GPU memeory overflow.
+        step_size: Should be slightly smaller than grid_size to allow some
+            overlap between grids.
+        grid_size_3d: Grid_size for 3D input.
+        step_size_3d: Step_size for 3D input.
+        mask_size: Only use for bbox output. The dimension of the segmentation
+            mask output.
+        mc_step_size: Only used for 3D contour output. The step size during the
+            mesh generation.
+        chain_approx: Only used for 2D contour output. Polygon generation rule.
     """
 
     url:str|os.PathLike|tuple[Lacss, dict]
