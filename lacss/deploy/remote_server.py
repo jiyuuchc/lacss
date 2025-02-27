@@ -237,15 +237,13 @@ def get_predictor(modelpath, f16):
 
     logging.info(f"lacss_server: loaded model from {modelpath}")
 
-    model.module.detector.max_output = 512  # FIXME good default?
+    # model.module.detector.max_output = 512
     model.module.detector.min_score = 0.2
 
-    logging.debug(f"lacss_server: precompile for most common shapes")
+    logging.debug(f"lacss_server: precompile the model")
 
-    _ = model.predict(np.ones([256,256,256,3]), output_type="contour")
-    _ = model.predict(np.ones([384,384,384,3]), output_type="contour")
-    _ = model.predict(np.ones([512,512,3]), output_type="contour")
-    _ = model.predict(np.ones([1024,1024,3]), output_type="contour")
+    _ = model.predict(np.ones([384,384,384,3]), output_type="_raw")
+    _ = model.predict(np.ones([544,544,3]), output_type="_raw")
 
     return model
 
