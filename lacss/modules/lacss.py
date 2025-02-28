@@ -23,13 +23,14 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
 
     Attributes:
         backbone: CNN backbone
-        detector: detection head to predict cell locations
-        segmentor: The segmentation head
+        detector: Detection head to predict cell locations
+        segmentor: Segmentation head
+        detector_3d: Detection head for 3d input
+        segmentor_3d: Segmentation head for 3d input
     """
     backbone: nn.Module = field(default_factory=Backbone)
     detector: nn.Module = field(default_factory=LPN)
     segmentor: nn.Module | None = field(default_factory=Segmentor)
-
     detector_3d: nn.Module | None = None
     segmentor_3d: nn.Module | None = None
 
@@ -66,22 +67,24 @@ class Lacss(nn.Module, DefaultUnpicklerMixin):
         else:
             if self.detector_3d is None:
                 raise(ValueError("not a 3d detector"))
+
             detector_outputs = self.detector_3d(x_det, mask=image_mask)
             outputs = deep_update(outputs, detector_outputs)
 
             if self.segmentor_3d is not None:
-                locs = outputs["predictions"]["locations"]
-                locs = locs_.reshape( (locs.shape[0] // 8, 8) + locs.shape[1:] )
-                _, segmentor_out = jax.lax.scan(
-                    lambda _, locs_: None, self.segmentor_3d(x_seg, locs_),
-                    None,
-                    locs,
-                )
                 # segmentor_out = self.segmentor_3d(
                     # x_seg, outputs["predictions"]["locations"],
                 # )
+
+                locs = outputs["predictions"]["locations"]
+                locs = locs.reshape( (locs.shape[0] // 16, 16) + locs.shape[1:] )
+                _, segmentor_out = jax.lax.scan(
+                    lambda _, locs_: (None, self.segmentor_3d(x_seg, locs_)),
+                    None,
+                    locs,
+                )
                 segmentor_out = jax.tree_util.tree_map(
-                    lambda data: data.reshape(-1, data.shape[1:]),
+                    lambda data: data.reshape(-1, * data.shape[2:]),
                     segmentor_out,
                 )
 

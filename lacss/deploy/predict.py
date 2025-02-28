@@ -30,21 +30,20 @@ Shape = Sequence[int]
 
 logger = logging.getLogger(__name__)
 
-@partial(jax.jit, static_argnums=0)
-def _model_fn(model, params, image):
-    ''' A JIT compiled function to call Lacss model
+def _ensemble_model_fn(module, params, image) -> dict:
+    ''' A JIT compiled function to call Lacss model ensemble
     if params is a sequence (not a dict), assuming a model ensemble and 
     generate ensembed prediction.
     '''
     from lacss.modules.lpn import generate_predictions
 
-    model_ = model.copy()
+    model_ = module.copy()
     model_.segmentor = None
     model_.segmentor_3d = None
 
     lpn_out, seg_features = [], []
     for p in params:
-        model_out =  model_.apply(dict(params=p), image)
+        model_out =  jax.jit(model_.apply)(dict(params=p), image)
 
         lpn_out.append( model_out['detector'] )
 
@@ -60,28 +59,28 @@ def _model_fn(model, params, image):
         ref_locs = lpn_out['ref_locs'][0],
     )
 
-    lpn_out['pred_locs'] = lpn_out['ref_locs'] + lpn_out['regressions'] * model.detector.feature_scale
+    lpn_out['pred_locs'] = lpn_out['ref_locs'] + lpn_out['regressions'] * module.detector.feature_scale
 
-    predictions = generate_predictions(model.detector, lpn_out)
+    predictions = generate_predictions(module.detector, lpn_out)
 
     assert len(seg_features) == len(params)
 
     seg_predictions = []
-    if image.ndim == 3 and model.segmentor is not None:
+    if image.ndim == 3 and module.segmentor is not None:
         for x, p in zip(seg_features, params):
             seg_predictions.append( 
-                model.segmentor.apply(
+                jax.jit(module.segmentor.apply)(
                     dict(params=p['segmentor']), 
                     x, 
                     predictions['locations']
                 )['predictions'] 
             )
 
-    elif image.ndim == 4 and model.segmentor_3d is not None:
+    elif image.ndim == 4 and module.segmentor_3d is not None:
         seg_predictions = []
         for x, p in zip(seg_features, params):
             seg_predictions.append( 
-                model.segmentor_3d.apply(
+                jax.jit(module.segmentor_3d.apply)(
                     dict(params=p['segmentor_3d']), 
                     x, 
                     predictions['locations']
@@ -143,8 +142,10 @@ class Predictor:
     f16:bool = False
     grid_size:int = 544
     step_size:int = 480
+    cells_per_grid:int = 256
     grid_size_3d:int = 384
     step_size_3d:int = 320
+    cells_per_grid_3d:int = 384
     mask_size:int = 36
     mc_step_size:int = 1
     chain_approx:int = cv2.CHAIN_APPROX_TC89_KCOS
@@ -153,25 +154,21 @@ class Predictor:
         """validate parameters"""
 
         if isinstance(self.url, tuple):
-            if not isinstance(self.url[0], Lacss):
-                raise ValueError(
-                    "Initiaize the Predictor with a tuple, but the first element is not a Lacss Module."
-                )
-
             module, params = self.url
 
         else:
             module, params = load_from_pretrained(self.url)
-            assert type(module) == Lacss, f"Loaded module is not Lacss, but of {type(module)}"
 
-        if isinstance(params, Mapping):
-            params = [params]
+        assert type(module) == Lacss, f"Loaded module is not Lacss, but of {type(module)}"
+
+        # if isinstance(params, Mapping):
+            # params = [params]
 
         # default model config during inference
-        module.detector.max_output = 256
+        module.detector.max_output = self.cells_per_grid
 
         if module.detector_3d:
-            module.detector_3d.max_output = 384
+            module.detector_3d.max_output = self.cells_per_grid_3d
 
         if module.segmentor:
             module.segmentor.full_scale_output = False
@@ -191,6 +188,10 @@ class Predictor:
         assert self.grid_size % 32 == 0, f"grid_size ({self.grid_size}) is not divisable by 32"
         assert self.step_size_3d < self.grid_size_3d, f"step_size ({self.step_size_3d}) not smaller than grid_size ({self.grid_size_3d})"
         assert self.grid_size_3d % 32 == 0, f"grid_size ({self.grid_size_3d}) is not divisable by 32"
+        assert self.cells_per_grid % 16 == 0, f"cells_per_grid ({self.cells_per_grid}) is not divisable by 16"
+        assert self.cells_per_grid_3d % 16 == 0, f"cells_per_grid_3d ({self.cells_per_grid_3d}) is not divisable by 16"
+
+        self._model_fn = jax.jit(self.module.apply) # FIXME this locks down model hyperparameter
 
 
     def _resize_image(self, image, target_shape, normalize=True):
@@ -326,7 +327,7 @@ class Predictor:
         2. clean up results
         3. compute contours
         """
-        logger.debug(f"process image patch of {patch.shape}")
+        logger.info(f"process image patch of {patch.shape}")
 
         # pad image to fixed input sizes
         patch_sz = patch.shape[:-1]
@@ -347,9 +348,9 @@ class Predictor:
                 f"attempted to call model with image shape exceed limit."
             d, h, w = patch_sz
             padding_shape = [
-                [0, self.grid_size - d], 
-                [0, self.grid_size - h], 
-                [0, self.grid_size - w],
+                [0, self.grid_size_3d - d], 
+                [0, self.grid_size_3d - h], 
+                [0, self.grid_size_3d - w],
                 [0, 0],
             ]
 
@@ -362,10 +363,19 @@ class Predictor:
         elif patch.shape[-1] == 2:
             patch = np.stack([patch, np.zeros_like(patch[..., :1])], axis=-1)
 
-        predictions = _model_fn(self.module, self.params, patch)
+
+        logger.info(f"pad patch to shape: {patch.shape}")
+
+        if isinstance(self.params, Mapping):
+            predictions = self._model_fn(dict(params=self.params), patch)["predictions"]
+        else: # handle ensemble
+            predictions = _ensemble_model_fn(self.module, self.params, patch)["predictions"]
 
         # clean up
         mask = predictions["segmentation_is_valid"]
+
+        logger.info(f"obtained model prediction of {np.count_nonzero(mask)} cells")
+
         mask &= predictions["scores"] >= score_threshold
         if size_threshold > 0:
             areas = jnp.count_nonzero(
@@ -377,10 +387,12 @@ class Predictor:
 
         predictions["segmentation_is_valid"] = mask
 
-        logger.debug(f"found {np.count_nonzero(mask)} cells")
+        logger.info(f"found {np.count_nonzero(mask)} cells after clean up")
 
         # additional computation
         scores, contours, bboxes = self._compute_contours(predictions, patch_sz, threshold)
+
+        logger.info(f"done converting results to contours.")
 
         assert scores.shape[0] == len(bboxes)
         assert scores.shape[0] == len(contours)
@@ -424,7 +436,7 @@ class Predictor:
             slices = (slice(x, x + gs) for x in pos)
             patch = image.__getitem__(tuple(slices))
             patch_sz = patch.shape[:-1]
-            
+
             scores, contours, bboxes = self._call_model(patch, score_threshold, size_threshold, threshold)
 
             logger.debug(f"processing patch results")
@@ -448,12 +460,17 @@ class Predictor:
 
         scores = np.concatenate(all_scores)
 
+        if is_single_grid and len(self.params) == 1:
+            asort = None
+        else:
+            asort =  np.argsort(scores)[::-1]
+
         return dict(
             scores = scores,
             mask = np.concatenate(all_masks),
             bboxes = np.concatenate(all_bboxes),
             contours = sum(all_contours, []),
-            asort = None if is_single_grid else np.argsort(scores)[::-1]
+            asort = asort,
         )
 
 
