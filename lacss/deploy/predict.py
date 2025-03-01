@@ -143,7 +143,7 @@ class Predictor:
     cells_per_grid_3d: int = 384
     mask_size: int = 36
     mc_step_size: int = 1
-    chain_approx: int = cv2.CHAIN_APPROX_TC89_KCOS
+    chain_approx: int = cv2.CHAIN_APPROX_SIMPLE
 
     def __post_init__(self):
         """validate parameters"""
@@ -168,8 +168,8 @@ class Predictor:
             module.detector_3d.max_output = self.cells_per_grid_3d
 
         if module.segmentor:
-            module.segmentor.full_scale_output = False
-
+            module.segmentor.full_scale_output = True
+        
         if module.segmentor_3d:
             module.segmentor_3d.full_scale_output = False
 
@@ -259,10 +259,9 @@ class Predictor:
                     c,
                     np.zeros([0, 1, 2], dtype=int),
                 )
+                
+                polygon = max_len_element.squeeze(1).astype(float) + .5
 
-                polygon = (
-                    max_len_element.squeeze(1).astype(float) * 2 + 1
-                )  # model output is 2x binned
                 polygon += [x0s[k], y0s[k]]
 
                 if len(polygon) == 0:
@@ -675,8 +674,8 @@ class Predictor:
         min_area: float = 0,
         score_threshold: float = 0.5,
         segmentation_threshold: float = 0.5,
-        nms_iou: float = 1,
-        remove_out_of_bound: bool | None = None,
+        nms_iou: float = 0.4,
+        remove_out_of_bound: bool|None = None,
     ) -> dict:
         """Predict segmentation.
 

@@ -18,6 +18,12 @@ from .common import (
     get_dtype,
 )
 
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
 app = typer.Typer(pretty_exceptions_enable=False)
 
 _MAX_MSG_SIZE = 1024 * 1024 * 128
@@ -54,8 +60,8 @@ def _process_input(request: proto.DetectionRequest, image=None):
 
         scaling = np.array([settings.scaling_hint or 1.0] * 3, dtype="float")
         scaling[0] *= physical_size[0] / physical_size[1]
-
-    logging.info(f"Requested rescaling factor is {scaling}")
+    
+    logger.info(f"Requested rescaling factor is {scaling}")
 
     shape_hint = tuple(np.round(scaling * image.shape[:3]).astype(int))
 
@@ -67,7 +73,7 @@ def _process_input(request: proto.DetectionRequest, image=None):
         reshape_to=shape_hint,
         score_threshold=settings.min_score or 0.4,
         min_area=settings.min_cell_area,
-        nms_iou=settings.nms_iou,
+        nms_iou=settings.nms_iou or 0.4,
         segmentation_threshold=settings.segmentation_threshold or 0.5,
     )
 
@@ -172,17 +178,17 @@ class LacssServicer(LacssServicerBase):
         self.model = model
 
     def RunDetection(self, request, context):
-        logging.info(f"Received message of size {request.ByteSize()}")
+        logger.info(f"Received message of size {request.ByteSize()}")
 
         try:
             image, kwargs = _process_input(request)
 
-            logging.info(f"received image {image.shape}")
+            logger.info(f"received image {image.shape}")
 
         except Exception as e:
-            logging.error(repr(e))
+            logger.error(repr(e))
 
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
 
@@ -198,15 +204,15 @@ class LacssServicer(LacssServicerBase):
 
             response = _process_result(preds, image)
 
-            logging.info(f"Reply with message of size {response.ByteSize()}")
+            logger.info(f"Reply with message of size {response.ByteSize()}")
 
             return response
 
         except Exception as e:
 
-            logging.error(repr(e))
+            logger.error(repr(e))
 
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
             context.abort(
                 grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
@@ -219,7 +225,7 @@ class LacssServicer(LacssServicerBase):
             if image is None:
                 return proto.DetectionResponse()
 
-            logging.info(f"Received full image of size {image.shape[:-1]}")
+            logger.info(f"Received full image of size {image.shape[:-1]}")
 
             with self._lock:
                 preds = self.model.predict(
@@ -230,23 +236,22 @@ class LacssServicer(LacssServicerBase):
 
             response = _process_result(preds, image)
 
-            logging.info(f"Reply with message of size {response.ByteSize()}")
+            logger.info(f"Reply with message of size {response.ByteSize()}")
 
             return response
 
         except ValueError as e:
+            logger.error(repr(e))
 
-            logging.error(repr(e))
-
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
 
         except Exception as e:
 
-            logging.error(repr(e))
+            logger.error(repr(e))
 
-            logging.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
             context.abort(
                 grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
@@ -256,14 +261,23 @@ class LacssServicer(LacssServicerBase):
 def get_predictor(modelpath, f16):
     from .predict import Predictor
 
-    model = Predictor(modelpath, f16=f16)
+    model = Predictor(
+        modelpath, 
+        f16=f16,
+        # grid_size=1088,
+        # step_size=1024,
+        # cells_per_grid=1024,
+        # grid_size_3d=256,
+        # step_size_3d=192,
+        # cells_per_grid_3d=256
+    )
 
-    logging.info(f"lacss_server: loaded model from {modelpath}")
+    logger.info(f"lacss_server: loaded model from {modelpath}")
 
-    # model.module.detector.max_output = 512
     model.module.detector.min_score = 0.2
+    model.module.detector_3d.min_score = 0.2
 
-    logging.debug(f"lacss_server: precompile the model")
+    logger.debug(f"lacss_server: precompile the model")
 
     _ = model.predict(np.ones([384, 384, 384, 3]), output_type="_raw")
     _ = model.predict(np.ones([544, 544, 3]), output_type="_raw")
@@ -293,7 +307,7 @@ def main(
     compression: bool = True,
     f16: bool = False,
 ):
-    logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     if modelpath is None:
         show_urls()
@@ -303,10 +317,10 @@ def main(
 
     model = get_predictor(modelpath, f16)
 
-    logging.info(f"lacss_server: default backend is {jax.default_backend()}")
+    logger.info(f"lacss_server: default backend is {jax.default_backend()}")
 
     if jax.default_backend() == "cpu":
-        logging.warning(
+        logger.warning(
             f"lacss_server: WARNING: No GPU configuration. This might be very slow ..."
         )
 
@@ -345,7 +359,7 @@ def main(
     else:
         server.add_insecure_port(f"{ip}:{port}")
 
-    logging.info(f"lacss_server: listening on port {port}")
+    logger.info(f"lacss_server: listening on port {port}")
 
     print("server starting ... ready")
 
