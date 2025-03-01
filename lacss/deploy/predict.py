@@ -194,7 +194,7 @@ class Predictor:
         self._model_fn = jax.jit(self.module.apply) # FIXME this locks down model hyperparameter
 
 
-    def _resize_image(self, image, target_shape, normalize=True):
+    def _resize_image(self, image, target_shape):
         from skimage.transform import resize
 
         # process the data in float32 to avoid overflow
@@ -202,11 +202,11 @@ class Predictor:
 
         image = image.astype("float32")
 
+        image = image / (image.std() + 1e-4)
+        padding_value = image.mean()
+        image -= padding_value
+
         orig_shape = image.shape[:-1]
-        
-        if normalize:
-            image = image - image.mean()
-            image = image / (image.std() + 1e-6)
 
         if target_shape is None: 
             target_shape = np.array(orig_shape)
@@ -227,7 +227,7 @@ class Predictor:
 
         logger.debug(f"resized image data from {orig_shape} to {target_shape}")
 
-        return image, target_shape
+        return image, target_shape, padding_value
 
 
     def _compute_contours_2d(self, predictions, img_sz, threshold):
@@ -257,6 +257,7 @@ class Predictor:
                     mask[k] = False
                 else:
                     box = np.r_[polygon.min(axis=0), polygon.max(axis=0)]
+                    box = box[[1,0,3,2]]
                     if (box[:2] >= img_sz).any() or (box[2:] <= 0).any():
                         mask[k] = False
                     else:
@@ -270,7 +271,7 @@ class Predictor:
         scores = np.array(predictions['scores'])[mask]
 
         bboxes = np.array(bboxes).reshape(-1, 4)
-        
+
         return scores, polygons, bboxes
 
 
@@ -321,13 +322,13 @@ class Predictor:
             return self._compute_contours_2d(predictions, img_sz, threshold)
 
 
-    def _call_model(self, patch, score_threshold, size_threshold, threshold):
+    def _call_model(self, patch, score_threshold, size_threshold, threshold, padding_value):
         """ Core inference routine:
         1. Pad input image to regular size and call model function
         2. clean up results
         3. compute contours
         """
-        logger.info(f"process image patch of {patch.shape}")
+        logger.debug(f"process image patch of {patch.shape}")
 
         # pad image to fixed input sizes
         patch_sz = patch.shape[:-1]
@@ -354,7 +355,7 @@ class Predictor:
                 [0, 0],
             ]
 
-        patch = np.pad(patch, padding_shape)
+        patch = np.pad(patch, padding_shape, constant_values=padding_value)
 
         # make 3-ch
         if patch.shape[-1] == 1:
@@ -364,7 +365,7 @@ class Predictor:
             patch = np.stack([patch, np.zeros_like(patch[..., :1])], axis=-1)
 
 
-        logger.info(f"pad patch to shape: {patch.shape}")
+        logger.debug(f"pad patch to shape: {patch.shape}")
 
         if isinstance(self.params, Mapping):
             predictions = self._model_fn(dict(params=self.params), patch)["predictions"]
@@ -374,7 +375,7 @@ class Predictor:
         # clean up
         mask = predictions["segmentation_is_valid"]
 
-        logger.info(f"obtained model prediction of {np.count_nonzero(mask)} cells")
+        logger.debug(f"obtained model prediction of {np.count_nonzero(mask)} cells")
 
         mask &= predictions["scores"] >= score_threshold
         if size_threshold > 0:
@@ -387,12 +388,12 @@ class Predictor:
 
         predictions["segmentation_is_valid"] = mask
 
-        logger.info(f"found {np.count_nonzero(mask)} cells after clean up")
+        logger.debug(f"found {np.count_nonzero(mask)} cells after clean up")
 
         # additional computation
         scores, contours, bboxes = self._compute_contours(predictions, patch_sz, threshold)
 
-        logger.info(f"done converting results to contours.")
+        logger.debug(f"done converting results to contours.")
 
         assert scores.shape[0] == len(bboxes)
         assert scores.shape[0] == len(contours)
@@ -412,7 +413,7 @@ class Predictor:
         return  ~removal
 
 
-    def _process_image(self, image, score_threshold, size_threshold, threshold):
+    def _process_image(self, image, score_threshold, size_threshold, threshold, padding_value):
         """ process a 2d/3d image in grids
         """
         img_sz = image.shape[:-1]
@@ -437,12 +438,19 @@ class Predictor:
             patch = image.__getitem__(tuple(slices))
             patch_sz = patch.shape[:-1]
 
-            scores, contours, bboxes = self._call_model(patch, score_threshold, size_threshold, threshold)
+            scores, contours, bboxes = self._call_model(
+                patch,
+                score_threshold, 
+                size_threshold, 
+                threshold,
+                padding_value,
+            )
 
             logger.debug(f"processing patch results")
 
-            mask = self._mark_edge_instances(bboxes, pos, patch_sz, img_sz)
-    
+            # mask = self._mark_edge_instances(bboxes, pos, patch_sz, img_sz)
+            mask = np.ones([bboxes.shape[0]], dtype=bool) 
+
             bboxes += np.r_[pos, pos]
 
             if img_dim == 3:
@@ -649,7 +657,6 @@ class Predictor:
         score_threshold: float = 0.5,
         segmentation_threshold: float = 0.5,
         nms_iou: float = 1,
-        normalize: bool = True,
         remove_out_of_bound: bool|None = None,
     ) -> dict:
         """Predict segmentation.
@@ -708,17 +715,18 @@ class Predictor:
         img_shape = image.shape[:-1]
         dim = len(img_shape)
 
-        image, reshape_to = self._resize_image(image, reshape_to, normalize=normalize)
+        image, reshape_to, padding_value = self._resize_image(image, reshape_to)
 
         scaling = reshape_to / img_shape
 
         logger.debug(f"done preprocessing")
 
         predictions = self._process_image(
-            image, 
+            image,
             score_threshold, 
             min_area * np.prod(scaling),
             math.log(segmentation_threshold / (1 - segmentation_threshold)),
+            padding_value,
         )
 
         logger.debug(f"post processing ...")
