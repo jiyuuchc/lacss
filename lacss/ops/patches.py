@@ -17,13 +17,20 @@ from .image import sub_pixel_samples
 
 Shape = Sequence[int]
 
-def gather_patches(source:Array, locations:ArrayLike, patch_size:int|tuple[int], *, padding_value=0):
-    """ gather patches from an array
+
+def gather_patches(
+    source: Array,
+    locations: ArrayLike,
+    patch_size: int | tuple[int],
+    *,
+    padding_value=0,
+):
+    """gather patches from an array
 
     Args:
         source: [D1..dk, ...]
         locations: [N, k] top-left coords of the patches, negative (out-of-bound) is ok
-        patch_size: size of the patch. 
+        patch_size: size of the patch.
     Keyward Args:
         padding_value: value for out-of-bound locations
 
@@ -36,7 +43,9 @@ def gather_patches(source:Array, locations:ArrayLike, patch_size:int|tuple[int],
         raise ValueError(f"locations must be a 2d array, got shape {locations.shape}")
 
     if source.ndim < dim:
-        raise ValueError(f"location has {dim} values, but the source data is less than {dim}-dim.")
+        raise ValueError(
+            f"location has {dim} values, but the source data is less than {dim}-dim."
+        )
 
     if isinstance(patch_size, int):
         patch_size = (patch_size,) * dim
@@ -45,40 +54,43 @@ def gather_patches(source:Array, locations:ArrayLike, patch_size:int|tuple[int],
         raise ValueError(f"length of patch_size does not match location shape.")
 
     src_shape = source.shape
-    source = source.reshape(src_shape[:dim]+(-1,)) # [D1..Dk, B]
+    source = source.reshape(src_shape[:dim] + (-1,))  # [D1..Dk, B]
 
     slices = [slice(d) for d in patch_size]
-    grid = jnp.mgrid[slices] + jnp.expand_dims(locations, axis=range(2, 2+dim)) # [N, k, d1..dk]
-    grid = grid.swapaxes(0, 1) # [k, N, d1..dk]
+    grid = jnp.mgrid[slices] + jnp.expand_dims(
+        locations, axis=range(2, 2 + dim)
+    )  # [N, k, d1..dk]
+    grid = grid.swapaxes(0, 1)  # [k, N, d1..dk]
 
-    patches = source[tuple(grid)] # [N, d1..dk, B]
-    max_d = jnp.expand_dims(jnp.asarray(src_shape[:dim]), axis=range(1, dim+2))
-    valid_loc = ((grid >= 0) & (grid<max_d)).all(axis=0) # [N, d1..dk]
+    patches = source[tuple(grid)]  # [N, d1..dk, B]
+    max_d = jnp.expand_dims(jnp.asarray(src_shape[:dim]), axis=range(1, dim + 2))
+    valid_loc = ((grid >= 0) & (grid < max_d)).all(axis=0)  # [N, d1..dk]
     patches = jnp.where(
         valid_loc[..., None],
         patches,
-        padding_value,       
-    ) # clear out-of-bound locations
+        padding_value,
+    )  # clear out-of-bound locations
 
     patches = patches.reshape(patches.shape[:-1] + src_shape[dim:])
 
     return patches
 
+
 def _get_patch_data(pred):
     if isinstance(pred, dict):
         patches = pred["segmentations"].squeeze()
 
-        if "segmentation_y_coords" in pred:# backward compatibility
+        if "segmentation_y_coords" in pred:  # backward compatibility
             yc = pred["segmentation_y_coords"]
             xc = pred["segmentation_x_coords"]
-        else: 
+        else:
             ps = patches.shape[-1]
             yc, xc = jnp.mgrid[:ps, :ps]
             yc = yc + pred["segmentation_y0_coord"][:, None, None]
             xc = xc + pred["segmentation_x0_coord"][:, None, None]
     else:
         patches, yc, xc = pred
-        patches = patches.squeeze() #FIXME 
+        patches = patches.squeeze()  # FIXME
 
     # not true for stacks
     # assert patches.ndim == yc.ndim
@@ -86,7 +98,13 @@ def _get_patch_data(pred):
     return patches, yc, xc
 
 
-def bboxes_of_patches(pred: dict, threshold: float = 0, *, image_shape:tuple|None = None, is2d:bool|None=None) -> jnp.ndarray:
+def bboxes_of_patches(
+    pred: dict,
+    threshold: float = 0,
+    *,
+    image_shape: tuple | None = None,
+    is2d: bool | None = None,
+) -> jnp.ndarray:
     """Compute the instance bboxes from model predictions
 
     Args:
@@ -106,10 +124,10 @@ def bboxes_of_patches(pred: dict, threshold: float = 0, *, image_shape:tuple|Non
     x0 = pred["segmentation_x0_coord"]
 
     n, d0, d1, d2 = patches.shape
-    z_mask = jnp.any(patches > threshold, axis=(2,3))
-    y_mask = jnp.any(patches > threshold, axis=(1,3))
-    x_mask = jnp.any(patches > threshold, axis=(1,2))
-    
+    z_mask = jnp.any(patches > threshold, axis=(2, 3))
+    y_mask = jnp.any(patches > threshold, axis=(1, 3))
+    x_mask = jnp.any(patches > threshold, axis=(1, 2))
+
     min_z = z_mask.argmax(axis=1)
     max_z = d0 - z_mask[:, ::-1].argmax(axis=1)
 
@@ -135,9 +153,9 @@ def bboxes_of_patches(pred: dict, threshold: float = 0, *, image_shape:tuple|Non
             h, w = image_shape
         else:
             d, h, w = image_shape
-        min_z = np.clip(min_z, 0, d-1)
-        min_y = np.clip(min_y, 0, h-1)
-        min_x = np.clip(min_x, 0, w-1)
+        min_z = np.clip(min_z, 0, d - 1)
+        min_y = np.clip(min_y, 0, h - 1)
+        min_x = np.clip(min_x, 0, w - 1)
         max_z = np.clip(max_z, 1, d)
         max_y = np.clip(max_y, 1, h)
         max_x = np.clip(max_x, 1, w)
@@ -188,7 +206,7 @@ def patches_to_label(
     if score_threshold > 0:
         mask &= pred["scores"] >= score_threshold
 
-    assert label.ndim == 3, f'invalid input_size {input_size}'
+    assert label.ndim == 3, f"invalid input_size {input_size}"
     assert mask.ndim == 1
 
     patches = pred["segmentations"]
@@ -202,13 +220,15 @@ def patches_to_label(
     label = label.at[zz, yy, xx].max(jnp.where(cmask, pr, 0))
 
     label = jnp.where(label, label.max() + 1 - label, 0)
-    
+
     if len(input_size) == 2:
         label = label.squeeze(0)
 
     return label
 
+
 _sampling_op = jax.vmap(partial(sub_pixel_samples, edge_indexing=True))
+
 
 def rescale_patches(
     pred: DataDict, scale: float, *, transform_logits: bool = True
@@ -257,8 +277,14 @@ def rescale_patches(
     return new_patch, yy, xx
 
 
-def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = (48,48), convert_logits:bool=False):
-    """ crop and rescale all instances to a target_size
+def crop_and_resize_patches(
+    pred: dict,
+    bboxes,
+    *,
+    target_shape: tuple[int, ...] = (48, 48),
+    convert_logits: bool = False,
+):
+    """crop and rescale all instances to a target_size
 
     Args:
         pred: model predictions
@@ -266,7 +292,7 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
     Keyward Args:
         target_shape: output shape. usually a 3-tuple but can be a 2-tuple if input is a 2D image.
         convert_logits: whether to convert the logits to probability
-    
+
     Returns:
         Array [N] + target_shape.
     """
@@ -280,13 +306,13 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
     if bboxes.shape[-1] == 4:
         assert patches.shape[1] == 1, f"bboxes are for 2d but the patches are 3d"
         bboxes = jnp.c_[
-            jnp.zeros_like(bboxes[:, 0]), 
+            jnp.zeros_like(bboxes[:, 0]),
             bboxes[:, :2],
-            jnp.ones_like(bboxes[:, 0]), 
+            jnp.ones_like(bboxes[:, 0]),
             bboxes[:, 2:],
         ]
 
-    bboxes = bboxes - jnp.c_[z0, y0, x0, z0, y0, x0] # relative to instance crops
+    bboxes = bboxes - jnp.c_[z0, y0, x0, z0, y0, x0]  # relative to instance crops
 
     target_shape = tuple(target_shape)
     if len(target_shape) == 2:
@@ -294,7 +320,7 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
         target_size_ = (1,) + target_shape
     else:
         target_size_ = target_shape
-    
+
     if convert_logits:
         patches = jax.nn.sigmoid(patches)
 
@@ -302,17 +328,18 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
         patches,
         bboxes,
     )
-    
+
     if len(target_shape) == 2:
         segs = segs.squeeze(1)
-        
+
     return segs
 
+
 # def merge_patches(
-#         preds:dict, 
-#         input_size:tuple[int,...], 
-#         *, 
-#         min_score:float=0.5, 
+#         preds:dict,
+#         input_size:tuple[int,...],
+#         *,
+#         min_score:float=0.5,
 #         reduction:str="sum",
 #         convert_logits:bool=False,
 # )->Array:
@@ -325,7 +352,7 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
 #     instances = preds["segmentations"]
 #     if convert_logits:
 #         instances = jax.nn.sigmoid(instances) #[N, sz, sy, sx]
-    
+
 #     sz, sy, sx = instances.shape[-3:]
 #     pz, py, px = sz//2+1, sy//2+1, sx//2+1
 #     zc, yc, xc = jnp.mgrid[:sz, :sy, :sx]
@@ -348,8 +375,8 @@ def crop_and_resize_patches(pred:dict, bboxes, *, target_shape:tuple[int,...] = 
 #     return merged
 
 
-def coords_of_patches(preds:dict, image_shape:tuple[int, ...])->tuple[Array, Array]:
-    """ get the zyx coordinates of segmentations
+def coords_of_patches(preds: dict, image_shape: tuple[int, ...]) -> tuple[Array, Array]:
+    """get the zyx coordinates of segmentations
 
     Args:
         preds: the model prediction dictionary
@@ -359,20 +386,24 @@ def coords_of_patches(preds:dict, image_shape:tuple[int, ...])->tuple[Array, Arr
         coordinates: integer tensor of shape: (3,) + preds['segmentations'].shape
         boolan_masks: boolean tensor indicating whether the coordinate is a real one of padding.
     """
-    locs = jnp.stack([ 
-        preds["segmentation_z0_coord"],
-        preds["segmentation_y0_coord"],
-        preds["segmentation_x0_coord"],
-    ]) #[3, N]
+    locs = jnp.stack(
+        [
+            preds["segmentation_z0_coord"],
+            preds["segmentation_y0_coord"],
+            preds["segmentation_x0_coord"],
+        ]
+    )  # [3, N]
 
-    sz, sy, sx = preds['segmentations'].shape[1:4] 
+    sz, sy, sx = preds["segmentations"].shape[1:4]
     if len(image_shape) == 2:
         assert sz == 1, f"2d image_shape but 3d predictions"
         image_shape = (1,) + tuple(image_shape)
 
-    coords = jnp.mgrid[:sz, :sy, :sx] # [3, sz, sy, sx]
-    coords = coords[:, None, ...] + locs[..., None, None, None] #[3, N, sz, sy, sx]
-    mask = (coords >= 0).all(axis=0) & (jnp.moveaxis(coords, 0, -1) < jnp.asarray(image_shape)).all(axis=-1)
+    coords = jnp.mgrid[:sz, :sy, :sx]  # [3, sz, sy, sx]
+    coords = coords[:, None, ...] + locs[..., None, None, None]  # [3, N, sz, sy, sx]
+    mask = (coords >= 0).all(axis=0) & (
+        jnp.moveaxis(coords, 0, -1) < jnp.asarray(image_shape)
+    ).all(axis=-1)
     mask = mask & preds["segmentation_is_valid"][:, None, None, None]
 
     return coords, mask

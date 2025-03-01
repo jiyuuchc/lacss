@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pathlib
-from typing import Union, Mapping, Any, Sequence
+from typing import Any, Mapping, Sequence, Union
 
 import optax
 from jax import Array

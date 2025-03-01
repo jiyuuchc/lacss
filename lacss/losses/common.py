@@ -8,13 +8,15 @@ from xtrain import unpack_x_y_sample_weight
 
 from ..typing import *
 
+
 def get_image_shape(batch):
     inputs, _, _ = unpack_x_y_sample_weight(batch)
-    img = inputs['image']
+    img = inputs["image"]
     if img.ndim == 3:
         return (1,) + img.shape[:2]
     else:
         return img.shape[:3]
+
 
 def generalized_binary_loss(
     logits: ArrayLike, gt: ArrayLike, gamma: int | float, beta: int | float

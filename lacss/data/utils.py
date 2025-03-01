@@ -1,10 +1,12 @@
-from functools import wraps, partial
-import numpy as np
+from functools import partial, wraps
+
 import jax
+import numpy as np
+
 
 def image_standardization(img):
     img = img - img.mean()
-    axis = tuple(range(img.ndim-1))
+    axis = tuple(range(img.ndim - 1))
     img = img / img.std(axis=axis, keepdims=True)
 
     if img.shape[-1] == 1:

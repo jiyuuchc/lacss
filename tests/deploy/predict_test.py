@@ -1,5 +1,6 @@
 import pytest
 
+
 def test_predict(model, test_image_2d):
     label = model.predict(test_image_2d)["pred_label"]
 
@@ -13,33 +14,33 @@ def test_predict(model, test_image_2d):
 
     preds = model.predict(test_image_2d, output_type="contour")
 
-    assert len(preds['pred_scores']) == 22
-    assert len(preds['pred_contours']) == 22
+    assert len(preds["pred_scores"]) == 22
+    assert len(preds["pred_contours"]) == 22
 
 
 def test_predict_3d(model, test_image_3d):
     preds = model.predict(
-        test_image_3d, 
+        test_image_3d,
         score_threshold=0.3,
         reshape_to=(60, 256, 256),
         nms_iou=0.4,
     )
 
-    n_preded = len(preds['pred_scores'])
+    n_preded = len(preds["pred_scores"])
 
-    assert len(preds['pred_scores']) > 0
-    assert len(preds['pred_scores']) == preds['pred_label'].max()
+    assert len(preds["pred_scores"]) > 0
+    assert len(preds["pred_scores"]) == preds["pred_label"].max()
 
     preds = model.predict(
-        test_image_3d, 
+        test_image_3d,
         score_threshold=0.3,
         reshape_to=(60, 256, 256),
         nms_iou=0.4,
         output_type="contour",
     )
 
-    assert len(preds['pred_scores']) == n_preded
-    assert len(preds['pred_scores']) == len(preds['pred_contours'])
+    assert len(preds["pred_scores"]) == n_preded
+    assert len(preds["pred_scores"]) == len(preds["pred_contours"])
 
 
 def test_f16_predict(model_f16, test_image_2d, test_image_3d):
@@ -57,11 +58,11 @@ def test_f16_predict(model_f16, test_image_2d, test_image_3d):
 
     preds = model.predict(test_image_2d, output_type="contour")
 
-    assert len(preds['pred_scores']) == 22
-    assert len(preds['pred_contours']) == 22
+    assert len(preds["pred_scores"]) == 22
+    assert len(preds["pred_contours"]) == 22
 
     # preds = model.predict(
-    #     test_image_3d, 
+    #     test_image_3d,
     #     score_threshold=0.3,
     #     reshape_to=(60, 256, 256),
     #     nms_iou=0.4,

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+
 import ml_collections
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 import tensorflow_datasets as tfds
 
 import lacss.data.augment as augment
@@ -12,6 +13,7 @@ import lacss.data.augment as augment
 INPUT_PADDING = 768
 IMG_SIZE = [544, 544]
 CELL_SZ = 32
+
 
 def _standardize(image):
     image = tf.image.per_image_standardization(image)
@@ -22,13 +24,14 @@ def _standardize(image):
 
     return tf.ensure_shape(image, [None, None, 3])
 
+
 def augment(x, crop_size=IMG_SIZE, s=None):
     image = x["image"] / tf.reduce_max(x["image"])
     gamma = tf.random.uniform([], 0.75, 1.25)
     image = tf.image.adjust_gamma(image, gamma)
 
     channels = tf.random.shuffle(tf.range(tf.shape(image)[-1]))
-    image = tf.gather(image, channels, axis=-1) # ch shuffle
+    image = tf.gather(image, channels, axis=-1)  # ch shuffle
 
     x["image"] = _standardize(image)
 
@@ -40,41 +43,47 @@ def augment(x, crop_size=IMG_SIZE, s=None):
     min_scale, max_scale = s * 0.75, s * 1.25
     scaling_y = tf.random.uniform([], min_scale, max_scale)
     scaling_x = tf.random.uniform([], min_scale, max_scale)
-    h, w  = crop_size
-    crop_sz = ( 
-        int(tf.round( float(h) / scaling_y )), 
-        int(tf.round( float(w) / scaling_x )),
+    h, w = crop_size
+    crop_sz = (
+        int(tf.round(float(h) / scaling_y)),
+        int(tf.round(float(w) / scaling_x)),
     )
 
     x = augment.random_crop_or_pad(x, target_size=crop_sz, area_ratio_threshold=0.5)
-    x = augment.resize(x, target_size = crop_size)
+    x = augment.resize(x, target_size=crop_size)
 
     x = augment.flip_up_down(x, p=0.5)
     x = augment.flip_left_right(x, p=0.5)
 
-    x['image'] = tf.ensure_shape(x['image'], crop_size + [3])
+    x["image"] = tf.ensure_shape(x["image"], crop_size + [3])
 
     if "masks" in x:
         return dict(
-            image=x['image'], centroids=x['centroids'], bboxes=x['bboxes'], masks=x['masks']
+            image=x["image"],
+            centroids=x["centroids"],
+            bboxes=x["bboxes"],
+            masks=x["masks"],
         )
     else:
-        return dict(
-            image=x['image'], centroids=x['centroids'], bboxes=x['bboxes']
-        )        
+        return dict(image=x["image"], centroids=x["centroids"], bboxes=x["bboxes"])
+
 
 def check_cell_number(x):
-    n_cells = tf.shape(x['centroids'])[0]
-    return n_cells >=4 and n_cells < INPUT_PADDING
+    n_cells = tf.shape(x["centroids"])[0]
+    return n_cells >= 4 and n_cells < INPUT_PADDING
+
 
 def format_train_data(x):
-    n_cells = tf.shape(x['centroids'])[0]
+    n_cells = tf.shape(x["centroids"])[0]
     padding = INPUT_PADDING - n_cells
-    locs = tf.pad(x['centroids'], [[0, padding], [0,0]], constant_values=-1.0)
-    bboxes = tf.pad(x['bboxes'], [[0, padding], [0,0]], constant_values=-1.0)
-    masks = tf.pad(x['masks'], [[0, padding], [0,0], [0,0]], constant_values=-1.0)
-    return dict(image=x['image'], gt_locations=locs), dict(gt_bboxes=bboxes, gt_masks=masks)
-    
+    locs = tf.pad(x["centroids"], [[0, padding], [0, 0]], constant_values=-1.0)
+    bboxes = tf.pad(x["bboxes"], [[0, padding], [0, 0]], constant_values=-1.0)
+    masks = tf.pad(x["masks"], [[0, padding], [0, 0], [0, 0]], constant_values=-1.0)
+    return dict(image=x["image"], gt_locations=locs), dict(
+        gt_bboxes=bboxes, gt_masks=masks
+    )
+
+
 def _get_ds(name, split="train"):
     return (
         tfds.load(name, split=split)
@@ -82,28 +91,30 @@ def _get_ds(name, split="train"):
         .repeat()
     )
 
+
 def format_test_data(x, target_size=IMG_SIZE, s=None):
 
-    x['image'] = _standardize(x["image"])
+    x["image"] = _standardize(x["image"])
 
     if s is None:
         box = x["bboxes"]
         max_dim = tf.maximum(box[:, 2] - box[:, 0], box[:, 3] - box[:, 1])
         s = 32 / tf.reduce_mean(max_dim)
-    h, w  = IMG_SIZE
-    crop_sz = ( 
-        int(tf.round( float(h) / s )), 
-        int(tf.round( float(w) / s )),
+    h, w = IMG_SIZE
+    crop_sz = (
+        int(tf.round(float(h) / s)),
+        int(tf.round(float(w) / s)),
     )
 
     x = augment.random_crop_or_pad(x, target_size=crop_sz, area_ratio_threshold=0.5)
-    x = augment.resize(x, target_size = target_size)
+    x = augment.resize(x, target_size=target_size)
 
-    return dict(image=x['image']), dict(
+    return dict(image=x["image"]), dict(
         gt_locations=x["centroids"],
         gt_bboxes=x["bboxes"],
         gt_masks=x["masks"],
     )
+
 
 def get_config():
     from lacss.modules import Lacss
@@ -118,10 +129,10 @@ def get_config():
                 _get_ds("livecell"),
                 _get_ds("nips"),
                 _get_ds("nuclei_net"),
-                _get_ds("a431"), 
-                _get_ds("ovules_2d")
+                _get_ds("a431"),
+                _get_ds("ovules_2d"),
             ],
-            [.20, .30, .35, .05, .05, .05],
+            [0.20, 0.30, 0.35, 0.05, 0.05, 0.05],
         )
         .map(
             partial(augment.cutout, size=10, n=50),
@@ -137,9 +148,9 @@ def get_config():
     config.data = ml_collections.ConfigDict()
     config.data.ds_train = labeled_train_data
     config.data.ds_val = dict(
-        cellpose = tfds.load("cellpose", split="val").map(format_test_data),
-        livecell = tfds.load("livecell", split="val").map(format_test_data),
-        nips = tfds.load("nips", split="val").map(format_test_data),
+        cellpose=tfds.load("cellpose", split="val").map(format_test_data),
+        livecell=tfds.load("livecell", split="val").map(format_test_data),
+        nips=tfds.load("nips", split="val").map(format_test_data),
     )
     config.data.batch_size = 3
 
@@ -166,4 +177,3 @@ def get_config():
     # config.train.freeze = ["backbone/cnn"]
 
     return config
-    

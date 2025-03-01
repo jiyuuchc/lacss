@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from functools import partial
 
-import numpy as np
 import jax
+import numpy as np
 from jax.scipy.signal import convolve
 
 jnp = jax.numpy
@@ -20,38 +20,27 @@ def sorbel_edges_3d(images: ArrayLike) -> Array:
     Returns:
         Tensor holding edge maps for each channel. [3, n, d, h, w]
     """
-    kernels_z = jnp.array([
-       [[ 0, -1,  0],
-        [-1, -2, -1],
-        [ 0, -1,  0]],
-       [[ 0,  0,  0],
-        [ 0,  0,  0],
-        [ 0,  0,  0]],
-       [[ 0,  1,  0],
-        [ 1,  2,  1],
-        [ 0,  1,  0]]
-    ])        
-    kernels_y = jnp.array([
-       [[ 0, -1,  0],
-        [ 0,  0,  0],
-        [ 0,  1,  0]],
-       [[-1, -2, -1],
-        [ 0,  0,  0],
-        [ 1,  2,  1]],
-       [[ 0, -1,  0],
-        [ 0,  0,  0],
-        [ 0,  1,  0]]
-    ])
-    kernel_x = jnp.array([
-       [[ 0,  0,  0],
-        [-1,  0,  1],
-        [ 0,  0,  0]],
-       [[-1,  0,  1],
-        [-2,  0,  2],
-        [-1,  0,  1]],
-       [[ 0,  0,  0],
-        [-1,  0,  1],
-        [ 0,  0,  0]]])
+    kernels_z = jnp.array(
+        [
+            [[0, -1, 0], [-1, -2, -1], [0, -1, 0]],
+            [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+            [[0, 1, 0], [1, 2, 1], [0, 1, 0]],
+        ]
+    )
+    kernels_y = jnp.array(
+        [
+            [[0, -1, 0], [0, 0, 0], [0, 1, 0]],
+            [[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+            [[0, -1, 0], [0, 0, 0], [0, 1, 0]],
+        ]
+    )
+    kernel_x = jnp.array(
+        [
+            [[0, 0, 0], [-1, 0, 1], [0, 0, 0]],
+            [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+            [[0, 0, 0], [-1, 0, 1], [0, 0, 0]],
+        ]
+    )
     kernels = jnp.stack([kernels_z, kernels_y, kernel_x])
     sorbel_filter = jax.vmap(
         jax.vmap(
@@ -186,17 +175,22 @@ def sub_pixel_crop_and_resize(
     img = jnp.asarray(img)
     output_shape = tuple(output_shape)
 
-    assert bbox.shape[1] == len(output_shape), f"bbox dim is {bbox.shape[1]}, but output_shape dim is {len(output_shape)}."
-    assert bbox.shape[1] <= img.ndim, f"bbox dim is {bbox.shape[1]}, but img dim {img.ndim} is smaller."
+    assert bbox.shape[1] == len(
+        output_shape
+    ), f"bbox dim is {bbox.shape[1]}, but output_shape dim is {len(output_shape)}."
+    assert (
+        bbox.shape[1] <= img.ndim
+    ), f"bbox dim is {bbox.shape[1]}, but img dim {img.ndim} is smaller."
 
     delta = (bbox[1] - bbox[0]) / np.asarray(output_shape)
     slices = [slice(d) for d in output_shape]
     g = jnp.moveaxis(jnp.mgrid[slices], 0, -1)
     g = g * delta
     g = g + bbox[0] + delta / 2
-    
+
     return sub_pixel_samples(
-        img, g,
+        img,
+        g,
         out_of_bound_value=out_of_bound_value,
         edge_indexing=True,
     )

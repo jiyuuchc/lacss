@@ -1,26 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
 import ml_collections
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from cfg_2d import augment, check_cell_number, format_test_data, format_train_data
 
 from lacss.data.utils import gf_batch
 from lacss.modules.common import picklable_relu
-from cfg_2d import augment, check_cell_number, format_train_data, format_test_data
 
 DATAPATH = Path("/home/FCAM/jyu/datasets")
 IMG_SIZE = [544, 544]
 
-DATASET="livecell"
-#DATASET="cellpose:1.0.0"
+DATASET = "livecell"
+# DATASET="cellpose:1.0.0"
+
 
 def get_config(model="tiny"):
+    import flax.linen as nn
+
     import lacss.data
     from lacss.modules import Lacss
-    import flax.linen as nn
 
     config = ml_collections.ConfigDict()
     config.name = "lacss_livecell_test"

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import math
-from typing import Sequence, Callable, Any
+from typing import Any, Callable, Sequence
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from flax.linen import normalization
 
-from ..typing import ArrayLike, Array
-from .common import DefaultUnpicklerMixin, ChannelAttention
+from ..typing import Array, ArrayLike
+from .common import ChannelAttention, DefaultUnpicklerMixin
+
 
 class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
     """LACSS 3D segmentation head.
@@ -20,6 +21,7 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         instance_crop_size: Crop size for segmentation.
         pos_emb_shape: Dim of the learned position encoder.
     """
+
     n_layers: int = 1
 
     feature_scale: int = 4
@@ -36,13 +38,20 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
 
     def _get_patch(self, feature, locations):
         patch_shape = (self.patch_size,) * 3
-        locations = locations.astype(int) - jnp.asarray(patch_shape) // 2  # so we can use loc for indexing
-        coords = jnp.mgrid[:self.patch_size, :self.patch_size, :self.patch_size] + locations[..., None, None, None] # N, 3, PS, PS, PS
+        locations = (
+            locations.astype(int) - jnp.asarray(patch_shape) // 2
+        )  # so we can use loc for indexing
+        coords = (
+            jnp.mgrid[: self.patch_size, : self.patch_size, : self.patch_size]
+            + locations[..., None, None, None]
+        )  # N, 3, PS, PS, PS
 
-        limit = jnp.expand_dims(jnp.asarray(feature.shape[:-1]), (1,2,3))
+        limit = jnp.expand_dims(jnp.asarray(feature.shape[:-1]), (1, 2, 3))
 
-        valid_locs = (coords >= 0).all(axis=1) & (coords < limit).all(axis=1) # N, PS, PS
-        patches:Array = jnp.where(
+        valid_locs = (coords >= 0).all(axis=1) & (coords < limit).all(
+            axis=1
+        )  # N, PS, PS
+        patches: Array = jnp.where(
             valid_locs[..., None],
             feature[coords[:, 0], coords[:, 1], coords[:, 2]],
             0,
@@ -63,7 +72,6 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
 
         return x
 
-
     def _add_pos_encoding(self, patches, sig_vec):
         x = sig_vec
         x = nn.gelu(nn.Dense(self.sig_dim, dtype=self.dtype)(x))
@@ -72,11 +80,19 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         x = nn.Dense(math.prod(self.pos_emb_shape), dtype=self.dtype)(x)
         x = jax.image.resize(
             x.reshape(-1, *self.pos_emb_shape),
-            (patches.shape[0], self.patch_size, self.patch_size, self.patch_size, self.pos_emb_shape[-1]),
+            (
+                patches.shape[0],
+                self.patch_size,
+                self.patch_size,
+                self.patch_size,
+                self.pos_emb_shape[-1],
+            ),
             "linear",
         )
 
-        encoding = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(x) #[n, ps, ps, ps, dim]
+        encoding = nn.Dense(patches.shape[-1], use_bias=False, dtype=self.dtype)(
+            x
+        )  # [n, ps, ps, ps, dim]
 
         # xa_dim = self.pos_emb_res * self.pos_emb_res * self.pos_emb_dim
         # xa = nn.Dense(xa_dim, dtype=self.dtype)(x)
@@ -102,7 +118,6 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
 
         return patches
 
-
     @nn.compact
     def __call__(self, feature: Array, locations: Array) -> dict:
         """
@@ -123,11 +138,11 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
         x = feature
         dim = self.patch_dim
         for _ in range(self.n_layers):
-            x = nn.Conv(dim, (3,3,3), dtype=self.dtype)(x)
+            x = nn.Conv(dim, (3, 3, 3), dtype=self.dtype)(x)
             x = nn.gelu(x)
-        x = nn.Conv(dim, (3,3,3), dtype=self.dtype)(x)
+        x = nn.Conv(dim, (3, 3, 3), dtype=self.dtype)(x)
 
-        patches, patch_locs = self._get_patch(x, locations) # N, PS, PS, PS, ch
+        patches, patch_locs = self._get_patch(x, locations)  # N, PS, PS, PS, ch
 
         patches = ChannelAttention(dtype=self.dtype)(patches)
 
@@ -135,7 +150,9 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
 
         patches = self._add_pos_encoding(patches, patch_sigs)
 
-        logits = nn.ConvTranspose(1, (2, 2, 2), strides=(2, 2, 2), dtype=self.dtype)(patches)
+        logits = nn.ConvTranspose(1, (2, 2, 2), strides=(2, 2, 2), dtype=self.dtype)(
+            patches
+        )
         logits = logits.squeeze(-1)
 
         if self.full_scale_output:
@@ -143,7 +160,7 @@ class Segmentor3D(nn.Module, DefaultUnpicklerMixin):
             logits = jax.image.resize(logits, output_shape, "linear")
 
         instance_mask = locations[:, -1] >= 0
-        patch_locs:Array = jnp.where(
+        patch_locs: Array = jnp.where(
             instance_mask[:, None],
             patch_locs * self.feature_scale,
             -1,

@@ -258,8 +258,8 @@ def simple_generator(annotation_file: str, image_path: str) -> Iterator[dict]:
 def dataset_from_simple_annotations(
     annotation_file: str,
     image_path: str,
-    image_shape: Sequence[int|None]=[None, None, 1],
-    has_binary_mask: bool=False,
+    image_shape: Sequence[int | None] = [None, None, 1],
+    has_binary_mask: bool = False,
 ) -> "Dataset":
     """Obtaining a tensowflow dataset from simple annotatiion. See [simple_generator()](./#lacss.data.generator.simple_generator)
 
@@ -273,7 +273,7 @@ def dataset_from_simple_annotations(
         A tensorflow dataset object
     """
     import tensorflow as tf
-    
+
     ndim = len(image_shape) - 1
     output_signature = {
         "img_id": tf.TensorSpec([], dtype=tf.int64),
@@ -281,34 +281,41 @@ def dataset_from_simple_annotations(
         "centroids": tf.TensorSpec([None, ndim], dtype=tf.float32),
     }
     if has_binary_mask:
-        output_signature.update({
-            "image_mask": tf.TensorSpec(image_shape[:-1], dtype=tf.float32),
-        })
+        output_signature.update(
+            {
+                "image_mask": tf.TensorSpec(image_shape[:-1], dtype=tf.float32),
+            }
+        )
 
     return tf.data.Dataset.from_generator(
         lambda: simple_generator(annotation_file, image_path),
         output_signature=output_signature,
     )
 
-def _to_masks(label, boxes, target_shape=(8,48,48)):
+
+def _to_masks(label, boxes, target_shape=(8, 48, 48)):
     from lacss.ops import sub_pixel_crop_and_resize
+
     n = boxes.shape[0]
     ids = np.unique(label)[1:]
-    assert n==len(ids)
+    assert n == len(ids)
 
     masks = []
     for k in range(n):
         label_ = (label == ids[k]).astype("int32")
-        masks.append(np.asarray(
-            sub_pixel_crop_and_resize(label_, boxes[k], output_shape=target_shape)
-        ))
+        masks.append(
+            np.asarray(
+                sub_pixel_crop_and_resize(label_, boxes[k], output_shape=target_shape)
+            )
+        )
     return np.stack(masks)
+
 
 def img_mask_pair_generator(
     imgfiles: Sequence[str | Path],
     maskfiles: Sequence[str | Path],
     *,
-    mask_shape:tuple[int]|None = None,
+    mask_shape: tuple[int] | None = None,
 ) -> Iterator[dict]:
     """A generator function to produce image data labeled with segmentation labels.
         In this case, one has paired input images and label images as files on disk.
@@ -340,7 +347,7 @@ def img_mask_pair_generator(
         if len(img.shape) == 2:
             img = img[..., None]
         if img.shape[-1] > 3:
-            if img.shape[0] <=3:
+            if img.shape[0] <= 3:
                 img = np.moveaxis(img, 0, -1)
             else:
                 img = img[..., None]
@@ -355,10 +362,10 @@ def img_mask_pair_generator(
         for prop in regionprops(mask):
             bboxes.append(prop["bbox"])
             locs.append(prop["centroid"])
-        
+
         locs = np.asarray(locs, dtype="float32") + 0.5
         bboxes = np.asarray(bboxes)
-        
+
         if mask_shape is not None:
             mask_crops = _to_masks(mask, bboxes, target_shape=mask_shape)
 
@@ -369,7 +376,7 @@ def img_mask_pair_generator(
             "bboxes": bboxes,
             "label": mask,
         }
-        
+
         if mask_shape is not None:
             data["masks"] = mask_crops
 
@@ -450,7 +457,7 @@ def dataset_from_img_mask_pairs(
                 "img_id": tf.TensorSpec([], dtype=tf.int64),
                 "image": tf.TensorSpec(image_shape, dtype=tf.float32),
                 "centroids": tf.TensorSpec([None, ndim], dtype=tf.float32),
-                "bboxes": tf.TensorSpec([None, ndim*2], dtype=tf.float32),
+                "bboxes": tf.TensorSpec([None, ndim * 2], dtype=tf.float32),
                 "label": tf.TensorSpec(image_shape[:ndim], dtype=tf.int32),
                 "masks": tf.TensorSpec([None] + list(mask_shape), dtype=tf.float32),
             },
@@ -462,7 +469,7 @@ def dataset_from_img_mask_pairs(
                 "img_id": tf.TensorSpec([], dtype=tf.int64),
                 "image": tf.TensorSpec(image_shape, dtype=tf.float32),
                 "centroids": tf.TensorSpec([None, ndim], dtype=tf.float32),
-                "bboxes": tf.TensorSpec([None, ndim*2], dtype=tf.float32),
+                "bboxes": tf.TensorSpec([None, ndim * 2], dtype=tf.float32),
                 "label": tf.TensorSpec(image_shape[:ndim], dtype=tf.int32),
             },
         )

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import flax.linen as nn
 import jax
+
+from ..typing import Any, Array, ArrayLike, Sequence
 from .common import FFN, PositionEmbedding1D
-from ..typing import Any, Sequence, Array, ArrayLike
+
 jnp = jax.numpy
+
 
 class VideoIntegrator(nn.Module):
     n_heads: int = 4
@@ -13,7 +16,12 @@ class VideoIntegrator(nn.Module):
     dtype: Any = None
 
     @nn.compact
-    def __call__(self, feature:Sequence[ArrayLike], video_refs:tuple[Sequence[ArrayLike], ArrayLike|None], deterministic:bool=True)->Sequence[Array]:
+    def __call__(
+        self,
+        feature: Sequence[ArrayLike],
+        video_refs: tuple[Sequence[ArrayLike], ArrayLike | None],
+        deterministic: bool = True,
+    ) -> Sequence[Array]:
         ref_feature, ref_mask = video_refs
 
         out = []
@@ -29,15 +37,17 @@ class VideoIntegrator(nn.Module):
                 dropout_rate=self.dropout,
                 dtype=self.dtype,
             )(
-                inputs_q = x,
-                inputs_k = y + pos_embedding,
-                inputs_v = y,
+                inputs_q=x,
+                inputs_k=y + pos_embedding,
+                inputs_v=y,
                 deterministic=deterministic,
                 sow_weights=True,
                 mask=ref_mask,
             )
 
-            x = FFN(dropout_rate=self.ff_dropout, dtype=self.dtype)(x, deterministic=deterministic)
+            x = FFN(dropout_rate=self.ff_dropout, dtype=self.dtype)(
+                x, deterministic=deterministic
+            )
 
             x = x.squeeze(-2)
 

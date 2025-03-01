@@ -1,4 +1,5 @@
 from typing import Mapping
+
 # from .predict import Predictor
 
 model_urls: Mapping[str, str] = {
@@ -11,4 +12,3 @@ model_urls: Mapping[str, str] = {
 }
 
 model_urls["default"] = model_urls["lacss3-base"]
-

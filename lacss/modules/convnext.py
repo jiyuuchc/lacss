@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Optional, Sequence, Callable
+from typing import Callable, Optional, Sequence
 
 import flax.linen as nn
 import jax.numpy as jnp
-from flax.linen import normalization
-from flax.linen import activation
+from flax.linen import activation, normalization
 
-from ..typing import DataDict, Array, ArrayLike, Any
-from .common import DropPath, DefaultUnpicklerMixin, ChannelAttention, GRN
+from ..typing import Any, Array, ArrayLike, DataDict
+from .common import GRN, ChannelAttention, DefaultUnpicklerMixin, DropPath
 
 """ Implements the convnext encoder. Described in https://arxiv.org/abs/2201.03545
 Original implementation: https://github.com/facebookresearch/ConvNeXt
 """
 _LayerNorm = partial(nn.LayerNorm, epsilon=1e-6)
+
 
 class _Block(nn.Module):
     """ConvNeXt Block.
@@ -26,8 +26,8 @@ class _Block(nn.Module):
     drop_rate: float = 0.4
     kernel_size: int = 7
     se_ratio: int = 16
-    normalization: Callable=normalization.GroupNorm
-    activation: Callable[[ArrayLike], Array]=nn.gelu
+    normalization: Callable = normalization.GroupNorm
+    activation: Callable[[ArrayLike], Array] = nn.gelu
     version: str = "1"
     dtype: Any = None
 
@@ -75,16 +75,19 @@ class ConvNeXt(nn.Module, DefaultUnpicklerMixin):
     dims: Sequence[int] = (96, 192, 384, 768)
     drop_path_rate: float = 0.4
     kernel_size: int = 7
-    normalization: Callable=nn.GroupNorm
+    normalization: Callable = nn.GroupNorm
     se_ratio: int = 0
-    activation: Callable[[ArrayLike], Array]=nn.gelu
-    deterministic: bool|None = None
+    activation: Callable[[ArrayLike], Array] = nn.gelu
+    deterministic: bool | None = None
     version: str = "1"
     dtype: Any = None
 
     @nn.compact
     def __call__(
-        self, x: ArrayLike, *, deterministic: Optional[bool] = None,
+        self,
+        x: ArrayLike,
+        *,
+        deterministic: Optional[bool] = None,
     ) -> Sequence[Array]:
         """
         Args:
@@ -124,21 +127,51 @@ class ConvNeXt(nn.Module, DefaultUnpicklerMixin):
         return outputs
 
     @classmethod
-    def get_preconfigured(cls, model_type:str, patch_size=4, **kwargs):
+    def get_preconfigured(cls, model_type: str, patch_size=4, **kwargs):
         if model_type == "tiny":
-            return cls(patch_size, depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), se_ratio=16, **kwargs)
+            return cls(
+                patch_size,
+                depths=(3, 3, 9, 3),
+                dims=(96, 192, 384, 768),
+                se_ratio=16,
+                **kwargs,
+            )
         elif model_type == "small":
-            return cls(patch_size, depths=(3, 3, 27, 3), dims=(96, 192, 384, 768), se_ratio=16, **kwargs)
+            return cls(
+                patch_size,
+                depths=(3, 3, 27, 3),
+                dims=(96, 192, 384, 768),
+                se_ratio=16,
+                **kwargs,
+            )
         elif model_type == "base":
-            return cls(patch_size, depths=(3, 3, 27, 3), dims=(128, 256, 512, 1024), se_ratio=16, **kwargs)
+            return cls(
+                patch_size,
+                depths=(3, 3, 27, 3),
+                dims=(128, 256, 512, 1024),
+                se_ratio=16,
+                **kwargs,
+            )
         elif model_type == "large":
-            return cls(patch_size, depths=(3, 3, 27, 3), dims=(192, 384, 768, 1536), se_ratio=16, **kwargs)
+            return cls(
+                patch_size,
+                depths=(3, 3, 27, 3),
+                dims=(192, 384, 768, 1536),
+                se_ratio=16,
+                **kwargs,
+            )
         elif model_type == "x-large":
-            return cls(patch_size, depths=(3, 3, 27, 3), dims=(256, 512, 1024, 2048), se_ratio=16, **kwargs)
+            return cls(
+                patch_size,
+                depths=(3, 3, 27, 3),
+                dims=(256, 512, 1024, 2048),
+                se_ratio=16,
+                **kwargs,
+            )
         elif model_type == "tiny_v2":
             return cls(
-                patch_size, 
-                depths=(3, 3, 9, 3), 
+                patch_size,
+                depths=(3, 3, 9, 3),
                 dims=(96, 192, 384, 768),
                 se_ratio=-1,
                 normalization=_LayerNorm,
@@ -147,8 +180,8 @@ class ConvNeXt(nn.Module, DefaultUnpicklerMixin):
             )
         elif model_type == "base_v2":
             return cls(
-                patch_size, 
-                depths=(3, 3, 27, 3), 
+                patch_size,
+                depths=(3, 3, 27, 3),
                 dims=(128, 256, 512, 1024),
                 se_ratio=-1,
                 normalization=_LayerNorm,
@@ -157,8 +190,8 @@ class ConvNeXt(nn.Module, DefaultUnpicklerMixin):
             )
         elif model_type == "large_v2":
             return cls(
-                patch_size, 
-                depths=(3, 3, 27, 3), 
+                patch_size,
+                depths=(3, 3, 27, 3),
                 dims=(192, 384, 768, 1536),
                 se_ratio=-1,
                 normalization=_LayerNorm,
@@ -167,13 +200,13 @@ class ConvNeXt(nn.Module, DefaultUnpicklerMixin):
             )
         elif model_type == "huge_v2":
             return cls(
-                patch_size, 
-                depths=(3, 3, 27, 3), 
+                patch_size,
+                depths=(3, 3, 27, 3),
                 dims=(352, 704, 1408, 2816),
                 se_ratio=-1,
                 normalization=_LayerNorm,
                 version="2",
                 **kwargs,
-            )            
+            )
         else:
             raise ValueError(f"unknown model type {model_type}")

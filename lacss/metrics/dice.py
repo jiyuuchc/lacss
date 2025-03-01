@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+
 class Dice:
     """Compute instance Dice values"""
 
@@ -37,4 +38,3 @@ class Dice:
         dice = (pred_dice + gt_dice) / 2
 
         return dice
-

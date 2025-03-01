@@ -7,7 +7,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from xtrain import unpack_x_y_sample_weight
 
 from ..ops import *
@@ -107,8 +106,8 @@ class AP:
 
                 aps.append(np.sum(p_k[indicators == 1]) / self.cell_counts)
                 recalls.append(p_k / self.cell_counts)
-                accs.append(p_k / np.arange(1, len(indicators)+1))
-                
+                accs.append(p_k / np.arange(1, len(indicators) + 1))
+
             self._result = dict(zip(self.thresholds, aps))
             self._recall = dict(zip(self.thresholds, recalls))
             self._acc = dict(zip(self.thresholds, accs))
@@ -176,7 +175,7 @@ class BoxAP(AP):
 
     def update(self, batch, prediction):
         preds = prediction["predictions"]
-        if 'segmentations' in preds:
+        if "segmentations" in preds:
             _, labels, _ = unpack_x_y_sample_weight(batch)
             gt_bboxes = labels["gt_bboxes"]
 

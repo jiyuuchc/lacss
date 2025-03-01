@@ -1,7 +1,8 @@
 import numpy as np
 
+
 def linear_assignment(cost_matrix, thresh):
-    """ perform linear assignment 
+    """perform linear assignment
     Args:
         cost_matrix: M x N cost matrix
         thresh: max cost for valid assignment
@@ -14,7 +15,11 @@ def linear_assignment(cost_matrix, thresh):
     import lap
 
     if cost_matrix.size == 0:
-        return np.empty((0, 2), dtype=int), tuple(range(cost_matrix.shape[0])), tuple(range(cost_matrix.shape[1]))
+        return (
+            np.empty((0, 2), dtype=int),
+            tuple(range(cost_matrix.shape[0])),
+            tuple(range(cost_matrix.shape[1])),
+        )
 
     _, x, y = lap.lapjv(cost_matrix, extend_cost=True, cost_limit=thresh)
 

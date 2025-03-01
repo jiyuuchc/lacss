@@ -1,36 +1,33 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
-from functools import partial
 from copy import copy
+from functools import partial
+from typing import Any, Optional, Sequence
 
-import jax
 import flax.linen as nn
-import optax
+import jax
 import ml_collections
-
-from xtrain.utils import unpack_x_y_sample_weight, unpack_prediction_and_state, Inputs
-from xtrain.strategy import VMapped, TrainState, LossLog
+import optax
 from xtrain.base_trainer import TrainIterator
-
-from ..utils import deep_update
-from ..modules import ConvNeXt
-from ..ops import gradient_reversal
-from ..typing import ArrayLike, DataDict
-from .train import train_fn
+from xtrain.strategy import LossLog, TrainState, VMapped
+from xtrain.utils import Inputs, unpack_prediction_and_state, unpack_x_y_sample_weight
 
 from lacss.losses import (
+    aux_size_loss,
     cks_boundry_loss,
     collaborator_segm_loss,
-    self_supervised_instance_loss,
     instance_overlap_loss,
-    aux_size_loss,
+    self_supervised_instance_loss,
 )
 
-from ..modules import Lacss, UNet
-from ..typing import Array, Optimizer
+from ..modules import ConvNeXt, Lacss, UNet
+from ..ops import gradient_reversal
+from ..typing import Array, ArrayLike, DataDict, Optimizer
+from ..utils import deep_update
+from .train import train_fn
 
 jnp = jax.numpy
+
 
 class LacssCollaborator(nn.Module):
     """Collaborator module for semi-supervised Lacss training
@@ -83,35 +80,34 @@ class CKSModel(nn.Module):
         outputs = Inputs.apply(
             train_fn,
             self.principal,
-            config = self.config,
+            config=self.config,
         )(inputs)
 
-        outputs["predictions"].update(
-            Inputs.apply(self.collaborator)(inputs)
-        )
+        outputs["predictions"].update(Inputs.apply(self.collaborator)(inputs))
 
         sigma = self.config.get("sigma", 15.0)
         pi = self.config.get("pi", 2.0)
         w = self.config.get("w", 1e-3)
 
-        outputs['losses']['cks_loss'] = (
-            collaborator_segm_loss(kwargs, outputs, sigma=sigma, pi=pi) + 
-            cks_boundry_loss(kwargs, outputs) +
-            self_supervised_instance_loss(kwargs, outputs) + 
-            instance_overlap_loss(kwargs, outputs, soft_label=True) +
-            aux_size_loss(kwargs, outputs, weight=w)
+        outputs["losses"]["cks_loss"] = (
+            collaborator_segm_loss(kwargs, outputs, sigma=sigma, pi=pi)
+            + cks_boundry_loss(kwargs, outputs)
+            + self_supervised_instance_loss(kwargs, outputs)
+            + instance_overlap_loss(kwargs, outputs, soft_label=True)
+            + aux_size_loss(kwargs, outputs, weight=w)
         )
 
         return outputs
 
+
 def _init_cks(it, model, inputs):
     inputs = Inputs.from_value(inputs)
     rngs = it.rngs.copy()
-    rngs['params'] = jax.random.PRNGKey(123)
-    cks_params = Inputs.apply(model.collaborator.init, rngs)(inputs)['params']
+    rngs["params"] = jax.random.PRNGKey(123)
+    cks_params = Inputs.apply(model.collaborator.init, rngs)(inputs)["params"]
     params = dict(
-        principal = it.parameters,
-        collaborator = cks_params,
+        principal=it.parameters,
+        collaborator=cks_params,
     )
     state = TrainState.create(
         apply_fn=model.apply,
@@ -121,9 +117,9 @@ def _init_cks(it, model, inputs):
     it_ = copy(it)
     it_.train_state = state
     it_.loss_logs = [
-        LossLog("losses/lpn_detection_loss"), 
+        LossLog("losses/lpn_detection_loss"),
         LossLog("losses/lpn_localization_loss"),
-        LossLog("losses/cks_loss")
+        LossLog("losses/cks_loss"),
     ]
     it_.variables = {}
     it_.has_aux = False
@@ -133,7 +129,7 @@ def _init_cks(it, model, inputs):
 
 
 class CKS(VMapped):
-    var_key:str = "cks"
+    var_key: str = "cks"
     config: ml_collections.ConfigDict = ml_collections.ConfigDict()
 
     @classmethod
@@ -156,18 +152,20 @@ class CKS(VMapped):
 
         if label is None:
 
-            cks.parameters['principal'] = train_obj.parameters
+            cks.parameters["principal"] = train_obj.parameters
             cks_grad, (prediction, cks) = jax.grad(cls.loss_fn, has_aux=True)(
                 cks.parameters, cks, batch
             )
             cks.train_state = cks.train_state.apply_gradients(grads=cks_grad)
-            del cks.train_state.params['principal']
+            del cks.train_state.params["principal"]
 
-            grads = cks_grad['principal']
+            grads = cks_grad["principal"]
 
         else:
             grads, (prediction, train_obj) = jax.grad(cls.loss_fn, has_aux=True)(
-                train_obj.parameters, train_obj, batch,
+                train_obj.parameters,
+                train_obj,
+                batch,
             )
 
         train_obj.train_state = train_obj.train_state.apply_gradients(grads=grads)

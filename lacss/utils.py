@@ -3,6 +3,7 @@ import os
 import jax.numpy as jnp
 import numpy as np
 
+
 def _to_str(p):
     return "".join(p.astype(int).reshape(-1).astype(str).tolist())
 
@@ -86,6 +87,7 @@ def show_images(imgs, locs=None, **kwargs):
 
 def dataclass_from_dict(klass, dikt):
     import dataclasses
+
     try:
         fieldtypes = {f.name: f.type for f in dataclasses.fields(klass)}
         return klass(**{f: dataclass_from_dict(fieldtypes[f], dikt[f]) for f in dikt})
@@ -103,13 +105,16 @@ def load_from_pretrained(pretrained: str | os.PathLike):
     """
     import os
     import pickle
+
     from flax.core.frozen_dict import unfreeze
 
     if os.path.isdir(pretrained):
         # directory are orbax checkpoint
         import orbax.checkpoint as ocp
 
-        with open(os.path.join(os.path.dirname(pretrained), "..", "model.pkl"), "rb") as f:
+        with open(
+            os.path.join(os.path.dirname(pretrained), "..", "model.pkl"), "rb"
+        ) as f:
             module = pickle.load(f)
 
         cp_dir = os.path.abspath(pretrained)
@@ -118,7 +123,7 @@ def load_from_pretrained(pretrained: str | os.PathLike):
         else:
             params = ocp.StandardCheckpointer().restore(cp_dir)
 
-        params = ( params['train_state']['params'], )
+        params = (params["train_state"]["params"],)
 
     else:
         # uri or files were treated as pickled byte steam
@@ -149,7 +154,7 @@ def load_from_pretrained(pretrained: str | os.PathLike):
             except:
                 raise RuntimeError("Cannot interpet {cfg} as an Lacss model")
 
-    params = [ p['params'] if 'params' in p else p for p in params]
+    params = [p["params"] if "params" in p else p for p in params]
 
     if len(params) == 1:
         params = params[0]
@@ -158,7 +163,7 @@ def load_from_pretrained(pretrained: str | os.PathLike):
     # if not "cnn" in params['backbone']:
     #     params['backbone']['cnn'] = params['backbone']['ConvNeXt_0']
     #     del params['backbone']['ConvNeXt_0']
-    
+
     # if not "Scan_PatchOp_0" in params["segmentor"]:
     #     params = unfreeze(params)
     #     params['segmentor']['Scan_PatchOp_0']={}
@@ -211,9 +216,11 @@ def deep_update(d, u):
             d[k] = v
     return d
 
+
 def remove_dictkey(d, k):
     """recursively remove a key from a nested dict"""
     import collections.abc
+
     if not isinstance(d, collections.abc.Mapping):
         return
     if k in d:

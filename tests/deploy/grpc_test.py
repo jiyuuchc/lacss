@@ -1,10 +1,10 @@
-import pytest
-import grpc
-
 import biopb.image as proto
+import grpc
+import pytest
 from biopb.image.utils import serialize_from_numpy
 
 _MAX_MSG_SIZE = 1024 * 1024 * 16
+
 
 def test_grpc_2d(grpc_channel, test_image_2d):
     pixels = serialize_from_numpy(test_image_2d)
@@ -24,8 +24,7 @@ def test_grpc_2d(grpc_channel, test_image_2d):
         detection_settings=proto.DetectionSettings(
             nms_iou=0.4,
             scaling_hint=1.0,
-        )
-
+        ),
     )
 
     response = stub.RunDetection(request)
@@ -41,7 +40,7 @@ def test_grpc_3d(grpc_channel, test_image_3d):
         physical_size_z=4.0,
     )
 
-    stub = proto.ObjectDetectionStub(grpc_channel) 
+    stub = proto.ObjectDetectionStub(grpc_channel)
 
     request = proto.DetectionRequest(
         image_data=proto.ImageData(pixels=pixels),
@@ -49,7 +48,7 @@ def test_grpc_3d(grpc_channel, test_image_3d):
             min_score=0.3,
             nms_iou=0.4,
             scaling_hint=1.0,
-        )
+        ),
     )
 
     response = stub.RunDetection(request, timeout=120)

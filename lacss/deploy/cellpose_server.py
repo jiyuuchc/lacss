@@ -1,21 +1,20 @@
 import logging
-import traceback
 import threading
+import traceback
 from concurrent import futures
 
 import grpc
 import numpy as np
 import typer
-
 from cellpose import models
 
 from . import proto
-from .common import decode_image, TokenValidationInterceptor
+from .common import TokenValidationInterceptor, decode_image
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-_MAX_MSG_SIZE=1024*1024*128
-_TARGET_CELL_SIZE=30
+_MAX_MSG_SIZE = 1024 * 1024 * 128
+_TARGET_CELL_SIZE = 30
 
 
 def process_input(request: proto.DetectionRequest):
@@ -31,8 +30,8 @@ def process_input(request: proto.DetectionRequest):
 
     else:
         diameter = _TARGET_CELL_SIZE / (settings.scaling_hint or 1.0)
-    
-    if image.shape[0] == 1: # 2D
+
+    if image.shape[0] == 1:  # 2D
         image = image.squeeze(0)
 
     if image.shape[-1] > 1:
@@ -41,8 +40,8 @@ def process_input(request: proto.DetectionRequest):
         channels = [0, 0]
 
     kwargs = dict(
-        diameter = diameter,
-        channels = channels,
+        diameter=diameter,
+        channels=channels,
     )
 
     return image, kwargs
@@ -63,14 +62,14 @@ def process_result(preds, image):
         mask = rp.image.astype("uint8")
         c, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         c = np.array(c[0], dtype=float).squeeze(1)
-        c = c + np.array([rp.bbox[1] , rp.bbox[0]])
+        c = c + np.array([rp.bbox[1], rp.bbox[0]])
         c = c - 0.5
 
         scored_roi = proto.ScoredROI(
-            score = 1.0,
-            roi = proto.ROI(
-                polygon = proto.Polygon(points = [proto.Point(x=p[0], y=p[1]) for p in c]),
-            )
+            score=1.0,
+            roi=proto.ROI(
+                polygon=proto.Polygon(points=[proto.Point(x=p[0], y=p[1]) for p in c]),
+            ),
         )
 
         response.detections.append(scored_roi)
@@ -79,7 +78,6 @@ def process_result(preds, image):
 
 
 class CellposeServicer(proto.LacssServicer):
-
     def __init__(self, model):
         self.model = model
         self._lock = threading.RLock()
@@ -97,16 +95,19 @@ class CellposeServicer(proto.LacssServicer):
 
                 logging.info(f"received image {image.shape}")
 
-                preds = self.model.eval(image,  **kwargs,)
+                preds = self.model.eval(
+                    image,
+                    **kwargs,
+                )
 
                 response = process_result(preds, image)
 
                 logging.info(f"Reply with message of size {response.ByteSize()}")
 
                 return response
-            
+
             except ValueError as e:
-                
+
                 logging.error(repr(e))
 
                 logging.error(traceback.format_exc())
@@ -119,9 +120,9 @@ class CellposeServicer(proto.LacssServicer):
 
                 logging.error(traceback.format_exc())
 
-                context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
-
-
+                context.abort(
+                    grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
+                )
 
     def RunDetectionStream(self, request_iterator, context):
         with self._lock:
@@ -133,11 +134,13 @@ class CellposeServicer(proto.LacssServicer):
                     request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
 
                 if next_request.image_data.HasField("image_annotation"):
-                    request.image_data.image_annotation.CopyFrom(next_request.image_data.image_annotation)
-                
+                    request.image_data.image_annotation.CopyFrom(
+                        next_request.image_data.image_annotation
+                    )
+
                 if next_request.HasField("detection_settings"):
                     request.detection_settings.CopyFrom(next_request.detection_settings)
-                
+
                 if request.image_data.HasField("pixels"):
                     yield self.RunDetection(request, context)
 
@@ -149,7 +152,7 @@ def main(
     workers: int = 10,
     ip: str = "0.0.0.0",
     local: bool = False,
-    token: bool|None = None,
+    token: bool | None = None,
     debug: bool = False,
     compression: bool = True,
     gpu: bool = True,
@@ -157,9 +160,9 @@ def main(
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
-    print ("server starting ...")
+    print("server starting ...")
 
-    model = models.Cellpose(model_type = modeltype, gpu=gpu)
+    model = models.Cellpose(model_type=modeltype, gpu=gpu)
 
     if token is None:
         token = not local
@@ -179,13 +182,15 @@ def main(
 
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=workers),
-        compression=grpc.Compression.Gzip if compression else grpc.Compression.NoCompression,
+        compression=grpc.Compression.Gzip
+        if compression
+        else grpc.Compression.NoCompression,
         interceptors=(TokenValidationInterceptor(token_str),),
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
 
     proto.add_LacssServicer_to_server(
-        CellposeServicer(model), 
+        CellposeServicer(model),
         server,
     )
 
@@ -196,7 +201,7 @@ def main(
 
     logging.info(f"lacss_server: listening on port {port}")
 
-    print ("server starting ... ready")
+    print("server starting ... ready")
 
     server.start()
     server.wait_for_termination()
@@ -204,4 +209,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-

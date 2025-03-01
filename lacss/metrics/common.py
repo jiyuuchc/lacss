@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import numpy as np
 
+
 def compute_mask_its(pred_contour, gt_label):
     import cv2
     from skimage.measure import regionprops
-    from lacss.ops import box_intersection, box_area
+
+    from lacss.ops import box_area, box_intersection
 
     pred_polygons = pred_contour["pred_contours"]
     pred_bboxes = pred_contour["pred_bboxes"]
-    pred_areas = np.array([ cv2.contourArea(ct.astype(int)) for ct in pred_polygons])
+    pred_areas = np.array([cv2.contourArea(ct.astype(int)) for ct in pred_polygons])
 
     if gt_label.shape[-1] == 1:
         gt_label = gt_label.squeeze(-1)
     dim = gt_label.ndim
-    
+
     rps = regionprops(gt_label)
     gt_bboxes = np.stack([rp.bbox for rp in rps])
     gt_areas = np.stack([rp.area for rp in rps])
@@ -24,6 +26,7 @@ def compute_mask_its(pred_contour, gt_label):
     mask_its = np.zeros_like(box_its, dtype=int)
 
     h, w = gt_label.shape
+
     def _get_its(pred_id, gt_id):
         polygon = pred_polygons[pred_id].astype(int)
 
@@ -34,12 +37,10 @@ def compute_mask_its(pred_contour, gt_label):
 
             gt_coords = rps[gt_id].coords
 
-            return np.count_nonzero(
-                img[(gt_coords[:,0], gt_coords[:,1])]
-            )
+            return np.count_nonzero(img[(gt_coords[:, 0], gt_coords[:, 1])])
 
         else:
-            return 0        
+            return 0
 
     ids = np.where(box_its > 0)
     mask_its[ids] = [_get_its(pid, gid) for pid, gid in zip(*ids)]

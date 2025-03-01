@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from ..typing import Array, ArrayLike
 
+
 class UNet(nn.Module):
     model_spec: Sequence[int] = (32, 64, 128, 256, 512)
     patch_size: int = 1

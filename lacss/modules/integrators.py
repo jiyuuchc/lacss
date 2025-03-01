@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Sequence, Any
+from typing import Any, Callable, Sequence
 
 import flax.linen as nn
-
 import jax
 
-from .common import DefaultUnpicklerMixin, ChannelAttention, picklable_relu
 from ..typing import Array, ArrayLike
+from .common import ChannelAttention, DefaultUnpicklerMixin, picklable_relu
 
 
 class FPN(nn.Module, DefaultUnpicklerMixin):
@@ -21,10 +20,14 @@ class FPN(nn.Module, DefaultUnpicklerMixin):
     def __call__(self, inputs: Sequence[ArrayLike]) -> Sequence[Array]:
         out_channels = self.out_channels
 
-        outputs = [self.activation(nn.Dense(out_channels, dtype=self.dtype)(x)) for x in inputs]
+        outputs = [
+            self.activation(nn.Dense(out_channels, dtype=self.dtype)(x)) for x in inputs
+        ]
 
         if self.se_ratio > 0:
-            outputs = [ChannelAttention(self.se_ratio, dtype=self.dtype)(x) for x in outputs]
+            outputs = [
+                ChannelAttention(self.se_ratio, dtype=self.dtype)(x) for x in outputs
+            ]
 
         for k in range(len(outputs) - 1, 0, -1):
             x = jax.image.resize(outputs[k], outputs[k - 1].shape, "nearest")

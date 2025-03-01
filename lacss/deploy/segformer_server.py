@@ -1,7 +1,7 @@
 import importlib.machinery
 import logging
-import traceback
 import threading
+import traceback
 import types
 from concurrent import futures
 from pathlib import Path
@@ -10,16 +10,15 @@ import grpc
 import numpy as np
 import torch
 import typer
-
-from . import proto
-from .common import decode_image, TokenValidationInterceptor
-
 from predict import *
 from predict import _normalize
 
+from . import proto
+from .common import TokenValidationInterceptor, decode_image
+
 app = typer.Typer(pretty_exceptions_enable=False)
 
-_MAX_MSG_SIZE=1024*1024*128
+_MAX_MSG_SIZE = 1024 * 1024 * 128
 
 
 def process_input(request: proto.DetectionRequest):
@@ -41,14 +40,14 @@ def process_result(masks, image):
         mask = rp.image.astype("uint8")
         c, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         c = np.array(c[0], dtype=float).squeeze(1)
-        c = c + np.array([rp.bbox[1] , rp.bbox[0]])
+        c = c + np.array([rp.bbox[1], rp.bbox[0]])
         c = c - 0.5
 
         scored_roi = proto.ScoredROI(
-            score = 1.0,
-            roi = proto.ROI(
-                polygon = proto.Polygon(points = [proto.Point(x=p[0], y=p[1]) for p in c]),
-            )
+            score=1.0,
+            roi=proto.ROI(
+                polygon=proto.Polygon(points=[proto.Point(x=p[0], y=p[1]) for p in c]),
+            ),
         )
 
         response.detections.append(scored_roi)
@@ -57,7 +56,6 @@ def process_result(masks, image):
 
 
 class SegformerServicer(proto.LacssServicer):
-
     def __init__(self, gpu, model_path, model_path2):
         self.model_path = model_path
         self.model_path2 = model_path2
@@ -76,7 +74,7 @@ class SegformerServicer(proto.LacssServicer):
         H, W = img_data.shape[:2]
         H1 = (H - 1) // 32 * 32 + 32
         W1 = (W - 1) // 32 * 32 + 32
-        img_data = np.pad(img_data, [[0, H1-H], [0, W1-W], [0,0]])
+        img_data = np.pad(img_data, [[0, H1 - H], [0, W1 - W], [0, 0]])
 
         img_data = _normalize(img_data)
         img_data = img_data.astype("float32")
@@ -88,7 +86,7 @@ class SegformerServicer(proto.LacssServicer):
 
         img_data = torch.from_numpy(img_data).to(self.device)
         img_size = img_data.shape[-1] * img_data.shape[-2]
-        
+
         if img_size < 1150000 and 900000 < img_size:
             overlap = 0.5
         else:
@@ -109,10 +107,12 @@ class SegformerServicer(proto.LacssServicer):
             outputs0 = outputs0.cpu().squeeze()
 
             if img_size < 2000 * 2000 or img_size > 5000 * 5000:
-                
-                model.load_state_dict(torch.load(self.model_path2, map_location=self.device))
+
+                model.load_state_dict(
+                    torch.load(self.model_path2, map_location=self.device)
+                )
                 model.eval()
-                
+
                 img2 = hflip_tta.apply_aug_image(img_data, apply=True)
                 outputs2 = sliding_window_inference(
                     img2,
@@ -131,7 +131,7 @@ class SegformerServicer(proto.LacssServicer):
                 outputs[0] = (outputs0[0] + outputs2[0]) / 2
                 outputs[1] = (outputs0[1] - outputs2[1]) / 2
                 outputs[2] = (outputs0[2] + outputs2[2]) / 2
-                
+
             else:
                 # Hflip TTA
                 img2 = hflip_tta.apply_aug_image(img_data, apply=True)
@@ -148,16 +148,18 @@ class SegformerServicer(proto.LacssServicer):
                 outputs2 = hflip_tta.apply_deaug_mask(outputs2, apply=True)
                 outputs2 = outputs2.cpu().squeeze()
                 img2 = img2.cpu()
-                
+
                 ##################
                 #                #
                 #    ensemble    #
                 #                #
                 ##################
-                
-                model.load_state_dict(torch.load(args.model_path2, map_location=args.device))
+
+                model.load_state_dict(
+                    torch.load(args.model_path2, map_location=args.device)
+                )
                 model.eval()
-                
+
                 img1 = img_data
                 outputs1 = sliding_window_inference(
                     img1,
@@ -170,7 +172,7 @@ class SegformerServicer(proto.LacssServicer):
                     device="cpu",
                 )
                 outputs1 = outputs1.cpu().squeeze()
-                
+
                 # Vflip TTA
                 img3 = vflip_tta.apply_aug_image(img_data, apply=True)
                 outputs3 = sliding_window_inference(
@@ -192,11 +194,10 @@ class SegformerServicer(proto.LacssServicer):
                 outputs[0] = (outputs0[0] + outputs1[0] + outputs2[0] - outputs3[0]) / 4
                 outputs[1] = (outputs0[1] + outputs1[1] - outputs2[1] + outputs3[1]) / 4
                 outputs[2] = (outputs0[2] + outputs1[2] + outputs2[2] + outputs3[2]) / 4
-                
+
             pred_mask = post_process(outputs.squeeze(0).cpu().numpy(), self.device)
 
             return pred_mask
-
 
     def RunDetection(self, request, context):
         with self._lock:
@@ -207,7 +208,9 @@ class SegformerServicer(proto.LacssServicer):
                 image = process_input(request)
 
                 if image.ndim == 4:
-                    raise ValueError(f"Model does not support 3D input, got shape {image.shape}")
+                    raise ValueError(
+                        f"Model does not support 3D input, got shape {image.shape}"
+                    )
 
                 logging.info(f"received image {image.shape}")
 
@@ -218,9 +221,9 @@ class SegformerServicer(proto.LacssServicer):
                 logging.info(f"Reply with message of size {response.ByteSize()}")
 
                 return response
-            
+
             except ValueError as e:
-                
+
                 logging.error(repr(e))
 
                 logging.error(traceback.format_exc())
@@ -233,9 +236,9 @@ class SegformerServicer(proto.LacssServicer):
 
                 logging.error(traceback.format_exc())
 
-                context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
-
-
+                context.abort(
+                    grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
+                )
 
     def RunDetectionStream(self, request_iterator, context):
         with self._lock:
@@ -247,11 +250,13 @@ class SegformerServicer(proto.LacssServicer):
                     request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
 
                 if next_request.image_data.HasField("image_annotation"):
-                    request.image_data.image_annotation.CopyFrom(next_request.image_data.image_annotation)
-                
+                    request.image_data.image_annotation.CopyFrom(
+                        next_request.image_data.image_annotation
+                    )
+
                 if next_request.HasField("detection_settings"):
                     request.detection_settings.CopyFrom(next_request.detection_settings)
-                
+
                 if request.image_data.HasField("pixels"):
                     yield self.RunDetection(request, context)
 
@@ -262,16 +267,16 @@ def main(
     workers: int = 10,
     ip: str = "0.0.0.0",
     local: bool = False,
-    token: bool|None = None,
+    token: bool | None = None,
     debug: bool = False,
     compression: bool = True,
     gpu: bool = True,
-    model_path : Path = "./main_model.pt",
-    model_path2 : Path = "./sub_model.pth"
+    model_path: Path = "./main_model.pt",
+    model_path2: Path = "./sub_model.pth",
 ):
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
-    print ("server starting ...")
+    print("server starting ...")
 
     # loader = importlib.machinery.SourceFileLoader('predict', str(predict_py_file))
     # mod = types.ModuleType( loader.name )
@@ -295,13 +300,15 @@ def main(
 
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=workers),
-        compression=grpc.Compression.Gzip if compression else grpc.Compression.NoCompression,
+        compression=grpc.Compression.Gzip
+        if compression
+        else grpc.Compression.NoCompression,
         interceptors=(TokenValidationInterceptor(token_str),),
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
 
     proto.add_LacssServicer_to_server(
-        SegformerServicer(gpu, model_path, model_path2), 
+        SegformerServicer(gpu, model_path, model_path2),
         server,
     )
 
@@ -312,7 +319,7 @@ def main(
 
     logging.info(f"lacss_server: listening on port {port}")
 
-    print ("server starting ... ready")
+    print("server starting ... ready")
 
     server.start()
     server.wait_for_termination()

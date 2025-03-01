@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Optional, Sequence, Iterable, Any
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 import flax.linen as nn
-from flax.linen import initializers
 import jax
 import jax.numpy as jnp
 import numpy as np
+from flax.linen import initializers
 
 from ..typing import Array, ArrayLike
 
@@ -16,14 +16,17 @@ Initializer = Callable[[jnp.ndarray, Sequence[int], jnp.dtype], jnp.ndarray]
 
 import warnings
 
+
 def picklable_relu(x):
     return jax.nn.relu(x)
+
 
 class DefaultUnpicklerMixin:
     """Provides an unpickling method  which will restore
     module instances, even if the model has gained new fields
     or dropped some fields since data was unpickled.
     """
+
     def __setstate__(self, state):
         try:
             current_fields = self.__class__.__dataclass_fields__
@@ -73,14 +76,14 @@ class _ChannelAttention(nn.Module):
 
 
 ChannelAttention = nn.vmap(
-    _ChannelAttention, 
-    variable_axes={"params":None}, 
-    split_rngs={"params":False},
+    _ChannelAttention,
+    variable_axes={"params": None},
+    split_rngs={"params": False},
 )
 
 
 class SpatialAttention(nn.Module):
-    filter_size: int|tuple[int,...] = 7
+    filter_size: int | tuple[int, ...] = 7
     dtype: Any = None
 
     @nn.compact
@@ -93,7 +96,7 @@ class SpatialAttention(nn.Module):
             conv_filter = len(self.filter_size)
         except:
             conv_filter = (self.filter_size, self.filter_size)
-        
+
         y = jnp.stack([x.max(axis=-1), x.mean(axis=-1)], axis=-1)
         y = nn.Conv(1, conv_filter, dtype=self.dtype)(y)
         y = jax.nn.sigmoid(y)
@@ -106,7 +109,7 @@ class SpatialAttention(nn.Module):
 class FFN(nn.Module):
     """A feed-forward block commonly used in transformer"""
 
-    dim: int|None = None
+    dim: int | None = None
     dropout_rate: float = 0.0
     deterministic: bool = False
     dtype: Any = None
@@ -140,9 +143,11 @@ class IdentityLayer(nn.Module):
 def get_constant_initializer(constant: float) -> Initializer:
     """Returns an initializer that initializes everything to a given constant."""
 
-    def init_fn(unused_key: jnp.ndarray,  # pytype: disable=annotation-type-mismatch  # jnp-type
-                shape: Iterable[int],
-                dtype: jnp.dtype = jnp.float32) -> jnp.ndarray:
+    def init_fn(
+        unused_key: jnp.ndarray,  # pytype: disable=annotation-type-mismatch  # jnp-type
+        shape: Iterable[int],
+        dtype: jnp.dtype = jnp.float32,
+    ) -> jnp.ndarray:
         return constant * jnp.ones(shape, dtype=dtype)
 
     return init_fn  # pytype: disable=bad-return-type  # jax-ndarray
@@ -157,6 +162,7 @@ class Affine(nn.Module):
 
     Performs an affine transformation on the final dimension of the input tensor.
     """
+
     bias_init: Initializer = nn.initializers.zeros
     scale_init: Initializer = nn.initializers.ones
     use_bias: bool = True
@@ -164,9 +170,9 @@ class Affine(nn.Module):
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         n = x.shape[-1]
-        scale = self.param('scale', self.scale_init, (n,))
+        scale = self.param("scale", self.scale_init, (n,))
         if self.use_bias:
-            bias = self.param('bias', self.bias_init, (n,))
+            bias = self.param("bias", self.bias_init, (n,))
         else:
             bias = 0.0
         return scale * x + bias
@@ -186,14 +192,15 @@ class DropPath(nn.Module):
         evaluation), no stochastic depth is applied and the inputs are returned as
         is.
     """
+
     rate: float = 0.0
     deterministic: Optional[bool] = None
     broadcast_dims: Optional[Sequence[int]] = None
 
     @nn.compact
-    def __call__(self,
-                 x: jnp.ndarray,
-                 deterministic: Optional[bool] = None) -> jnp.ndarray:
+    def __call__(
+        self, x: jnp.ndarray, deterministic: Optional[bool] = None
+    ) -> jnp.ndarray:
         """Applies a stochastic depth mask to the inputs.
 
         Args:
@@ -212,27 +219,29 @@ class DropPath(nn.Module):
         else:
             broadcast_dims = self.broadcast_dims
 
-        return nn.Dropout(
-            rate=self.rate, broadcast_dims=broadcast_dims)(x, deterministic)
+        return nn.Dropout(rate=self.rate, broadcast_dims=broadcast_dims)(
+            x, deterministic
+        )
 
 
 class PositionEmbedding1D(nn.Module):
-    """ 1D positional embeddings
+    """1D positional embeddings
 
     Attributes:
       posemb_init: if None, use cosine embedding
       max_len: Maximum possible length for the input. If None, the max_len is
         set to the inputs sequence length.
-      max_timescale: time scale for  
+      max_timescale: time scale for
       rescale_from: If not None, embeddings are rescaled from this length.
     """
-    posemb_init: Initializer|None = nn.initializers.normal(stddev=0.02)
-    max_len: int|None = None
+
+    posemb_init: Initializer | None = nn.initializers.normal(stddev=0.02)
+    max_len: int | None = None
     max_timescale: float = 1.0e4
-    rescale_from: int|None = None
+    rescale_from: int | None = None
 
     @nn.compact
-    def __call__(self, input: tuple|ArrayLike) -> Array:
+    def __call__(self, input: tuple | ArrayLike) -> Array:
         """
         Args:
           inputs: Input data that needs embedding or shape tuple
@@ -249,7 +258,7 @@ class PositionEmbedding1D(nn.Module):
         length, dim = input_shape[-2:]
         max_len = self.max_len or length
 
-        if self.rescale_from: 
+        if self.rescale_from:
             embedding_length = self.rescale_from
         else:
             embedding_length = max_len
@@ -259,16 +268,14 @@ class PositionEmbedding1D(nn.Module):
         else:
             pos_emb = np.zeros((embedding_length, dim), dtype=np.float32)
             position = np.arange(embedding_length)[:, np.newaxis]
-            div_term = np.exp(
-                np.arange(0, dim, 2) / dim * np.log(self.max_timescale)
-            )
+            div_term = np.exp(np.arange(0, dim, 2) / dim * np.log(self.max_timescale))
             pos_emb[:, 0::2] = np.sin(position / div_term)
             pos_emb[:, 1::2] = np.cos(position / div_term)
             pos_emb = jnp.asarray(pos_emb)
 
         if self.rescale_from:
             pos_emb = jax.image.resize(
-                pos_emb, (max_len, dim), method='bilinear', antialias=False
+                pos_emb, (max_len, dim), method="bilinear", antialias=False
             )
 
         pos_emb = pos_emb[:length, :]
@@ -285,11 +292,12 @@ class PositionEmbedding2D(nn.Module):
       rescale_from: If not None, embeddings are rescaled from this shape.
       posemb_init: Positional embedding initializer.
     """
+
     posemb_init: Initializer = nn.initializers.normal(stddev=0.02)
-    rescale_from: tuple[int, int]|None = None
+    rescale_from: tuple[int, int] | None = None
 
     @nn.compact
-    def __call__(self, input: tuple|ArrayLike) -> Array:
+    def __call__(self, input: tuple | ArrayLike) -> Array:
         """
         Args:
           inputs: Input data that needs embedding or shape tuple
@@ -310,8 +318,12 @@ class PositionEmbedding2D(nn.Module):
         else:
             embedding_h, embedding_w = h, w
 
-        row_pos_embed = self.param('row_pos_embedding', self.posemb_init, (embedding_w, c // 2))
-        col_pos_embed = self.param('col_pos_embedding', self.posemb_init, (embedding_h, c // 2))
+        row_pos_embed = self.param(
+            "row_pos_embedding", self.posemb_init, (embedding_w, c // 2)
+        )
+        col_pos_embed = self.param(
+            "col_pos_embedding", self.posemb_init, (embedding_h, c // 2)
+        )
 
         # To `[h, w, c//2]`.
         x_pos_emb = jnp.tile(
@@ -325,9 +337,7 @@ class PositionEmbedding2D(nn.Module):
         pos = jnp.concatenate((x_pos_emb, y_pos_emb), axis=-1)
 
         if self.rescale_from:
-            pos = jax.image.resize(
-                pos, (h, w, c), method='bilinear', antialias=False
-            )
+            pos = jax.image.resize(pos, (h, w, c), method="bilinear", antialias=False)
 
         return pos
 
@@ -342,7 +352,7 @@ class GRN(nn.Module):
         beta = self.param("beta", nn.initializers.zeros, (1, 1, 1, dim))
 
         x_ = jnp.array(x, "float32")
-        mu2 = jax.lax.square(jnp.abs(x_)).mean(axis=(1,2), keepdims=True)
+        mu2 = jax.lax.square(jnp.abs(x_)).mean(axis=(1, 2), keepdims=True)
         mu2 = jnp.maximum(mu2, 1e-6)
         Gx = jax.lax.sqrt(mu2).astype(x.dtype)
         Nx = Gx / (Gx.mean(axis=-1, keepdims=True) + self.epsilon)

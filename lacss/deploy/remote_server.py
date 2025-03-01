@@ -3,7 +3,6 @@ import threading
 import traceback
 from concurrent import futures
 from pathlib import Path
-
 from typing import Iterable
 
 import grpc
@@ -12,14 +11,20 @@ import numpy as np
 import typer
 
 from . import proto
-from .common import get_dtype, decode_image, TokenValidationInterceptor, LacssServicerBase
+from .common import (
+    LacssServicerBase,
+    TokenValidationInterceptor,
+    decode_image,
+    get_dtype,
+)
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
-_MAX_MSG_SIZE=1024*1024*128
-_TARGET_CELL_SIZE=32
+_MAX_MSG_SIZE = 1024 * 1024 * 128
+_TARGET_CELL_SIZE = 32
 _MAX_STREAM_MSG_SIZE = _MAX_MSG_SIZE * 16
 MAX_IMG_SIZE = 1024 * 1024 * 1024
+
 
 def _process_input(request: proto.DetectionRequest, image=None):
     pixels = request.image_data.pixels
@@ -28,11 +33,15 @@ def _process_input(request: proto.DetectionRequest, image=None):
     if image is None:
         image = decode_image(pixels)
 
-    physical_size = np.array([
-        pixels.physical_size_z or pixels.physical_size_x, # one might set xy but not z
-        pixels.physical_size_y, 
-        pixels.physical_size_x,
-    ], dtype="float")
+    physical_size = np.array(
+        [
+            pixels.physical_size_z
+            or pixels.physical_size_x,  # one might set xy but not z
+            pixels.physical_size_y,
+            pixels.physical_size_x,
+        ],
+        dtype="float",
+    )
     if (physical_size == 0).any():
         physical_size[:] = 1.0
 
@@ -43,23 +52,23 @@ def _process_input(request: proto.DetectionRequest, image=None):
         if physical_size[1] != physical_size[2]:
             raise ValueError("Scaling hint provided, but pixel is not isometric")
 
-        scaling = np.array([ settings.scaling_hint or 1.0 ] * 3, dtype="float")
-        scaling[0] *= physical_size[0] / physical_size[1] 
-    
+        scaling = np.array([settings.scaling_hint or 1.0] * 3, dtype="float")
+        scaling[0] *= physical_size[0] / physical_size[1]
+
     logging.info(f"Requested rescaling factor is {scaling}")
 
-    shape_hint = tuple( np.round(scaling * image.shape[:3]).astype(int) )
+    shape_hint = tuple(np.round(scaling * image.shape[:3]).astype(int))
 
-    if image.shape[0] == 1: # 2D
+    if image.shape[0] == 1:  # 2D
         image = image.squeeze(0)
         shape_hint = shape_hint[1:]
 
     kwargs = dict(
-        reshape_to = shape_hint,
-        score_threshold = settings.min_score or 0.4,
-        min_area = settings.min_cell_area,
-        nms_iou = settings.nms_iou,
-        segmentation_threshold = settings.segmentation_threshold or 0.5,
+        reshape_to=shape_hint,
+        score_threshold=settings.min_score or 0.4,
+        min_area=settings.min_cell_area,
+        nms_iou=settings.nms_iou,
+        segmentation_threshold=settings.segmentation_threshold or 0.5,
     )
 
     return image, kwargs
@@ -68,31 +77,38 @@ def _process_input(request: proto.DetectionRequest, image=None):
 def _process_result(preds, image) -> proto.DetectionResponse:
     response = proto.DetectionResponse()
 
-    if image.ndim == 3: # returns polygon
+    if image.ndim == 3:  # returns polygon
 
         for contour, score in zip(preds["pred_contours"], preds["pred_scores"]):
             if len(contour) == 0:
                 continue
 
             scored_roi = proto.ScoredROI(
-                score = score,
-                roi = proto.ROI(
-                    polygon = proto.Polygon(points = [proto.Point(x=p[0], y=p[1]) for p in contour]),
-                )
+                score=score,
+                roi=proto.ROI(
+                    polygon=proto.Polygon(
+                        points=[proto.Point(x=p[0], y=p[1]) for p in contour]
+                    ),
+                ),
             )
 
             response.detections.append(scored_roi)
 
-    else: # 3d returns Mesh
+    else:  # 3d returns Mesh
         for mesh, score in zip(preds["pred_contours"], preds["pred_scores"]):
             scored_roi = proto.ScoredROI(
-                score = score,
-                roi = proto.ROI(
-                    mesh = proto.Mesh(
-                        verts = [proto.Point(z=v[0], y=v[1], x=v[2]) for v in mesh['verts']],
-                        faces = [proto.Mesh.Face(p1=p[0], p2=p[1], p3=p[2]) for p in mesh['faces']],
+                score=score,
+                roi=proto.ROI(
+                    mesh=proto.Mesh(
+                        verts=[
+                            proto.Point(z=v[0], y=v[1], x=v[2]) for v in mesh["verts"]
+                        ],
+                        faces=[
+                            proto.Mesh.Face(p1=p[0], p2=p[1], p3=p[2])
+                            for p in mesh["faces"]
+                        ],
                     ),
-                )
+                ),
             )
 
             response.detections.append(scored_roi)
@@ -100,7 +116,7 @@ def _process_result(preds, image) -> proto.DetectionResponse:
     return response
 
 
-def _process_grid_input(request_iterator:Iterable[proto.DetectionRequest]):
+def _process_grid_input(request_iterator: Iterable[proto.DetectionRequest]):
     d, h, w, c = 0, 0, 0, 0
     images, grids = [], []
     request = None
@@ -114,11 +130,13 @@ def _process_grid_input(request_iterator:Iterable[proto.DetectionRequest]):
 
         image = decode_image(pixels)
 
-        grids.append([
-            pixels.offset_z,
-            pixels.offset_y,
-            pixels.offset_x,
-        ])
+        grids.append(
+            [
+                pixels.offset_z,
+                pixels.offset_y,
+                pixels.offset_x,
+            ]
+        )
         images.append(image)
 
         d = max(d, pixels.offset_z + image.shape[0])
@@ -138,17 +156,16 @@ def _process_grid_input(request_iterator:Iterable[proto.DetectionRequest]):
     full_image = np.zeros([d, h, w, c], dtype=images[0].dtype)
     for image, grid in zip(images, grids):
         full_image[
-            grid[0]:grid[0]+image.shape[0],
-            grid[1]:grid[1]+image.shape[1],
-            grid[2]:grid[2]+image.shape[2],
-            :image.shape[3],
+            grid[0] : grid[0] + image.shape[0],
+            grid[1] : grid[1] + image.shape[1],
+            grid[2] : grid[2] + image.shape[2],
+            : image.shape[3],
         ] = image
 
     return _process_input(request, full_image)
 
 
 class LacssServicer(LacssServicerBase):
-
     def __init__(self, model):
         super().__init__()
 
@@ -171,10 +188,12 @@ class LacssServicer(LacssServicerBase):
 
             return
 
-        try:    
+        try:
             with self._lock:
                 preds = self.model.predict(
-                    image, output_type="contour", **kwargs,
+                    image,
+                    output_type="contour",
+                    **kwargs,
                 )
 
             response = _process_result(preds, image)
@@ -182,16 +201,16 @@ class LacssServicer(LacssServicerBase):
             logging.info(f"Reply with message of size {response.ByteSize()}")
 
             return response
-        
+
         except Exception as e:
 
             logging.error(repr(e))
 
             logging.error(traceback.format_exc())
 
-            context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
-
-
+            context.abort(
+                grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
+            )
 
     def RunDetectionOnGrid(self, request_iterator, context):
         try:
@@ -204,7 +223,9 @@ class LacssServicer(LacssServicerBase):
 
             with self._lock:
                 preds = self.model.predict(
-                    image, output_type="contour", **kwargs,
+                    image,
+                    output_type="contour",
+                    **kwargs,
                 )
 
             response = _process_result(preds, image)
@@ -214,7 +235,7 @@ class LacssServicer(LacssServicerBase):
             return response
 
         except ValueError as e:
-            
+
             logging.error(repr(e))
 
             logging.error(traceback.format_exc())
@@ -227,7 +248,9 @@ class LacssServicer(LacssServicerBase):
 
             logging.error(traceback.format_exc())
 
-            context.abort(grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}")
+            context.abort(
+                grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
+            )
 
 
 def get_predictor(modelpath, f16):
@@ -242,15 +265,15 @@ def get_predictor(modelpath, f16):
 
     logging.debug(f"lacss_server: precompile the model")
 
-    _ = model.predict(np.ones([384,384,384,3]), output_type="_raw")
-    _ = model.predict(np.ones([544,544,3]), output_type="_raw")
+    _ = model.predict(np.ones([384, 384, 384, 3]), output_type="_raw")
+    _ = model.predict(np.ones([544, 544, 3]), output_type="_raw")
 
     return model
 
 
 def show_urls():
     from . import model_urls
-    
+
     print("Pretrained model files:")
     print("==============================")
     for k, v in model_urls.items():
@@ -260,12 +283,12 @@ def show_urls():
 
 @app.command()
 def main(
-    modelpath: Path|None = None,
+    modelpath: Path | None = None,
     port: int = 50051,
     workers: int = 10,
     ip: str = "0.0.0.0",
     local: bool = False,
-    token: bool|None = None,
+    token: bool | None = None,
     debug: bool = False,
     compression: bool = True,
     f16: bool = False,
@@ -276,7 +299,7 @@ def main(
         show_urls()
         return
 
-    print ("server starting ...")
+    print("server starting ...")
 
     model = get_predictor(modelpath, f16)
 
@@ -305,13 +328,15 @@ def main(
 
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=workers),
-        compression=grpc.Compression.Gzip if compression else grpc.Compression.NoCompression,
+        compression=grpc.Compression.Gzip
+        if compression
+        else grpc.Compression.NoCompression,
         interceptors=(TokenValidationInterceptor(token_str),),
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
 
     proto.add_LacssServicer_to_server(
-        LacssServicer(model), 
+        LacssServicer(model),
         server,
     )
 
@@ -322,7 +347,7 @@ def main(
 
     logging.info(f"lacss_server: listening on port {port}")
 
-    print ("server starting ... ready")
+    print("server starting ... ready")
 
     server.start()
     server.wait_for_termination()

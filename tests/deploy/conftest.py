@@ -1,11 +1,12 @@
 from pathlib import Path
 
-import pytest
 import grpc
+import pytest
 
 MODULE_DIR = Path(__file__).parent
 
-@pytest.fixture(scope='package')
+
+@pytest.fixture(scope="package")
 def model_file():
     import urllib.request
 
@@ -14,7 +15,7 @@ def model_file():
 
     if not model_file.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         urllib.request.urlretrieve(
             "https://huggingface.co/jiyuuchc/lacss3-small/resolve/main/lacss3-small?download=true",
             model_file,
@@ -23,7 +24,7 @@ def model_file():
     yield model_file
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture(scope="package")
 def model(model_file):
     from lacss.deploy.predict import Predictor
 
@@ -34,7 +35,7 @@ def model(model_file):
     del predictor
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture(scope="package")
 def model_f16(model_file):
     from lacss.deploy.predict import Predictor
 
@@ -45,9 +46,10 @@ def model_f16(model_file):
     del predictor
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture(scope="package")
 def test_image_2d():
     import tifffile
+
     img = tifffile.imread(MODULE_DIR / "test_data" / "test_2d.tif")
 
     yield img
@@ -55,9 +57,10 @@ def test_image_2d():
     del img
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture(scope="package")
 def test_image_3d():
     import tifffile
+
     img = tifffile.imread(MODULE_DIR / "test_data" / "test_3d.tif")
 
     yield img
@@ -65,11 +68,11 @@ def test_image_3d():
     del img
 
 
-@pytest.fixture(scope='package')
+@pytest.fixture(scope="package")
 def grpc_server(model_f16):
     from concurrent import futures
-    import lacss.deploy.proto as proto
 
+    import lacss.deploy.proto as proto
     from lacss.deploy.remote_server import LacssServicer
 
     _MAX_MSG_SIZE = 1024 * 1024 * 16
@@ -79,9 +82,7 @@ def grpc_server(model_f16):
         futures.ThreadPoolExecutor(max_workers=4),
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
-    proto.add_LacssServicer_to_server(
-        LacssServicer(model_f16), server
-    )
+    proto.add_LacssServicer_to_server(LacssServicer(model_f16), server)
     server.add_insecure_port(endpoint)
 
     server.start()

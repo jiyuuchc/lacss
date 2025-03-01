@@ -6,35 +6,34 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 import os
-
+import time
 from dataclasses import dataclass
-from functools import reduce, partial
-from typing import Mapping, Sequence, Tuple, Any
+from functools import partial, reduce
+from typing import Any, Mapping, Sequence, Tuple
 
 import cv2
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from vedo import Volume
 
-from ..ops import bboxes_of_patches, crop_and_resize_patches
-from ..utils import load_from_pretrained
-from ..typing import Array, ArrayLike
 from ..modules import Lacss
+from ..ops import bboxes_of_patches, crop_and_resize_patches
+from ..typing import Array, ArrayLike
+from ..utils import load_from_pretrained
 
 Shape = Sequence[int]
 
 logger = logging.getLogger(__name__)
 
+
 def _ensemble_model_fn(module, params, image) -> dict:
-    ''' A JIT compiled function to call Lacss model ensemble
-    if params is a sequence (not a dict), assuming a model ensemble and 
+    """A JIT compiled function to call Lacss model ensemble
+    if params is a sequence (not a dict), assuming a model ensemble and
     generate ensembed prediction.
-    '''
+    """
     from lacss.modules.lpn import generate_predictions
 
     model_ = module.copy()
@@ -43,23 +42,23 @@ def _ensemble_model_fn(module, params, image) -> dict:
 
     lpn_out, seg_features = [], []
     for p in params:
-        model_out =  jax.jit(model_.apply)(dict(params=p), image)
+        model_out = jax.jit(model_.apply)(dict(params=p), image)
 
-        lpn_out.append( model_out['detector'] )
+        lpn_out.append(model_out["detector"])
 
-        seg_features.append(model_out['seg_features'])
+        seg_features.append(model_out["seg_features"])
 
-    lpn_out = jax.tree_util.tree_map(
-        lambda *x: jnp.stack(x), * lpn_out
-    )
+    lpn_out = jax.tree_util.tree_map(lambda *x: jnp.stack(x), *lpn_out)
 
     lpn_out = dict(
-        logits = lpn_out['logits'].mean(axis=0),
-        regressions =  lpn_out['regressions'].mean(axis=0),
-        ref_locs = lpn_out['ref_locs'][0],
+        logits=lpn_out["logits"].mean(axis=0),
+        regressions=lpn_out["regressions"].mean(axis=0),
+        ref_locs=lpn_out["ref_locs"][0],
     )
 
-    lpn_out['pred_locs'] = lpn_out['ref_locs'] + lpn_out['regressions'] * module.detector.feature_scale
+    lpn_out["pred_locs"] = (
+        lpn_out["ref_locs"] + lpn_out["regressions"] * module.detector.feature_scale
+    )
 
     predictions = generate_predictions(module.detector, lpn_out)
 
@@ -68,36 +67,32 @@ def _ensemble_model_fn(module, params, image) -> dict:
     seg_predictions = []
     if image.ndim == 3 and module.segmentor is not None:
         for x, p in zip(seg_features, params):
-            seg_predictions.append( 
+            seg_predictions.append(
                 jax.jit(module.segmentor.apply)(
-                    dict(params=p['segmentor']), 
-                    x, 
-                    predictions['locations']
-                )['predictions'] 
+                    dict(params=p["segmentor"]), x, predictions["locations"]
+                )["predictions"]
             )
 
     elif image.ndim == 4 and module.segmentor_3d is not None:
         seg_predictions = []
         for x, p in zip(seg_features, params):
-            seg_predictions.append( 
+            seg_predictions.append(
                 jax.jit(module.segmentor_3d.apply)(
-                    dict(params=p['segmentor_3d']), 
-                    x, 
-                    predictions['locations']
-                )['predictions'] 
+                    dict(params=p["segmentor_3d"]), x, predictions["locations"]
+                )["predictions"]
             )
 
     if len(seg_predictions) > 0:
-        predictions['segmentations'] = jnp.mean(
-            jnp.array([ x['segmentations'] for x in seg_predictions]),
-            axis = 0,
+        predictions["segmentations"] = jnp.mean(
+            jnp.array([x["segmentations"] for x in seg_predictions]),
+            axis=0,
         )
 
         seg_prediction = seg_predictions[0]
-        del seg_prediction['segmentations']
+        del seg_prediction["segmentations"]
 
-        predictions.update( seg_prediction )
-        
+        predictions.update(seg_prediction)
+
     return predictions
 
 
@@ -121,11 +116,11 @@ class Predictor:
             label = predictor.predict(image)
 
     Args:
-        url: Model file (local or remote) or (module, parameters) tuple. If 
-            the parameters are a sequence instead of a dictionary, treat it 
+        url: Model file (local or remote) or (module, parameters) tuple. If
+            the parameters are a sequence instead of a dictionary, treat it
             as a model ensemble.
         f16: If true, compute in f16 precision (instead of the default f32)
-        grid_size: Grid size for large images. Large image are broken down 
+        grid_size: Grid size for large images. Large image are broken down
             into grids to avoid GPU memeory overflow.
         step_size: Should be slightly smaller than grid_size to allow some
             overlap between grids.
@@ -138,17 +133,17 @@ class Predictor:
         chain_approx: Only used for 2D contour output. Polygon generation rule.
     """
 
-    url:str|os.PathLike|tuple[Lacss, dict]
-    f16:bool = False
-    grid_size:int = 544
-    step_size:int = 480
-    cells_per_grid:int = 256
-    grid_size_3d:int = 384
-    step_size_3d:int = 320
-    cells_per_grid_3d:int = 384
-    mask_size:int = 36
-    mc_step_size:int = 1
-    chain_approx:int = cv2.CHAIN_APPROX_TC89_KCOS
+    url: str | os.PathLike | tuple[Lacss, dict]
+    f16: bool = False
+    grid_size: int = 544
+    step_size: int = 480
+    cells_per_grid: int = 256
+    grid_size_3d: int = 384
+    step_size_3d: int = 320
+    cells_per_grid_3d: int = 384
+    mask_size: int = 36
+    mc_step_size: int = 1
+    chain_approx: int = cv2.CHAIN_APPROX_TC89_KCOS
 
     def __post_init__(self):
         """validate parameters"""
@@ -159,10 +154,12 @@ class Predictor:
         else:
             module, params = load_from_pretrained(self.url)
 
-        assert type(module) == Lacss, f"Loaded module is not Lacss, but of {type(module)}"
+        assert (
+            type(module) == Lacss
+        ), f"Loaded module is not Lacss, but of {type(module)}"
 
         # if isinstance(params, Mapping):
-            # params = [params]
+        # params = [params]
 
         # default model config during inference
         module.detector.max_output = self.cells_per_grid
@@ -172,7 +169,7 @@ class Predictor:
 
         if module.segmentor:
             module.segmentor.full_scale_output = False
-        
+
         if module.segmentor_3d:
             module.segmentor_3d.full_scale_output = False
 
@@ -181,18 +178,32 @@ class Predictor:
 
         if self.f16:
             self.params = jax.tree_util.tree_map(
-                lambda x: x.astype("float16"), self.params,
+                lambda x: x.astype("float16"),
+                self.params,
             )
 
-        assert self.step_size < self.grid_size, f"step_size ({self.step_size}) not smaller than grid_size ({self.grid_size})"
-        assert self.grid_size % 32 == 0, f"grid_size ({self.grid_size}) is not divisable by 32"
-        assert self.step_size_3d < self.grid_size_3d, f"step_size ({self.step_size_3d}) not smaller than grid_size ({self.grid_size_3d})"
-        assert self.grid_size_3d % 32 == 0, f"grid_size ({self.grid_size_3d}) is not divisable by 32"
-        assert self.cells_per_grid % 16 == 0, f"cells_per_grid ({self.cells_per_grid}) is not divisable by 16"
-        assert self.cells_per_grid_3d % 16 == 0, f"cells_per_grid_3d ({self.cells_per_grid_3d}) is not divisable by 16"
+        assert (
+            self.step_size < self.grid_size
+        ), f"step_size ({self.step_size}) not smaller than grid_size ({self.grid_size})"
+        assert (
+            self.grid_size % 32 == 0
+        ), f"grid_size ({self.grid_size}) is not divisable by 32"
+        assert (
+            self.step_size_3d < self.grid_size_3d
+        ), f"step_size ({self.step_size_3d}) not smaller than grid_size ({self.grid_size_3d})"
+        assert (
+            self.grid_size_3d % 32 == 0
+        ), f"grid_size ({self.grid_size_3d}) is not divisable by 32"
+        assert (
+            self.cells_per_grid % 16 == 0
+        ), f"cells_per_grid ({self.cells_per_grid}) is not divisable by 16"
+        assert (
+            self.cells_per_grid_3d % 16 == 0
+        ), f"cells_per_grid_3d ({self.cells_per_grid_3d}) is not divisable by 16"
 
-        self._model_fn = jax.jit(self.module.apply) # FIXME this locks down model hyperparameter
-
+        self._model_fn = jax.jit(
+            self.module.apply
+        )  # FIXME this locks down model hyperparameter
 
     def _resize_image(self, image, target_shape):
         from skimage.transform import resize
@@ -208,7 +219,7 @@ class Predictor:
 
         orig_shape = image.shape[:-1]
 
-        if target_shape is None: 
+        if target_shape is None:
             target_shape = np.array(orig_shape)
 
         else:
@@ -216,7 +227,7 @@ class Predictor:
 
             scaling = target_shape / orig_shape
 
-            if np.all(np.abs(scaling - 1) < 0.1): #ignore small scaling
+            if np.all(np.abs(scaling - 1) < 0.1):  # ignore small scaling
                 target_shape = np.array(orig_shape)
 
             else:
@@ -229,9 +240,8 @@ class Predictor:
 
         return image, target_shape, padding_value
 
-
     def _compute_contours_2d(self, predictions, img_sz, threshold):
-        """ 2D contour using cv2"""
+        """2D contour using cv2"""
         mask = np.array(predictions["segmentation_is_valid"])
 
         y0s = np.asarray(predictions["segmentation_y0_coord"])
@@ -249,31 +259,32 @@ class Predictor:
                     c,
                     np.zeros([0, 1, 2], dtype=int),
                 )
-                
-                polygon = max_len_element.squeeze(1).astype(float) * 2 + 1 # model output is 2x binned
+
+                polygon = (
+                    max_len_element.squeeze(1).astype(float) * 2 + 1
+                )  # model output is 2x binned
                 polygon += [x0s[k], y0s[k]]
 
                 if len(polygon) == 0:
                     mask[k] = False
                 else:
                     box = np.r_[polygon.min(axis=0), polygon.max(axis=0)]
-                    box = box[[1,0,3,2]]
+                    box = box[[1, 0, 3, 2]]
                     if (box[:2] >= img_sz).any() or (box[2:] <= 0).any():
                         mask[k] = False
                     else:
                         polygons.append(polygon)
                         bboxes.append(box)
- 
+
         assert np.count_nonzero(mask) == len(polygons)
 
         assert np.count_nonzero(mask) == len(bboxes)
 
-        scores = np.array(predictions['scores'])[mask]
+        scores = np.array(predictions["scores"])[mask]
 
         bboxes = np.array(bboxes).reshape(-1, 4)
 
         return scores, polygons, bboxes
-
 
     def _compute_contours_3d(self, predictions, img_sz, threshold):
         meshes, bboxes = [], []
@@ -290,7 +301,7 @@ class Predictor:
         for k in range(segs.shape[0]):
             if mask[k]:
                 mesh = (
-                    Volume(segs[k], spacing=[2, 2, 2]) # model output is 2x binned
+                    Volume(segs[k], spacing=[2, 2, 2])  # model output is 2x binned
                     .isosurface(value=0.5, flying_edges=True)
                     .shift(z0s[k], y0s[k], x0s[k])
                 )
@@ -308,12 +319,11 @@ class Predictor:
 
         assert np.count_nonzero(mask) == len(bboxes)
 
-        scores = np.array(predictions['scores'])[mask]
+        scores = np.array(predictions["scores"])[mask]
 
         bboxes = np.array(bboxes).reshape(-1, 6)
 
         return scores, meshes, bboxes
-
 
     def _compute_contours(self, predictions, img_sz, threshold):
         if len(img_sz) == 3:
@@ -321,9 +331,10 @@ class Predictor:
         else:
             return self._compute_contours_2d(predictions, img_sz, threshold)
 
-
-    def _call_model(self, patch, score_threshold, size_threshold, threshold, padding_value):
-        """ Core inference routine:
+    def _call_model(
+        self, patch, score_threshold, size_threshold, threshold, padding_value
+    ):
+        """Core inference routine:
         1. Pad input image to regular size and call model function
         2. clean up results
         3. compute contours
@@ -334,23 +345,25 @@ class Predictor:
         patch_sz = patch.shape[:-1]
         dim = patch.ndim - 1
 
-        if dim == 2: #2D input
-            assert max(patch_sz) <=  self.grid_size, \
-                f"attempted to call model with image shape ({patch_sz}) that exceeded limit."
+        if dim == 2:  # 2D input
+            assert (
+                max(patch_sz) <= self.grid_size
+            ), f"attempted to call model with image shape ({patch_sz}) that exceeded limit."
             h, w = patch_sz
             padding_shape = [
-                [0, self.grid_size - h], 
+                [0, self.grid_size - h],
                 [0, self.grid_size - w],
                 [0, 0],
             ]
 
         else:
-            assert max(patch_sz) <=  self.grid_size_3d, \
-                f"attempted to call model with image shape exceed limit."
+            assert (
+                max(patch_sz) <= self.grid_size_3d
+            ), f"attempted to call model with image shape exceed limit."
             d, h, w = patch_sz
             padding_shape = [
-                [0, self.grid_size_3d - d], 
-                [0, self.grid_size_3d - h], 
+                [0, self.grid_size_3d - d],
+                [0, self.grid_size_3d - h],
                 [0, self.grid_size_3d - w],
                 [0, 0],
             ]
@@ -364,13 +377,14 @@ class Predictor:
         elif patch.shape[-1] == 2:
             patch = np.stack([patch, np.zeros_like(patch[..., :1])], axis=-1)
 
-
         logger.debug(f"pad patch to shape: {patch.shape}")
 
         if isinstance(self.params, Mapping):
             predictions = self._model_fn(dict(params=self.params), patch)["predictions"]
-        else: # handle ensemble
-            predictions = _ensemble_model_fn(self.module, self.params, patch)["predictions"]
+        else:  # handle ensemble
+            predictions = _ensemble_model_fn(self.module, self.params, patch)[
+                "predictions"
+            ]
 
         # clean up
         mask = predictions["segmentation_is_valid"]
@@ -382,7 +396,7 @@ class Predictor:
             areas = jnp.count_nonzero(
                 predictions["segmentations"] > threshold,
                 axis=(1, 2, 3),
-            )    
+            )
 
             mask &= areas >= size_threshold
 
@@ -391,7 +405,9 @@ class Predictor:
         logger.debug(f"found {np.count_nonzero(mask)} cells after clean up")
 
         # additional computation
-        scores, contours, bboxes = self._compute_contours(predictions, patch_sz, threshold)
+        scores, contours, bboxes = self._compute_contours(
+            predictions, patch_sz, threshold
+        )
 
         logger.debug(f"done converting results to contours.")
 
@@ -400,7 +416,6 @@ class Predictor:
 
         return scores, contours, bboxes
 
-
     def _mark_edge_instances(self, bboxes, pos, patch_sz, img_sz):
         bboxes = np.array(bboxes)
         removal = np.zeros([bboxes.shape[0]], dtype=bool)
@@ -408,23 +423,25 @@ class Predictor:
         dim = len(img_sz)
 
         removal |= ((bboxes[:, :dim] <= 1) & (pos > 0)).any(axis=-1)
-        removal |= ((bboxes[:, dim:] + 1 >= patch_sz) & (pos + patch_sz < img_sz)).any(axis=-1)
+        removal |= ((bboxes[:, dim:] + 1 >= patch_sz) & (pos + patch_sz < img_sz)).any(
+            axis=-1
+        )
 
-        return  ~removal
+        return ~removal
 
-
-    def _process_image(self, image, score_threshold, size_threshold, threshold, padding_value):
-        """ process a 2d/3d image in grids
-        """
+    def _process_image(
+        self, image, score_threshold, size_threshold, threshold, padding_value
+    ):
+        """process a 2d/3d image in grids"""
         img_sz = image.shape[:-1]
         img_dim = len(img_sz)
 
         if img_dim == 2:
-            gs, ss = (self.grid_size, self.step_size) 
+            gs, ss = (self.grid_size, self.step_size)
         else:
             gs, ss = (self.grid_size_3d, self.step_size_3d)
 
-        grid_positions = [slice(0, max(d-(gs-ss), 1), ss) for d in img_sz]
+        grid_positions = [slice(0, max(d - (gs - ss), 1), ss) for d in img_sz]
         grid_positions = np.moveaxis(np.mgrid[grid_positions], 0, -1)
         grid_positions = grid_positions.reshape(-1, img_dim)
 
@@ -440,8 +457,8 @@ class Predictor:
 
             scores, contours, bboxes = self._call_model(
                 patch,
-                score_threshold, 
-                size_threshold, 
+                score_threshold,
+                size_threshold,
                 threshold,
                 padding_value,
             )
@@ -449,15 +466,15 @@ class Predictor:
             logger.debug(f"processing patch results")
 
             # mask = self._mark_edge_instances(bboxes, pos, patch_sz, img_sz)
-            mask = np.ones([bboxes.shape[0]], dtype=bool) 
+            mask = np.ones([bboxes.shape[0]], dtype=bool)
 
             bboxes += np.r_[pos, pos]
 
             if img_dim == 3:
-                contours = [ c.shift(pos[0], pos[1], pos[2]) for c in contours ]
+                contours = [c.shift(pos[0], pos[1], pos[2]) for c in contours]
 
             else:
-                contours = [ p + pos[::-1] for p in contours ]
+                contours = [p + pos[::-1] for p in contours]
 
             all_scores.append(scores)
             all_contours.append(contours)
@@ -471,16 +488,15 @@ class Predictor:
         if is_single_grid and len(self.params) == 1:
             asort = None
         else:
-            asort =  np.argsort(scores)[::-1]
+            asort = np.argsort(scores)[::-1]
 
         return dict(
-            scores = scores,
-            mask = np.concatenate(all_masks),
-            bboxes = np.concatenate(all_bboxes),
-            contours = sum(all_contours, []),
-            asort = asort,
+            scores=scores,
+            mask=np.concatenate(all_masks),
+            bboxes=np.concatenate(all_bboxes),
+            contours=sum(all_contours, []),
+            asort=asort,
         )
-
 
     def _non_max_supression(self, predictions, nms_iou):
         from lacss.ops import box_iou_similarity
@@ -489,8 +505,8 @@ class Predictor:
             return
 
         selected = predictions["mask"]
-        asort = predictions['asort']
-        boxes = predictions['bboxes']
+        asort = predictions["asort"]
+        boxes = predictions["bboxes"]
 
         if asort is not None:
             boxes = boxes[asort]
@@ -504,13 +520,12 @@ class Predictor:
         for k in range(len(selected)):
             if selected[k]:
                 selected &= sm[k] < nms_iou
-    
+
         # inverse selected` to the original order
         if asort is not None:
             selected = selected[asort.argsort()]
 
-        predictions['mask'] = selected
-
+        predictions["mask"] = selected
 
     def _post_process(self, predictions, scaling, nms_iou):
         self._non_max_supression(
@@ -521,11 +536,13 @@ class Predictor:
         mask = predictions["mask"]
 
         scores = predictions["scores"][mask]
-        
+
         bboxes = predictions["bboxes"][mask] / np.r_[scaling, scaling]
-        
+
         if len(scaling) == 2:
-            contours = [p / scaling[::-1] for p, bm in zip(predictions["contours"], mask) if bm]
+            contours = [
+                p / scaling[::-1] for p, bm in zip(predictions["contours"], mask) if bm
+            ]
 
         else:
             contours = []
@@ -533,7 +550,7 @@ class Predictor:
                 if bm:
                     mesh = mesh.scale(1 / scaling, origin=False)
                     divisions = np.ceil(
-                        ( mesh.bounds()[1::2] - mesh.bounds()[::2] ) / self.mc_step_size
+                        (mesh.bounds()[1::2] - mesh.bounds()[::2]) / self.mc_step_size
                     ).astype(int)
                     mesh = mesh.decimate_binned(divisions)
 
@@ -545,33 +562,33 @@ class Predictor:
             contours=contours,
         )
 
-
     def _to_contour_format(self, preds, img_sz):
         if len(img_sz) == 3:
             simple_contours = []
             for mesh in preds["contours"]:
-                simple_contours.append(dict(
-                    verts=mesh.vertices,
-                    faces=np.array(mesh.cells),
-                ))
+                simple_contours.append(
+                    dict(
+                        verts=mesh.vertices,
+                        faces=np.array(mesh.cells),
+                    )
+                )
             preds["contours"] = simple_contours
-        
+
         return dict(
             pred_scores=preds["scores"],
             pred_bboxes=preds["bboxes"],
             pred_contours=preds["contours"],
         )
 
-
     def _to_label_format(self, preds, img_sz):
         label = np.zeros(img_sz, dtype="uint16")
 
         if len(img_sz) == 2:
             polygons = preds["contours"]
-        
+
             color = len(polygons)
             for polygon in polygons[::-1]:
-                cv2.fillPoly(label, [polygon.astype(int)], color) # type: ignore
+                cv2.fillPoly(label, [polygon.astype(int)], color)  # type: ignore
                 color -= 1
 
         else:
@@ -582,7 +599,7 @@ class Predictor:
             color = 1
             for mesh in meshes[::-1]:
                 origin = np.floor(mesh.bounds()[::2]).astype(int)
-                origin = np.clip(origin, 0, (d-1, h-1, w-1))
+                origin = np.clip(origin, 0, (d - 1, h - 1, w - 1))
                 max_size = np.array(label.shape) - origin
 
                 vol = mesh.binarize(
@@ -608,7 +625,6 @@ class Predictor:
             pred_label=label,
         )
 
-
     def _to_bbox_format(self, preds, img_sz):
         n_det = len(preds["contours"])
 
@@ -619,45 +635,48 @@ class Predictor:
                 p = preds["contours"][k]
                 box = preds["bboxes"][k]
                 p = (p - box[:2]) / (box[2:] - box[:2]) * self.mask_size
-                cv2.fillPoly(masks[k], [p.astype(int)], 255) # type: ignore
-            
+                cv2.fillPoly(masks[k], [p.astype(int)], 255)  # type: ignore
+
             return dict(
-                pred_scores = preds['scores'],
-                pred_bboxes = preds['bbxoxes'],
-                pred_masks = masks,
+                pred_scores=preds["scores"],
+                pred_bboxes=preds["bbxoxes"],
+                pred_masks=masks,
             )
-        
+
         else:
             masks = []
-            
+
             for k in range(n_det):
                 mesh = preds["contours"][k]
                 box = preds["bboxes"][k]
 
-                masks.append(mesh.binarize(
-                    values=(255, 0),
-                    dims=[self.mask_size]*3,
-                    origin=box[:3],
-                ).tonumpy().astype("uint8"))
-            
-            return dict(
-                pred_scores = preds['scores'],
-                pred_bboxes = preds['bboxes'],
-                pred_masks = np.stack(masks),
-            )
+                masks.append(
+                    mesh.binarize(
+                        values=(255, 0),
+                        dims=[self.mask_size] * 3,
+                        origin=box[:3],
+                    )
+                    .tonumpy()
+                    .astype("uint8")
+                )
 
+            return dict(
+                pred_scores=preds["scores"],
+                pred_bboxes=preds["bboxes"],
+                pred_masks=np.stack(masks),
+            )
 
     def predict(
         self,
         image: ArrayLike,
         *,
         output_type: str = "label",
-        reshape_to: int|tuple[int]|np.ndarray|None = None,
+        reshape_to: int | tuple[int] | np.ndarray | None = None,
         min_area: float = 0,
         score_threshold: float = 0.5,
         segmentation_threshold: float = 0.5,
         nms_iou: float = 1,
-        remove_out_of_bound: bool|None = None,
+        remove_out_of_bound: bool | None = None,
     ) -> dict:
         """Predict segmentation.
 
@@ -691,12 +710,13 @@ class Predictor:
                 - pred_masks:  A 3d array representing (rescaled) segmentation mask within bboxes
         """
         image = np.asarray(image)
-        
+
         logger.debug(f"started prediction with image {image.shape}")
         start_time = time.time()
 
         if remove_out_of_bound is not None:
             import warnings
+
             warnings.warn("remove_out_of_bound is deprecated", DeprecationWarning, 2)
 
         if image.ndim == 2 or image.shape[-1] > 3:
@@ -723,7 +743,7 @@ class Predictor:
 
         predictions = self._process_image(
             image,
-            score_threshold, 
+            score_threshold,
             min_area * np.prod(scaling),
             math.log(segmentation_threshold / (1 - segmentation_threshold)),
             padding_value,
@@ -734,7 +754,7 @@ class Predictor:
 
         # generate outputs
         if output_type == "_raw":
-            outputs =  predictions
+            outputs = predictions
 
         elif output_type == "contour":
             outputs = self._to_contour_format(predictions, img_shape)
@@ -749,4 +769,3 @@ class Predictor:
         logger.debug(f"done prediction in {elapsed:.2f} ms")
 
         return outputs
-

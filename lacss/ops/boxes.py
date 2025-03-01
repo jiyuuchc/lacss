@@ -50,15 +50,15 @@ def box_intersection(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     assert ndim * 2 == gt_boxes.shape[-1]
     assert ndim * 2 == boxes.shape[-1]
 
-    min_vals_1 = gt_boxes[..., None, :ndim] # [..., N, 1, d]
+    min_vals_1 = gt_boxes[..., None, :ndim]  # [..., N, 1, d]
     max_vals_1 = gt_boxes[..., None, ndim:]
-    min_vals_2 = boxes[..., None, :, :ndim] # [..., 1, M, d]
+    min_vals_2 = boxes[..., None, :, :ndim]  # [..., 1, M, d]
     max_vals_2 = boxes[..., None, :, ndim:]
 
-    min_max = minimum(max_vals_1, max_vals_2) #[..., N, M, d]
+    min_max = minimum(max_vals_1, max_vals_2)  # [..., N, M, d]
     max_min = maximum(min_vals_1, min_vals_2)
 
-    intersects = maximum(0, min_max - max_min) # [..., N, M, d]
+    intersects = maximum(0, min_max - max_min)  # [..., N, M, d]
 
     return intersects.prod(axis=-1)
 
@@ -82,6 +82,7 @@ def box_iou_similarity(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
 
     return ious
 
+
 def yxhw_iou_similarity(yxhw_a, yxhw_b):
     """Computes pairwise IOU on bbox in yxhw format
 
@@ -92,15 +93,17 @@ def yxhw_iou_similarity(yxhw_a, yxhw_b):
     Returns:
       a Tensor with shape [..., N, M] representing pairwise iou scores.
     """
+
     def _yxhw2box(yxhw):
-        dim = yxhw.shape[-1] // 2        
+        dim = yxhw.shape[-1] // 2
         center, span = yxhw[..., :dim], yxhw[..., dim:]
         return jnp.c_[center - span / 2, center + span / 2]
-      
+
     return box_iou_similarity(_yxhw2box(yxhw_a), _yxhw2box(yxhw_b))
 
+
 def iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
-    """ IOU loss = 1 - IOU
+    """IOU loss = 1 - IOU
     Args:
       gt_boxes: a float Tensor with [..., N, 2d].
       boxes: a float Tensor with [..., N, 2d].
@@ -110,15 +113,16 @@ def iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     """
 
     loss = 1 - jax.vmap(box_iou_similarity, in_axes=-2, out_axes=-2)(
-      gt_boxes[..., None, :, :], boxes[..., None, :, :],
+        gt_boxes[..., None, :, :],
+        boxes[..., None, :, :],
     )
     return loss.squeeze(axis=-3)
 
 
 def generalized_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
-    """ Loss_GIoU = 1 - IoU + |C - B union B_GT| / |C|
-    where C is the smallest enclosing box for both B and B_GT. The resulting value has a gradient 
-    for non-overlapping boxes. See  Zheng et al. [AAAI 2020] 
+    """Loss_GIoU = 1 - IoU + |C - B union B_GT| / |C|
+    where C is the smallest enclosing box for both B and B_GT. The resulting value has a gradient
+    for non-overlapping boxes. See  Zheng et al. [AAAI 2020]
 
     Args:
       gt_boxes: a float Tensor with [..., N, 2d].
@@ -139,7 +143,8 @@ def generalized_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     assert ndim * 2 == boxes.shape[-1]
 
     intersections = jax.vmap(box_intersection, in_axes=-2, out_axes=-2)(
-      gt_boxes[..., None, :, :], boxes[..., None, :, :],
+        gt_boxes[..., None, :, :],
+        boxes[..., None, :, :],
     ).squeeze(-3)
     gt_boxes_areas = box_area(gt_boxes)
     boxes_areas = box_area(boxes)
@@ -149,14 +154,15 @@ def generalized_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
 
     mins = minimum(gt_boxes[..., :ndim], boxes[..., :ndim])
     maxs = maximum(gt_boxes[..., ndim:], boxes[..., ndim:])
-    intersects = maximum(0, maxs - mins) # [..., N, d]
+    intersects = maximum(0, maxs - mins)  # [..., N, d]
 
     C = intersects.prod(axis=-1)
-    
+
     return 1 - ious + (C - unions) / (C + 1e-6)
 
+
 def distance_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
-    """ Loss_distance_iou = 1 - IoU + \rho2(B, B_GT) / c2
+    """Loss_distance_iou = 1 - IoU + \rho2(B, B_GT) / c2
     The correction term is "distance_sq between box center" / "distance_sq of enclosing box cornor"
 
     Args:
@@ -164,7 +170,7 @@ def distance_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
       boxes: a float Tensor with [..., N, 2d].
 
     Returns:
-      a Tensor with shape [..., N] representing pairwise loss.    
+      a Tensor with shape [..., N] representing pairwise loss.
     """
     if isinstance(gt_boxes, jnp.ndarray) & isinstance(boxes, jnp.ndarray):
         minimum = jnp.minimum
@@ -178,18 +184,19 @@ def distance_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     assert ndim * 2 == boxes.shape[-1]
 
     ious = jax.vmap(box_iou_similarity, in_axes=-2, out_axes=-2)(
-      gt_boxes[..., None, :, :], boxes[..., None, :, :],
+        gt_boxes[..., None, :, :],
+        boxes[..., None, :, :],
     ).squeeze(-3)
     mins = minimum(gt_boxes[..., :ndim], boxes[..., :ndim])
     maxs = maximum(gt_boxes[..., ndim:], boxes[..., ndim:])
-    intersects = maximum(0, maxs - mins) # [..., N, d]
-    c2 = (intersects ** 2).sum(axis=-1)
+    intersects = maximum(0, maxs - mins)  # [..., N, d]
+    c2 = (intersects**2).sum(axis=-1)
 
     center_gt = (gt_boxes[..., :ndim] + gt_boxes[..., ndim:]) / 2
     center = (boxes[..., :ndim] + boxes[..., ndim:]) / 2
     rho2 = ((center_gt - center) ** 2).sum(axis=-1)
 
-    return 1 - ious + rho2/c2
+    return 1 - ious + rho2 / c2
 
 
 def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> Array:
@@ -218,9 +225,11 @@ def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> A
 
 
 def feature_matching(
-    features_a: ArrayLike, features_b: ArrayLike, threshold: float,
+    features_a: ArrayLike,
+    features_b: ArrayLike,
+    threshold: float,
     *,
-    similarity_fn = None,
+    similarity_fn=None,
 ) -> tuple[Array, Array]:
     """Match predicted location to gt locations
 
@@ -234,12 +243,12 @@ def feature_matching(
           fn(feautes_a, feature_b) -> similarity matrix
 
     Returns:
-      matches: [N], indices of the matches row in b 
+      matches: [N], indices of the matches row in b
       indicators: [N] bool
     """
     dim = features_a.shape[-1]
     if similarity_fn is None:
-        similarity_fn = distance_similarity if dim <=3 else yxhw_iou_similarity
+        similarity_fn = distance_similarity if dim <= 3 else yxhw_iou_similarity
 
     sm = similarity_fn(features_a, features_b)
     matches = sm.argmax(axis=-1, keepdims=True)
@@ -249,7 +258,7 @@ def feature_matching(
     return matches.squeeze(-1), indicators.squeeze(-1)
 
 
-def match_and_replace(gt_features, pred_features, threshold, *, similarity_fn = None):
+def match_and_replace(gt_features, pred_features, threshold, *, similarity_fn=None):
     """replacing gt_locations with pred_locations if the close enough
     1. Each pred_location is matched to the closest gt_location
     2. For each gt_location, pick the matched pred_location with highest score
@@ -260,10 +269,7 @@ def match_and_replace(gt_features, pred_features, threshold, *, similarity_fn = 
     n_pred_locs = pred_features.shape[0]
 
     matched_id, indicators = feature_matching(
-        pred_features, 
-        gt_features, 
-        threshold,
-        similarity_fn = similarity_fn 
+        pred_features, gt_features, threshold, similarity_fn=similarity_fn
     )
     matched_id = jnp.where(indicators, matched_id, -1)
 
@@ -281,7 +287,7 @@ def match_and_replace(gt_features, pred_features, threshold, *, similarity_fn = 
     training_locations = jnp.where(
         matched_loc_ids[:, None] == n_pred_locs,  # true: failed match
         gt_features,
-        pred_features[matched_loc_ids] # TODO out-of-bound error on cpu
+        pred_features[matched_loc_ids],  # TODO out-of-bound error on cpu
     )
 
     return training_locations

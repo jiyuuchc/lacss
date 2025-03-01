@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+
 import jax
 import jax.numpy as jnp
 
@@ -8,6 +9,7 @@ from ..typing import *
 from .boxes import box_iou_similarity, distance_similarity
 
 NMS_TILE_SIZE = 1024
+
 
 def _suppress(boxes, mask):
     return jnp.where(mask[:, None], -1, boxes)
@@ -83,13 +85,13 @@ def _nms(
     max_output_size: int,
     threshold: float = 0.5,
     min_score: float = 0,
-    similarity_func: callable|None = None,
+    similarity_func: callable | None = None,
 ) -> Array:
     # preprocessing
     c = boxes.shape[-1]
 
     # if c != 2 and c != 4:
-        # raise ValueError(f"boxes should be Nx4 or Nx2, got Nx{c}")
+    # raise ValueError(f"boxes should be Nx4 or Nx2, got Nx{c}")
 
     num_boxes = boxes.shape[0]
     pad = NMS_TILE_SIZE - 1 - (num_boxes - 1) % NMS_TILE_SIZE
@@ -113,7 +115,8 @@ def _nms(
     def _inner_loop_func(idx, val):
         boxes, num_selected = val
         return jax.lax.cond(
-            (scores[idx * NMS_TILE_SIZE] >= min_score) & (num_selected < max_output_size),
+            (scores[idx * NMS_TILE_SIZE] >= min_score)
+            & (num_selected < max_output_size),
             partial(_suppression_loop_body, similarity_func=similarity_func),
             _trivial_suppress_all,
             (idx, boxes, num_selected, threshold),
@@ -147,8 +150,8 @@ def non_max_suppression(
     threshold: float = 0.5,
     min_score: float = 0,
     return_selection: bool = False,
-    similarity_func: callable|None = None,
-) -> Array|tuple[Array]:
+    similarity_func: callable | None = None,
+) -> Array | tuple[Array]:
     """non-maximum suppression for either bboxes or points.
 
     Assumption:
@@ -192,6 +195,6 @@ def non_max_suppression(
         ).squeeze(-1)
 
         scores = jnp.where(idx_of_selected >= 0, scores[idx_of_selected], -1.0)
-        boxes = jnp.where(idx_of_selected[:, None] >= 0, boxes[idx_of_selected], -1.0) 
-               
+        boxes = jnp.where(idx_of_selected[:, None] >= 0, boxes[idx_of_selected], -1.0)
+
         return scores, boxes

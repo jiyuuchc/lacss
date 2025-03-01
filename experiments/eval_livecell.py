@@ -6,13 +6,11 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
-
 from absl import app, flags
-from tqdm import tqdm
 from skimage.transform import rescale
+from tqdm import tqdm
 
 import lacss.ops
-
 from lacss.deploy.predict import Predictor
 from lacss.metrics import AP, LoiAP
 from lacss.metrics.dice import Dice
@@ -22,7 +20,9 @@ flags.DEFINE_string("checkpoint", None, "", required=True)
 flags.DEFINE_string("logpath", ".", "")
 flags.DEFINE_float("nms", 0.0, "non-max-supress threshold")
 flags.DEFINE_float("minscore", 0.1, "min score")
-flags.DEFINE_string("datapath", "/home/FCAM/jyu/datasets/livecell", "test data directory")
+flags.DEFINE_string(
+    "datapath", "/home/FCAM/jyu/datasets/livecell", "test data directory"
+)
 flags.DEFINE_float("minarea", 0.0, "min area of cells")
 flags.DEFINE_float("dicescore", 0.3, "score threshold for Dice score")
 
@@ -43,6 +43,7 @@ avg_cell_sizes = {
     "SkBr3": 21.8,
 }
 
+
 def get_box_its(pred, gt_b):
     b = pred["pred_bboxes"]
     box_its = lacss.ops.box_intersection(b, gt_b)
@@ -51,10 +52,12 @@ def get_box_its(pred, gt_b):
 
     return box_its, areas, gt_areas
 
+
 def get_mask_its(pred, gt_m, box_its):
     import cv2
+
     pred_polygons = [ct.astype(int) for ct in pred["pred_contours"]]
-    
+
     pred_bboxes = pred["pred_bboxes"]
 
     assert pred_bboxes.shape[-1] == 4
@@ -62,17 +65,15 @@ def get_mask_its(pred, gt_m, box_its):
     intersects = np.zeros_like(box_its, dtype=int)
 
     gt_areas = np.array([len(mi) for mi in gt_m])
-    areas = np.array([ cv2.contourArea(ct) for ct in pred_polygons])
+    areas = np.array([cv2.contourArea(ct) for ct in pred_polygons])
 
     def _get_its(pred_id, gt_id):
-        box= pred_bboxes[pred_id]
+        box = pred_bboxes[pred_id]
         polygon = pred_polygons[pred_id]
         mis = gt_m[gt_id]
         img = np.zeros([520, 704], dtype="uint8")
         cv2.fillPoly(img, [polygon], 1)
-        return np.count_nonzero(
-            img[(mis[:,0], mis[:,1])]
-        )
+        return np.count_nonzero(img[(mis[:, 0], mis[:, 1])])
 
     ids = np.where(box_its > 0)
     intersects[ids] = [_get_its(pid, gid) for pid, gid in zip(*ids)]
@@ -82,12 +83,13 @@ def get_mask_its(pred, gt_m, box_its):
 
 def test_data():
     import glob
+
     import imageio.v2 as imageio
     from pycocotools.coco import COCO
 
     datapath = Path(FLAGS.datapath)
-    annotation_file = datapath / "annotations"/"LIVECell"/"livecell_coco_test.json"
-    image_path = datapath / "images"/"livecell_test_images"
+    annotation_file = datapath / "annotations" / "LIVECell" / "livecell_coco_test.json"
+    image_path = datapath / "images" / "livecell_test_images"
     coco = COCO(annotation_file=annotation_file)
 
     for imgid in coco.getImgIds():
@@ -127,6 +129,7 @@ def test_data():
             celltype=cell_type,
         )
 
+
 def main(_):
     model = Predictor(FLAGS.checkpoint)
     print(f"Model parameters loaded from {FLAGS.checkpoint}")
@@ -142,11 +145,11 @@ def main(_):
     dice = {"all": Dice()}
 
     for data in tqdm(test_data()):
-        t = data['celltype']
+        t = data["celltype"]
         image = data["image"]
         scale = 32 / avg_cell_sizes[t]
         img_h, img_w, _ = image.shape
-        
+
         if not t in mask_ap:
             # loi_ap[t] = LoiAP([5, 2, 1])
             mask_ap[t] = AP(_th)
@@ -167,7 +170,7 @@ def main(_):
         box_its, box_areas, gt_box_areas = get_box_its(pred, data["bboxes"])
         box_ious = box_its / (box_areas[:, None] + gt_box_areas - box_its + 1e-8)
 
-        mask_its, areas, gt_areas = get_mask_its(pred, data['masks'], box_its)
+        mask_its, areas, gt_areas = get_mask_its(pred, data["masks"], box_its)
         mask_ious = mask_its / (areas[:, None] + gt_areas - mask_its + 1e-8)
 
         scores = pred["pred_scores"]

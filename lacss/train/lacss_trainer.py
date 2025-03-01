@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
-from typing import Iterable, Optional, Union, Sequence
+from typing import Iterable, Optional, Sequence, Union
 
 import flax.linen as nn
 import jax
@@ -11,9 +11,9 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 from tqdm import tqdm
+from xtrain import JIT, Trainer
 
 import lacss.metrics
-
 from lacss.losses import (
     aux_size_loss,
     collaborator_border_loss,
@@ -23,9 +23,9 @@ from lacss.losses import (
 )
 
 from ..modules import Lacss, UNet
-from ..typing import Array, Optimizer
-from xtrain import Trainer, JIT
 from ..typing import *
+from ..typing import Array, Optimizer
+
 
 class LacssCollaborator(nn.Module):
     """Collaborator module for semi-supervised Lacss training
@@ -75,6 +75,7 @@ class LacssCollaborator(nn.Module):
             fg_pred=fg,
             edge_pred=cb,
         )
+
 
 class _CKSModel(nn.Module):
     principal: Lacss
@@ -202,12 +203,11 @@ class LacssTrainer:
     def get_init_params(self, dataset):
         trainer = self._get_trainer(20.0, 2.0)
         train_it = trainer.train(
-            dataset, 
+            dataset,
             rng_cols=["droppath"],
             training=True,
         )
         return train_it.parameters
-
 
     def do_training(
         self,
@@ -220,7 +220,7 @@ class LacssTrainer:
         warmup_steps: int = 0,
         sigma: float = 20.0,
         pi: float = 2.0,
-        init_vars = None,
+        init_vars=None,
     ) -> None:
         """Runing training.
 
@@ -262,8 +262,8 @@ class LacssTrainer:
         if cur_step < warmup_steps:
             trainer = self._get_warmup_trainer(sigma, pi)
             train_it = trainer.train(
-                dataset, 
-                rng_cols=["droppath"], 
+                dataset,
+                rng_cols=["droppath"],
                 init_vars=init_vars,
                 training=True,
             )
@@ -318,7 +318,6 @@ class LacssTrainer:
             cur_step = next_cp_step
 
             self.parameters = train_it.parameters
-
 
     def save(self, save_path) -> None:
         """Save a pickled copy of the Lacss model in the form of (module:Lacss, weights:FrozenDict). Only saves the principal model.

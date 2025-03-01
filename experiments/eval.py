@@ -7,7 +7,6 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-
 from absl import app, flags
 
 flags.DEFINE_string("checkpoint", None, "", required=True)
@@ -27,39 +26,42 @@ _th = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
 def compute_label(pred, image, n_cells):
     import cv2
-    label = np.zeros(image.shape[:2], dtype='uint16')
-    for k, contour in enumerate(pred['pred_contours'][n_cells-1::-1]):
+
+    label = np.zeros(image.shape[:2], dtype="uint16")
+    for k, contour in enumerate(pred["pred_contours"][n_cells - 1 :: -1]):
         contour = np.round(contour).astype(int)
         cv2.fillPoly(label, [contour], k + 1)
     return label
 
+
 def test_data():
     data_path = Path(FLAGS.datapath)
     if data_path.exists():
-        for img_file in (data_path/"images").glob("*"):
+        for img_file in (data_path / "images").glob("*"):
             img = imageio.imread(img_file)
-            label_file = data_path/"labels"/f"{img_file.stem}.tiff"
+            label_file = data_path / "labels" / f"{img_file.stem}.tiff"
             label = imageio.imread(label_file)
 
             yield img, label
     else:
         import tensorflow_datasets as tfds
 
-        ds = tfds.load(FLAGS.datapath, split='val')
+        ds = tfds.load(FLAGS.datapath, split="val")
 
         for x in ds.as_numpy_iterator():
-            yield x['image'], x['label']
+            yield x["image"], x["label"]
+
 
 def main(_):
+    import jax
+    from skimage.transform import resize
+    from tqdm import tqdm
+
+    from lacss.deploy.predict import Predictor
+    from lacss.metrics import AP
     from lacss.metrics.common import compute_mask_its
     from lacss.metrics.dice import Dice
-    from lacss.metrics import AP
-    from lacss.deploy.predict import Predictor
 
-    from tqdm import tqdm
-    from skimage.transform import resize
-
-    import jax
     jax.config.update("jax_compilation_cache_dir", "jax_cache")
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 5)
@@ -107,9 +109,9 @@ def main(_):
                     score_threshold=FLAGS.minscore,
                     nms_iou=FLAGS.nms,
                     output_type="contour",
-                    gs=544, ss=480,
+                    gs=544,
+                    ss=480,
                 )
-
 
             # compute ious matrix
             mask_its_, areas_, gt_areas_ = compute_mask_its(pred, label)
@@ -124,7 +126,7 @@ def main(_):
                 mask_ious, mask_its = mask_ious_, mask_its_
                 pred_best = pred
 
-        #AP
+        # AP
         mask_ap.update(mask_ious, scores)
 
         # Dice
@@ -136,6 +138,7 @@ def main(_):
 
         if FLAGS.logpath is not None:
             import tifffile
+
             pred_label = compute_label(pred_best, image, label.max())
             tifffile.imwrite(Path(FLAGS.logpath) / f"pred_{img_no:04d}.tif", pred_label)
 
