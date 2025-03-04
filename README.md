@@ -1,7 +1,7 @@
 # LACSS
 LACSS is a deep-learning model for 2D/3D single-cell segmentation from microscopy images.
 ```sh
-   pip install lacss[cuda12]
+   pip install lacss
 ```
 
 ## Models checkpoints
@@ -21,7 +21,7 @@ LACSS is a deep-learning model for 2D/3D single-cell segmentation from microscop
 | small-2dC | 40M | Cellpose+Cyto2 | [model](https://huggingface.co/jiyuuchc/lacss3-small-cellpose/resolve/main/lacss3-small-c) |87.6 | 62.0 | 56.4 |
 | small-2dN | 40M | NIPS challenge |[model](https://huggingface.co/jiyuuchc/lacss3-small-nips/resolve/main/lacss3-small-n)| 84.6 | 64.8 | 57.3 |
 
-#### Deployment
+## Deployment
 
 You can deploy the models as an [GRPC](https://grpc.io/) server using the [biopb.image](https://github.com/jiyuuchc/biopb) protocol:
 
@@ -29,13 +29,13 @@ You can deploy the models as an [GRPC](https://grpc.io/) server using the [biopb
    python -m lacss.deploy.remote_server --modelpath=<model_file_path>
 ```
 
-#### Public server
+## Public server
 
 The Lacss public GRPC server is available here: `lacss.biopb.org:443`
 
 The server is running the base model supporting both 2d and 3d segmentation.
 
-#### For end user 
+## For end user 
 
  - [Trackmate-Lacss](https://github.com/jiyuuchc/TrackMate-Lacss) is the recommended GUI client for FIJI users. This plugin integrate with TrackMate for interactive cell segmentation and cell tracking.
  - [napari-biopb](https://github.com/jiyuuchc/napari-biopb) is recommended for napari users. 
