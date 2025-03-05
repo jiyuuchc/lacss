@@ -6,7 +6,7 @@ from biopb.image.utils import serialize_from_numpy
 _MAX_MSG_SIZE = 1024 * 1024 * 16
 
 
-def test_grpc_2d(grpc_channel, test_image_2d):
+def test_object_detection_2d(grpc_channel, test_image_2d):
     pixels = serialize_from_numpy(test_image_2d)
 
     stub = proto.ObjectDetectionStub(grpc_channel)
@@ -32,7 +32,7 @@ def test_grpc_2d(grpc_channel, test_image_2d):
     assert len(response.detections) == 22
 
 
-def test_grpc_3d(grpc_channel, test_image_3d):
+def test_object_detection_3d(grpc_channel, test_image_3d):
     pixels = serialize_from_numpy(
         test_image_3d[..., None],
         physical_size_x=1.0,
@@ -54,3 +54,24 @@ def test_grpc_3d(grpc_channel, test_image_3d):
     response = stub.RunDetection(request, timeout=120)
 
     assert len(response.detections) > 0
+
+
+def test_img2img_2d(grpc_channel, test_image_2d):
+    from biopb.image.utils import deserialize_to_numpy
+
+    pixels = serialize_from_numpy(test_image_2d)
+
+    stub = proto.ProcessImageStub(grpc_channel)
+
+    request = proto.DetectionRequest(
+        image_data=proto.ImageData(pixels=pixels),
+    )
+
+    response = stub.Run(request, timeout=60)
+
+    label = deserialize_to_numpy(response.image_data.pixels)
+    label = label.squeeze()
+
+    assert label.shape == test_image_2d.shape
+
+    assert label.max() == 22

@@ -1,22 +1,11 @@
 import threading
 
+import biopb.image as proto
 import grpc
 import numpy as np
-
-from . import proto
+from biopb.image.utils import deserialize_to_numpy
 
 _AUTH_HEADER_KEY = "authorization"
-
-
-def get_dtype(pixels: proto.Pixels) -> np.dtype:
-    dt = np.dtype(pixels.dtype)
-
-    if pixels.bindata.endianness == proto.BinData.Endianness.BIG:
-        dt = dt.newbyteorder(">")
-    else:
-        dt = dt.newbyteorder("<")
-
-    return dt
 
 
 def decode_image(pixels: proto.Pixels) -> np.ndarray:
@@ -26,28 +15,7 @@ def decode_image(pixels: proto.Pixels) -> np.ndarray:
     if pixels.size_c > 3:
         raise ValueError("Image data has more than 3 channels.")
 
-    np_img = np.frombuffer(
-        pixels.bindata.data,
-        dtype=get_dtype(pixels),
-    ).astype("float32")
-
-    # The dimension_order describe axis order but in the F_order convention
-    # Numpy default is C_order, so we reverse the sequence. Lacss expect the
-    # final dimension order to be "ZYXC"
-    dim_order_c = pixels.dimension_order[::-1].upper()
-    dims = dict(
-        Z=pixels.size_z or 1,
-        Y=pixels.size_y or 1,
-        X=pixels.size_x or 1,
-        C=pixels.size_c or 1,
-        T=1,
-    )
-    dim_orig = [dim_order_c.find(k) for k in "ZYXCT"]
-    shape_orig = [dims[k] for k in dim_order_c]
-
-    np_img = np_img.reshape(shape_orig).transpose(dim_orig)
-
-    np_img = np_img.squeeze(axis=-1)  # remove T
+    np_img = deserialize_to_numpy(pixels)
 
     return np_img
 
@@ -71,7 +39,7 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
             return self._abort_handler
 
 
-class LacssServicerBase(proto.LacssServicer):
+class LacssServicerBase(proto.ObjectDetectionServicer, proto.ProcessImageServicer):
     def __init__(self):
         self._lock = threading.RLock()
 

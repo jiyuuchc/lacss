@@ -72,7 +72,8 @@ def test_image_3d():
 def grpc_server(model_f16):
     from concurrent import futures
 
-    import lacss.deploy.proto as proto
+    import biopb.image as proto
+
     from lacss.deploy.remote_server import LacssServicer
 
     _MAX_MSG_SIZE = 1024 * 1024 * 16
@@ -82,7 +83,11 @@ def grpc_server(model_f16):
         futures.ThreadPoolExecutor(max_workers=4),
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
-    proto.add_LacssServicer_to_server(LacssServicer(model_f16), server)
+
+    servicer = LacssServicer(model_f16)
+    proto.add_ObjectDetectionServicer_to_server(servicer, server)
+    proto.add_ProcessImageServicer_to_server(servicer, server)
+
     server.add_insecure_port(endpoint)
 
     server.start()

@@ -1,25 +1,21 @@
 import logging
-import threading
 import traceback
 from concurrent import futures
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
 
+import biopb.image as proto
 import grpc
 import jax
 import numpy as np
 import typer
+from biopb.image.utils import serialize_from_numpy
 
-from . import proto
-from .common import (
-    LacssServicerBase,
-    TokenValidationInterceptor,
-    decode_image,
-    get_dtype,
-)
+from .common import LacssServicerBase, TokenValidationInterceptor, decode_image
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s"
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +56,7 @@ def _process_input(request: proto.DetectionRequest, image=None):
 
         scaling = np.array([settings.scaling_hint or 1.0] * 3, dtype="float")
         scaling[0] *= physical_size[0] / physical_size[1]
-    
+
     logger.info(f"Requested rescaling factor is {scaling}")
 
     shape_hint = tuple(np.round(scaling * image.shape[:3]).astype(int))
@@ -177,68 +173,11 @@ class LacssServicer(LacssServicerBase):
 
         self.model = model
 
-    def RunDetection(self, request, context):
-        logger.info(f"Received message of size {request.ByteSize()}")
-
-        try:
-            image, kwargs = _process_input(request)
-
-            logger.info(f"received image {image.shape}")
-
-        except Exception as e:
-            logger.error(repr(e))
-
-            logger.error(traceback.format_exc())
-
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
-
-            return
-
+    @contextmanager
+    def _lacss_context(self, context):
         try:
             with self._lock:
-                preds = self.model.predict(
-                    image,
-                    output_type="contour",
-                    **kwargs,
-                )
-
-            response = _process_result(preds, image)
-
-            logger.info(f"Reply with message of size {response.ByteSize()}")
-
-            return response
-
-        except Exception as e:
-
-            logger.error(repr(e))
-
-            logger.error(traceback.format_exc())
-
-            context.abort(
-                grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
-            )
-
-    def RunDetectionOnGrid(self, request_iterator, context):
-        try:
-            image, kwargs = _process_grid_input(request_iterator)
-
-            if image is None:
-                return proto.DetectionResponse()
-
-            logger.info(f"Received full image of size {image.shape[:-1]}")
-
-            with self._lock:
-                preds = self.model.predict(
-                    image,
-                    output_type="contour",
-                    **kwargs,
-                )
-
-            response = _process_result(preds, image)
-
-            logger.info(f"Reply with message of size {response.ByteSize()}")
-
-            return response
+                yield
 
         except ValueError as e:
             logger.error(repr(e))
@@ -257,29 +196,85 @@ class LacssServicer(LacssServicerBase):
                 grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
             )
 
+    def RunDetection(self, request, context):
+        logger.info(f"Received message of size {request.ByteSize()}")
+
+        with self._lacss_context(context):
+            image, kwargs = _process_input(request)
+
+            logger.info(f"received image {image.shape}")
+
+            preds = self.model.predict(
+                image,
+                output_type="contour",
+                **kwargs,
+            )
+
+            response = _process_result(preds, image)
+
+            logger.info(f"Reply with message of size {response.ByteSize()}")
+
+            return response
+
+    def RunDetectionOnGrid(self, request_iterator, context):
+        with self._lacss_context(context):
+            image, kwargs = _process_grid_input(request_iterator)
+
+            if image is None:
+                return proto.DetectionResponse()
+
+            logger.info(f"Received full image of size {image.shape[:-1]}")
+
+            preds = self.model.predict(
+                image,
+                output_type="contour",
+                **kwargs,
+            )
+
+            response = _process_result(preds, image)
+
+            logger.info(f"Reply with message of size {response.ByteSize()}")
+
+            return response
+
+    def Run(self, request, context):
+        logger.info(f"Received message of size {request.ByteSize()}")
+
+        with self._lacss_context(context):
+            image = decode_image(request.image_data.pixels)
+
+            if image.shape[0] == 1:  # 2D
+                image = image.squeeze(0)
+
+            logger.info(f"received image {image.shape}")
+
+            label = self.model.predict(image)["pred_label"]
+
+            logger.info(f"Detected {label.max()} cells")
+
+            response = proto.ProcessResponse(
+                image_data=proto.ImageData(pixels=serialize_from_numpy(label)),
+            )
+
+            logger.info(f"Reply with message of size {response.ByteSize()}")
+
+            return response
+
 
 def get_predictor(modelpath, f16):
     from .predict import Predictor
 
-    model = Predictor(
-        modelpath, 
-        f16=f16,
-        # grid_size=1088,
-        # step_size=1024,
-        # cells_per_grid=1024,
-        # grid_size_3d=256,
-        # step_size_3d=192,
-        # cells_per_grid_3d=256
-    )
+    model = Predictor(modelpath, f16=f16)
 
     logger.info(f"lacss_server: loaded model from {modelpath}")
 
     model.module.detector.min_score = 0.2
-    model.module.detector_3d.min_score = 0.2
+    if model.module.detector_3d:
+        model.module.detector_3d.min_score = 0.2
 
     logger.debug(f"lacss_server: precompile the model")
 
-    _ = model.predict(np.ones([384, 384, 384, 3]), output_type="_raw")
+    _ = model.predict(np.ones([255, 255, 255, 3]), output_type="_raw")
     _ = model.predict(np.ones([544, 544, 3]), output_type="_raw")
 
     return model
@@ -349,10 +344,9 @@ def main(
         options=(("grpc.max_receive_message_length", _MAX_MSG_SIZE),),
     )
 
-    proto.add_LacssServicer_to_server(
-        LacssServicer(model),
-        server,
-    )
+    servicer = LacssServicer(model)
+    proto.add_ObjectDetectionServicer_to_server(servicer, server)
+    proto.add_ProcessImageServicer_to_server(servicer, server)
 
     if local:
         server.add_secure_port(f"127.0.0.1:{port}", grpc.local_server_credentials())
