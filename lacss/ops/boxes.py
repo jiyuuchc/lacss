@@ -12,7 +12,7 @@ import numpy as np
 from ..typing import *
 
 
-def box_area(box: ArrayLike) -> ArrayLike:
+def box_area(box: Array | np.ndarray) -> Array | np.ndarray:
     """Computes area of boxes.
     Args:
       box: a float Tensor with [..., N, 2d].
@@ -29,7 +29,9 @@ def box_area(box: ArrayLike) -> ArrayLike:
     return (max_vals - min_vals).prod(axis=-1)
 
 
-def box_intersection(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
+def box_intersection(
+    gt_boxes: Array | np.ndarray, boxes: Array | np.ndarray
+) -> Array | np.ndarray:
     """Compute pairwise intersection areas between boxes.
 
     Args:
@@ -45,6 +47,8 @@ def box_intersection(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     else:
         minimum = np.minimum
         maximum = np.maximum
+        gt_boxes = np.array(gt_boxes)
+        boxes = np.array(boxes)
 
     ndim = gt_boxes.shape[-1] // 2
     assert ndim * 2 == gt_boxes.shape[-1]
@@ -63,7 +67,9 @@ def box_intersection(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     return intersects.prod(axis=-1)
 
 
-def box_iou_similarity(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
+def box_iou_similarity(
+    gt_boxes: Array | np.ndarray, boxes: Array | np.ndarray
+) -> Array | np.ndarray:
     """Computes pairwise intersection-over-union between box collections.
 
     Args:
@@ -102,7 +108,9 @@ def yxhw_iou_similarity(yxhw_a, yxhw_b):
     return box_iou_similarity(_yxhw2box(yxhw_a), _yxhw2box(yxhw_b))
 
 
-def iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
+def iou_loss(
+    gt_boxes: Array | np.ndarray, boxes: Array | np.ndarray
+) -> Array | np.ndarray:
     """IOU loss = 1 - IOU
     Args:
       gt_boxes: a float Tensor with [..., N, 2d].
@@ -119,7 +127,9 @@ def iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     return loss.squeeze(axis=-3)
 
 
-def generalized_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
+def generalized_iou_loss(
+    gt_boxes: Array | np.ndarray, boxes: Array | np.ndarray
+) -> Array | np.ndarray:
     """Loss_GIoU = 1 - IoU + |C - B union B_GT| / |C|
     where C is the smallest enclosing box for both B and B_GT. The resulting value has a gradient
     for non-overlapping boxes. See  Zheng et al. [AAAI 2020]
@@ -161,7 +171,9 @@ def generalized_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     return 1 - ious + (C - unions) / (C + 1e-6)
 
 
-def distance_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
+def distance_iou_loss(
+    gt_boxes: Array | np.ndarray, boxes: Array | np.ndarray
+) -> Array | np.ndarray:
     """Loss_distance_iou = 1 - IoU + \rho2(B, B_GT) / c2
     The correction term is "distance_sq between box center" / "distance_sq of enclosing box cornor"
 
@@ -199,7 +211,9 @@ def distance_iou_loss(gt_boxes: ArrayLike, boxes: ArrayLike) -> ArrayLike:
     return 1 - ious + rho2 / c2
 
 
-def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> Array:
+def distance_similarity(
+    pred_locations: Array | np.ndarray, gt_locations: Array | np.ndarray
+) -> Array:
     """Compute distance similarity matrix
 
         pairwise similarity = 1 / distance ^2
@@ -225,8 +239,8 @@ def distance_similarity(pred_locations: ArrayLike, gt_locations: ArrayLike) -> A
 
 
 def feature_matching(
-    features_a: ArrayLike,
-    features_b: ArrayLike,
+    features_a: Array | np.ndarray,
+    features_b: Array | np.ndarray,
     threshold: float,
     *,
     similarity_fn=None,

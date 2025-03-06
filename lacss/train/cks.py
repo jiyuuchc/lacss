@@ -141,6 +141,8 @@ class CKS(VMapped):
         inputs, label, _ = unpack_x_y_sample_weight(batch)
 
         if not cls.var_key in train_obj.variables:
+            assert isinstance(train_obj.ctx.model, Lacss)
+
             model = CKSModel(
                 train_obj.ctx.model,
                 LacssCollaborator(),

@@ -110,8 +110,7 @@ def _init_uda_it(it, inputs):
     )
     it_ = copy(it)
     it_.train_state = state
-    it_.loss_logs = [LossLog("det_adv_loss"), LossLog("seg_adv_loss")]
-    # it_.loss_logs = [LossLog("det_adv_loss")]
+    it_.loss_logs = [LossLog("det_adv_loss"), LossLog("seg_adv_loss")]  # type: ignore
     it_.variables = {}
     it_.has_aux = False
     it_.frozen = jax.tree_util.tree_map(lambda _: False, it_.parameters)

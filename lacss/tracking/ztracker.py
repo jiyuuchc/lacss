@@ -350,8 +350,8 @@ class ZStackTracker:
             top_score_idx = np.argpartition(scores, -self.min_z_slices)[
                 -self.min_z_slices :
             ]
-            cell_data.score = scores[top_score_idx].mean()
-            cell_data.bbox = np.r_[
+            cell_data.score = scores[top_score_idx].mean()  # type: ignore
+            cell_data.bbox = np.r_[  # type: ignore
                 z0, bboxes[:, :2].min(axis=0), z1, bboxes[:, 2:].max(axis=0)
             ]
 
@@ -373,7 +373,7 @@ class ZStackTracker:
         label = np.zeros(img3d_shape, dtype="uint8")
         _, h, w = img3d_shape
 
-        score_idx = np.argsort([t.score for t in tracks])
+        score_idx = np.argsort([t.score for t in tracks])  # type: ignore
 
         for c, track_id in enumerate(score_idx):
             track = tracks[track_id]

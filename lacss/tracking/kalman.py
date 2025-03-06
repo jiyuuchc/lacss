@@ -14,7 +14,7 @@ from .utils import linear_assignment
 class KalmanFilter(Protocol):
     """KalmanFilter Protocol definition"""
 
-    def initialize(self, measurement: Any) -> tuple[np.ndarray, np.ndarray]:
+    def initiate(self, measurement: Any) -> tuple[np.ndarray, np.ndarray]:
         """Create track from unassociated measurement.
 
         Args:
@@ -327,7 +327,7 @@ class ConstantVelocityKalmanFilter3D(KalmanFilter):
         return mean, covariance
 
     def predict(
-        self, mean: ArrayLike, covariance: ArrayLike
+        self, mean: np.ndarray, covariance: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         mean_size = (math.prod(mean[4:6])) ** (1 / 2)
 
@@ -345,7 +345,7 @@ class ConstantVelocityKalmanFilter3D(KalmanFilter):
         return mean, covariance
 
     def project(
-        self, mean: ArrayLike, covariance: ArrayLike
+        self, mean: np.ndarray, covariance: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         mean_size = (math.prod(mean[4:6])) ** (1 / 2)
 
@@ -360,7 +360,7 @@ class ConstantVelocityKalmanFilter3D(KalmanFilter):
         return mean, covariance + innovation_cov
 
     def multi_predict(
-        self, mean: ArrayLike, covariance: ArrayLike
+        self, mean: np.ndarray, covariance: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Vectorized Kalman filter prediction step."""
         mean_size = np.sqrt(mean[:, -1] * mean[:, -2])
@@ -382,7 +382,7 @@ class ConstantVelocityKalmanFilter3D(KalmanFilter):
         return mean, covariance
 
     def update(
-        self, mean: ArrayLike, covariance: ArrayLike, measurement: ArrayLike
+        self, mean: np.ndarray, covariance: np.ndarray, measurement: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         projected_mean, projected_cov = self.project(mean, covariance)
 
@@ -507,7 +507,7 @@ class KTracker:
     def new_id(self):
         self.track_id = self.next_id()
 
-    def mark_lost(self, *, update_state: ArrayLike = None):
+    def mark_lost(self, *, update_state: ArrayLike | None = None):
         """Mark the track as lost
 
         Keyword Args:
@@ -527,7 +527,7 @@ class KTracker:
         dets: Sequence[KTracker],
         cost_matrix: ArrayLike,
         threshold: float,
-    ) -> tuple[Sequence[KTracker], Sequence[KTracker], Sequence[KTracker]]:
+    ) -> tuple[list[KTracker], list[KTracker], list[KTracker]]:
         """perform MOT assigment
 
         Args:
