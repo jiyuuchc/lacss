@@ -1,7 +1,5 @@
 import logging
-import traceback
 from concurrent import futures
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
 
@@ -12,11 +10,7 @@ import numpy as np
 import typer
 from biopb.image.utils import serialize_from_numpy
 
-from .common import LacssServicerBase, TokenValidationInterceptor, decode_image
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s"
-)
+from .common import BiopbServicerBase, TokenValidationInterceptor, decode_image
 
 logger = logging.getLogger(__name__)
 
@@ -167,39 +161,16 @@ def _process_grid_input(request_iterator: Iterable[proto.DetectionRequest]):
     return _process_input(request, full_image)
 
 
-class LacssServicer(LacssServicerBase):
+class LacssServicer(BiopbServicerBase):
     def __init__(self, model):
         super().__init__()
 
         self.model = model
 
-    @contextmanager
-    def _lacss_context(self, context):
-        try:
-            with self._lock:
-                yield
-
-        except ValueError as e:
-            logger.error(repr(e))
-
-            logger.error(traceback.format_exc())
-
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
-
-        except Exception as e:
-
-            logger.error(repr(e))
-
-            logger.error(traceback.format_exc())
-
-            context.abort(
-                grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
-            )
-
     def RunDetection(self, request, context):
         logger.info(f"Received message of size {request.ByteSize()}")
 
-        with self._lacss_context(context):
+        with self._server_context(context):
             image, kwargs = _process_input(request)
 
             logger.info(f"received image {image.shape}")
@@ -217,7 +188,7 @@ class LacssServicer(LacssServicerBase):
             return response
 
     def RunDetectionOnGrid(self, request_iterator, context):
-        with self._lacss_context(context):
+        with self._server_context(context):
             image, kwargs = _process_grid_input(request_iterator)
 
             if image is None:
@@ -240,7 +211,7 @@ class LacssServicer(LacssServicerBase):
     def Run(self, request, context):
         logger.info(f"Received message of size {request.ByteSize()}")
 
-        with self._lacss_context(context):
+        with self._server_context(context):
             image = decode_image(request.image_data.pixels)
 
             if image.shape[0] == 1:  # 2D
@@ -358,6 +329,7 @@ def main(
     print("server starting ... ready")
 
     server.start()
+
     server.wait_for_termination()
 
 

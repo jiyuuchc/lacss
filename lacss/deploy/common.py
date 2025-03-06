@@ -1,4 +1,7 @@
+import logging
 import threading
+import traceback
+from contextlib import contextmanager
 
 import biopb.image as proto
 import grpc
@@ -7,8 +10,11 @@ from biopb.image.utils import deserialize_to_numpy
 
 _AUTH_HEADER_KEY = "authorization"
 
+logger = logging.getLogger(__name__)
+
 
 def decode_image(pixels: proto.Pixels) -> np.ndarray:
+    """decode proto.Pixels into numpy array"""
     if pixels.size_t > 1:
         raise ValueError("Image data has a non-singleton T dimension.")
 
@@ -39,26 +45,48 @@ class TokenValidationInterceptor(grpc.ServerInterceptor):
             return self._abort_handler
 
 
-class LacssServicerBase(proto.ObjectDetectionServicer, proto.ProcessImageServicer):
+class BiopbServicerBase(proto.ObjectDetectionServicer, proto.ProcessImageServicer):
     def __init__(self):
         self._lock = threading.RLock()
 
+    @contextmanager
+    def _server_context(self, context):
+        try:
+            with self._lock:
+                yield
+
+        except ValueError as e:
+            logger.error(repr(e))
+
+            logger.error(traceback.format_exc())
+
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, repr(e))
+
+        except Exception as e:
+
+            logger.error(repr(e))
+
+            logger.error(traceback.format_exc())
+
+            context.abort(
+                grpc.StatusCode.UNKNOWN, f"prediction failed with error: {repr(e)}"
+            )
+
     def RunDetectionStream(self, request_iterator, context):
-        with self._lock:
-            request = proto.DetectionRequest()
+        request = proto.DetectionRequest()
 
-            for next_request in request_iterator:
+        for next_request in request_iterator:
 
-                if next_request.image_data.HasField("pixels"):
-                    request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
+            if next_request.image_data.HasField("pixels"):
+                request.image_data.pixels.CopyFrom(next_request.image_data.pixels)
 
-                if next_request.image_data.HasField("image_annotation"):
-                    request.image_data.image_annotation.CopyFrom(
-                        next_request.image_data.image_annotation
-                    )
+            if next_request.image_data.HasField("image_annotation"):
+                request.image_data.image_annotation.CopyFrom(
+                    next_request.image_data.image_annotation
+                )
 
-                if next_request.HasField("detection_settings"):
-                    request.detection_settings.CopyFrom(next_request.detection_settings)
+            if next_request.HasField("detection_settings"):
+                request.detection_settings.CopyFrom(next_request.detection_settings)
 
-                if request.image_data.HasField("pixels"):
-                    yield self.RunDetection(request, context)
+            if request.image_data.HasField("pixels"):
+                yield self.RunDetection(request, context)
