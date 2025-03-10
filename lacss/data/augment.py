@@ -580,7 +580,7 @@ def flip_top_bottom(inputs: dict, *, p: float = 1.0) -> dict:
 
         D = tf.shape(inputs["image"])[-4]
 
-        inputs["image"] = tf.image.flip_up_down(inputs["image"])
+        inputs["image"] = inputs["image"][..., ::-1, :, :, :]
 
         if "image_mask" in inputs:
             image_mask = inputs["image_mask"][..., None]

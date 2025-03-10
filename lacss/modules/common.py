@@ -352,7 +352,7 @@ class GRN(nn.Module):
         beta = self.param("beta", nn.initializers.zeros, (1, 1, 1, dim))
 
         x_ = jnp.array(x, "float32")
-        mu2 = jax.lax.square(jnp.abs(x_)).mean(axis=(1, 2), keepdims=True)
+        mu2 = jax.lax.square(jnp.abs(x_)).mean(axis=(-2, -3), keepdims=True)
         mu2 = jnp.maximum(mu2, 1e-6)
         Gx = jax.lax.sqrt(mu2).astype(x.dtype)
         Nx = Gx / (Gx.mean(axis=-1, keepdims=True) + self.epsilon)
