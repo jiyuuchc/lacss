@@ -156,7 +156,7 @@ class Predictor:
 
         assert (
             type(module) == Lacss
-        ), f"Loaded module is not Lacss, but of {type(module)}"
+        ), f"Loaded module is not Lacss, but of {type(module)}"  # type: ignore
 
         # if isinstance(params, Mapping):
         # params = [params]
@@ -464,8 +464,8 @@ class Predictor:
 
             logger.debug(f"processing patch results")
 
-            # mask = self._mark_edge_instances(bboxes, pos, patch_sz, img_sz)
-            mask = np.ones([bboxes.shape[0]], dtype=bool)
+            mask = self._mark_edge_instances(bboxes, pos, patch_sz, img_sz)
+            # mask = np.ones([bboxes.shape[0]], dtype=bool)
 
             bboxes += np.r_[pos, pos]
 
@@ -520,7 +520,7 @@ class Predictor:
             if selected[k]:
                 selected &= sm[k] < nms_iou
 
-        # inverse selected` to the original order
+        # inverse selected to the original order
         if asort is not None:
             selected = selected[asort.argsort()]
 
@@ -538,12 +538,12 @@ class Predictor:
 
         bboxes = predictions["bboxes"][mask] / np.r_[scaling, scaling]
 
-        if len(scaling) == 2:
+        if len(scaling) == 2:  # 2D input
             contours = [
                 p / scaling[::-1] for p, bm in zip(predictions["contours"], mask) if bm
             ]
 
-        else:
+        else:  # 3D input
             contours = []
             for mesh, bm in zip(predictions["contours"], mask):
                 if bm:
