@@ -32,6 +32,7 @@ cuda12 = [ ]
 pytest = "^7.4.0"
 jupyterlab = "^3.6.1"
 matplotlib = "^3.8.4"
+pre-commit = "^4.2.0"
 
 [tool.poetry.group.docs]
 optional = true
