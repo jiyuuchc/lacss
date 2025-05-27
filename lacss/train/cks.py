@@ -35,8 +35,6 @@ class LacssCollaborator(nn.Module):
     Attributes:
         conv_spec: conv-net specificaiton for cell border predicition
         unet_spec: specification for unet, used to predict cell foreground
-        patch_size: patch size for the unet
-        n_cls: number of classes (cell types) of input images
     """
 
     conv_spec: Sequence[int] = (32, 32)
@@ -129,6 +127,28 @@ def _init_cks(it, model, inputs):
 
 
 class CKS(VMapped):
+    """CKS (Collaborative Knowledge Sharing) strategy for Lacss training.
+    This strategy uses a Lacss model as the principal and a LacssCollaborator
+    as the auxiliary collaborator. It trains the model using a combination of
+    supervised and self-supervised losses, including cell segmentation and
+    boundary prediction losses.
+    The CKS strategy is designed to train the Lacss model using point supervision,
+    by leveraging the auxiliary collaborator to provide additional supervision. The
+    collaborator predicts cell foreground and boundaries, which are then used to
+    compute losses that guide the training of the principal model.
+
+    Attributes:
+        var_key: str
+            Key under which the CKS model is stored in the train_obj.variables.
+        aux: Optional[LacssCollaborator]
+            Allowing a custom collaborator module.
+        config: ml_collections.ConfigDict
+            Allowing overriding the default training parameters.
+            sigma: The size prior for the cell segmentation output (default: 15.0).
+            pi: The amplitude prior for the cell segmentation output (default: 2.0).
+            w: Weight of the regularization term preventing training collapse (default: 1e-3).
+    """
+
     var_key: str = "cks"
     aux: Optional[LacssCollaborator] = None
     config: ml_collections.ConfigDict = ml_collections.ConfigDict()
