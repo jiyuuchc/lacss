@@ -130,6 +130,7 @@ def _init_cks(it, model, inputs):
 
 class CKS(VMapped):
     var_key: str = "cks"
+    aux: Optional[LacssCollaborator] = None
     config: ml_collections.ConfigDict = ml_collections.ConfigDict()
 
     @classmethod
@@ -145,7 +146,7 @@ class CKS(VMapped):
 
             model = CKSModel(
                 train_obj.ctx.model,
-                LacssCollaborator(),
+                cls.aux or LacssCollaborator(),
                 cls.config,
             )
             train_obj.variables[cls.var_key] = _init_cks(train_obj, model, inputs)
