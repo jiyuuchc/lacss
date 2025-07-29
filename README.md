@@ -25,6 +25,15 @@ LACSS is a deep-learning model for 2D/3D single-cell segmentation from microscop
 
 You can deploy the models as an [GRPC](https://grpc.io/) server using the [biopb.image](https://github.com/jiyuuchc/biopb) protocol:
 
+- Method 1 : docker
+
+```sh
+   # This will deploy the *Base* model version
+   docker run --gpus=all -p 50051:50051 jiyuuchc/lacss --local
+```
+
+ - Method 2 : deploy a custom model
+
 ```sh
    python -m lacss.deploy.remote_server --modelpath=<model_file_path>
 ```
